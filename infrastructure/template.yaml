@@ -265,6 +265,14 @@ Resources:
     Properties:
       Name: !Sub "credifacil-idp-pipeline-${Environment}"
       DefinitionUri: ../state_machines/idp_pipeline.json
+      DefinitionSubstitutions:
+        BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
+        BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
+        ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
+        A2iTriggerArn: !GetAtt A2iTriggerFunction.Arn
+        NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        ResultWriterArn: !GetAtt ResultWriterFunction.Arn
+        NotificationArn: !GetAtt NotificationFunction.Arn
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup:
