@@ -4,14 +4,9 @@
   "States": {
     "InvokeBDA": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-bda-invoker-dev",
+      "Resource": "${BdaInvokerArn}",
       "Next": "WaitBDA",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyError"
-        }
-      ]
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "NotifyError" }]
     },
     "WaitBDA": {
       "Type": "Wait",
@@ -20,104 +15,62 @@
     },
     "PollBDAStatus": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-bda-status-poller-dev",
+      "Resource": "${BdaStatusPollerArn}",
       "Next": "CheckBDAStatus"
     },
     "CheckBDAStatus": {
       "Type": "Choice",
       "Choices": [
-        {
-          "Variable": "$.status_bda",
-          "StringEquals": "IN_PROGRESS",
-          "Next": "WaitBDA"
-        },
-        {
-          "Variable": "$.status_bda",
-          "StringEquals": "COMPLETED",
-          "Next": "CheckConfidence"
-        },
-        {
-          "Variable": "$.status_bda",
-          "StringEquals": "FAILED",
-          "Next": "NotifyError"
-        }
+        { "Variable": "$.status_bda", "StringEquals": "IN_PROGRESS", "Next": "WaitBDA" },
+        { "Variable": "$.status_bda", "StringEquals": "COMPLETED", "Next": "CheckConfidence" },
+        { "Variable": "$.status_bda", "StringEquals": "FAILED", "Next": "NotifyError" }
       ]
     },
     "CheckConfidence": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-confidence-checker-dev",
+      "Resource": "${ConfidenceCheckerArn}",
       "Next": "RoutingDecision"
     },
     "RoutingDecision": {
       "Type": "Choice",
       "Choices": [
-        {
-          "Variable": "$.needs_human_review",
-          "BooleanEquals": true,
-          "Next": "TriggerA2I"
-        },
-        {
-          "Variable": "$.needs_human_review",
-          "BooleanEquals": false,
-          "Next": "StructureWithNova"
-        }
+        { "Variable": "$.needs_human_review", "BooleanEquals": true, "Next": "TriggerA2I" },
+        { "Variable": "$.needs_human_review", "BooleanEquals": false, "Next": "StructureWithNova" }
       ]
     },
     "TriggerA2I": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-a2i-trigger-dev",
+      "Resource": "${A2iTriggerArn}",
       "Next": "StructureWithNova"
     },
     "StructureWithNova": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-nova-structurer-dev",
-      "Retry": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "IntervalSeconds": 10,
-          "MaxAttempts": 2,
-          "BackoffRate": 2.0
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyError"
-        }
-      ],
+      "Resource": "${NovaStructurerArn}",
+      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 10, "MaxAttempts": 2, "BackoffRate": 2.0 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "NotifyError" }],
       "Next": "WriteResult"
     },
     "WriteResult": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-result-writer-dev",
+      "Resource": "${ResultWriterArn}",
       "Next": "NotifySuccess"
     },
     "NotifySuccess": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-notification-dev",
-      "Parameters": {
-        "package_id.$": "$.package_id",
-        "execution_status": "SUCCESS"
-      },
+      "Resource": "${NotificationArn}",
+      "Parameters": { "package_id.$": "$.package_id", "execution_status": "SUCCESS" },
       "End": true
     },
     "NotifyError": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-notification-dev",
-      "Parameters": {
-        "package_id.$": "$.package_id",
-        "execution_status": "ERROR",
-        "error_message": "Falha crítica detectada na execução do pipeline de IA."
-      },
+      "Resource": "${NotificationArn}",
+      "Parameters": { "package_id.$": "$.package_id", "execution_status": "ERROR", "error_message": "Falha crítica no pipeline." },
       "Next": "MarkFailed"
     },
     "MarkFailed": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:123456789012:function:credifacil-result-writer-dev",
-      "Parameters": {
-        "package_id.$": "$.package_id",
-        "status": "FAILED"
-      },
+      "Resource": "${ResultWriterArn}",
+      "Parameters": { "package_id.$": "$.package_id", "status": "FAILED" },
       "End": true
     }
   }
