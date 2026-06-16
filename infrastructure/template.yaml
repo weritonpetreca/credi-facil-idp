@@ -149,7 +149,7 @@ Resources:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: "*" # Permitirá invocar a State Machine do Step Functions
+              Resource: !Ref CrediFacilStateMachine
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -256,6 +256,57 @@ Resources:
             TopicArn: !Ref SnsTopicoConclusao
         - SNSPublishMessagePolicy:
             TopicArn: !Ref SnsTopicoErros
+
+  # ==========================================================================
+  # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
+  # ==========================================================================
+  CrediFacilStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "credifacil-idp-pipeline-${Environment}"
+      DefinitionUri: ../state_machines/idp_pipeline.json
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt CrediFacilStateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Policies:
+        # Permissões mínimas para a máquina chamar todas as nossas Lambdas
+        - LambdaInvokePolicy:
+            FunctionName: !Ref BdaInvokerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref BdaStatusPollerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ConfidenceCheckerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref A2iTriggerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NovaStructurerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ResultWriterFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationFunction
+
+  # Grupo de Logs para monitoramento do Workflow via CloudWatch
+  CrediFacilStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vended/states/credifacil-idp-pipeline-${Environment}"
+      RetentionInDays: 7
+
+  # Nova declaração da Lambda A2I para o template refletir o código acima
+  A2iTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/lambdas/a2i_trigger/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Sid: AllowSageMakerA2I
+              Effect: Allow
+              Action: "sagemaker:StartHumanLoop"
+              Resource: "*"
 
 Outputs:
   ApiEndpoint:
