@@ -266,7 +266,8 @@ Resources:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
-        - Statement: 
+        - Version: '2012-10-17'
+          Statement: 
             - Sid: AllowKMSOperationsForPersistence
               Effect: Allow
               Action:
