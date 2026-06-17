@@ -48,8 +48,8 @@ def handler(event, context):
             dataAutomationProfileArn=profile_arn
         )
         
-        job_id = response["automationJobId"]
-        logger.info(f"Job BDA criado com sucesso. ID: {job_id}")
+        job_id = response["invocationArn"]
+        logger.info(f"Job BDA criado com sucesso. ARN de Invocação: {job_id}")
 
         return {
             "package_id": package_id,

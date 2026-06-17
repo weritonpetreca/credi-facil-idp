@@ -16,7 +16,7 @@ def test_bda_invoker_handler_success(mock_boto3_client):
     # 1. Configura o Mock do cliente do Bedrock Data Automation Runtime
     mock_bedrock = MagicMock()
     mock_bedrock.invoke_data_automation_async.return_value = {
-        "automationJobId": "automation-job-mock-123",
+        "invocationArn": "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123",
         "status": "Submitted"
     }
 
@@ -51,7 +51,7 @@ def test_bda_invoker_handler_success(mock_boto3_client):
     assert response is not None
     assert response["package_id"] == "pacote-999"
     assert response["user_id"] == "user-123"
-    assert response["bda_job_id"] == "automation-job-mock-123"
+    assert response["bda_job_id"] == "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123"
     
     # 🛡️ ASSERÇÃO DE QUALIDADE: Valida se a Lambda envelopou os parâmetros corretamente
     mock_bedrock.invoke_data_automation_async.assert_called_once_with(
