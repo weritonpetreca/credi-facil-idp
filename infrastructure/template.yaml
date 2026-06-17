@@ -29,7 +29,7 @@ Globals:
   Function:
     Runtime: python3.12
     Architectures: 
-      - arm64 # 🚀 RNF-05: Arquitetura Graviton2 corrigida para máxima eficiência e menor custo
+      - arm64
     Timeout: 30
     MemorySize: 256
     Tracing: Active
@@ -102,7 +102,7 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
-  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito) — REINTEGRADO!
+  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito)
   # ==========================================================================
   CrediFacilUserPool:
     Type: AWS::Cognito::UserPool
@@ -167,7 +167,7 @@ Resources:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
           CognitoAuthorizer:
-            UserPoolArn: !GetAtt CrediFacilUserPool.Arn # 👈 Vinculado dinamicamente ao seu pool real
+            UserPoolArn: !GetAtt CrediFacilUserPool.Arn
             IdentitySource: method.request.header.Authorization
 
   # ==========================================================================
@@ -314,6 +314,21 @@ Resources:
         - SNSPublishMessagePolicy:
             TopicName: !Sub "credifacil-erros-${Environment}"
 
+  A2iTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/lambdas/a2i_trigger/
+      Handler: handler.handler
+      Environment:
+        Variables:
+          A2I_FLOW_DEFINITION_ARN: !Ref A2iFlowDefinitionArn
+      Policies:
+        - Statement:
+            - Sid: AllowSageMakerA2I
+              Effect: Allow
+              Action: "sagemaker:StartHumanLoop"
+              Resource: "*"
+
   # ==========================================================================
   # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
   # ==========================================================================
@@ -358,30 +373,15 @@ Resources:
       LogGroupName: !Sub "/aws/vended/states/credifacil-idp-pipeline-${Environment}"
       RetentionInDays: 7
 
-  A2iTriggerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: ../src/lambdas/a2i_trigger/
-      Handler: handler.handler
-      Environment:
-        Variables:
-          A2I_FLOW_DEFINITION_ARN: !Ref A2iFlowDefinitionArn
-      Policies:
-        - Statement:
-            - Sid: AllowSageMakerA2I
-              Effect: Allow
-              Action: "sagemaker:StartHumanLoop"
-              Resource: "*"
-
 Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway para consumo do Frontend
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
 
-  UserPoolId: # 🚀 Exposto para automação e gerência de usuários
+  UserPoolId:
     Description: ID do User Pool do Cognito gerado para o ambiente
     Value: !Ref CrediFacilUserPool
 
-  UserPoolClientId: # 🚀 Exposto para autenticação no Front-end / Postman
+  UserPoolClientId:
     Description: ID do Client do Cognito para autenticação
     Value: !Ref CrediFacilUserPoolClient

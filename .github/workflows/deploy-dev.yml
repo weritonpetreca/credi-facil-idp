@@ -54,3 +54,12 @@ jobs:
               SageMakerWorkteamArn="$WT_VAL" \
               A2iFlowDefinitionArn="$A2I_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+
+      - name: Fetch CloudFormation Error Details on Failure
+        if: failure()
+        run: |
+          echo "=================== DETALHES DO ERRO REAIS DA AWS ==================="
+          aws cloudformation describe-stack-events \
+            --stack-name credifacil-idp-dev \
+            --query "StackEvents[*].[ResourceStatus, ResourceType, ResourceStatusReason]" \
+            --output table || echo "Nenhum evento de stack encontrado."
