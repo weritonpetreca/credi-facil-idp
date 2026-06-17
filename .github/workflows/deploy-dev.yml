@@ -2,10 +2,10 @@ name: Deploy Dev Environment
 
 on:
   push:
-    branches: [ develop ] # Dispara automaticamente ao atualizar a develop
+    branches: [ develop ]
 
 permissions:
-  id-token: write # Obrigatorio para autenticacao segura via OIDC
+  id-token: write
   contents: read
 
 jobs:
@@ -23,7 +23,6 @@ jobs:
       - name: Setup AWS SAM CLI
         uses: aws-actions/setup-sam@v2
 
-      # Autenticação Segura (Shift-Left) sem chaves estáticas expostas
       - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,5 +39,9 @@ jobs:
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --parameter-overrides Environment=dev \
+            --parameter-overrides \
+              Environment=dev \
+              BdaProjectId="${{ secrets.BDA_PROJECT_ID }}" \
+              SageMakerWorkteamArn="${{ secrets.SAGEMAKER_WORKTEAM_ARN }}" \
+              A2iFlowDefinitionArn="${{ secrets.A2I_FLOW_DEFINITION_ARN }}" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND

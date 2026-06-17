@@ -10,14 +10,29 @@ Parameters:
     AllowedValues: [dev, prod]
     Description: Ambiente de implantacao (dev ou prod)
 
+  BdaProjectId:
+    Type: String
+    Default: "projeto-credifacil-bda-default"
+    Description: "ID do projeto criado no Bedrock Data Automation"
+
+  SageMakerWorkteamArn:
+    Type: String
+    Default: "arn:aws:sagemaker:us-east-1:123456789012:workteam/private-crowd/default"
+    Description: "ARN do time de revisores cadastrados no SageMaker"
+
+  A2iFlowDefinitionArn:
+    Type: String
+    Default: "arn:aws:sagemaker:us-east-1:123456789012:flow-definition/default"
+    Description: "ARN do fluxo de revisao humana do SageMaker A2I"
+
 Globals:
   Function:
     Runtime: python3.12
     Architectures: 
-      - x86_64 # RNF-05: Arquitetura Graviton2 para máxima eficiência e menor custo
+      - arm64 # 🚀 RNF-05: Arquitetura Graviton2 corrigida para máxima eficiência e menor custo
     Timeout: 30
     MemorySize: 256
-    Tracing: Active # RO-04: Ativa o rastreio distribuído do AWS X-Ray automaticamente
+    Tracing: Active
     Environment:
       Variables:
         ENV: !Ref Environment
@@ -87,7 +102,7 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
-  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito)
+  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito) — REINTEGRADO!
   # ==========================================================================
   CrediFacilUserPool:
     Type: AWS::Cognito::UserPool
@@ -126,27 +141,6 @@ Resources:
           Value: "true"
 
   # ==========================================================================
-  # 🤖 MOTOR DE INTELIGÊNCIA ARTIFICIAL (Amazon Bedrock)
-  # ==========================================================================
-  BedrockDataAutomationProject:
-    Type: AWS::Bedrock::DataAutomationProject
-    Properties:
-      ProjectName: !Sub "credifacil-idp-project-${Environment}"
-      ProjectDescription: 'Projeto automatizado para extração de documentos do caso CrediFácil'
-      ProjectType: 'ASYNC'
-      StandardOutputConfiguration:
-        Document:
-          Extraction:
-            Granularity:
-              Types:
-                - 'DOCUMENT'
-                - 'PAGE'
-            BoundingBox:
-              State: 'ENABLED'
-          GenerativeField:
-            State: 'ENABLED'
-
-  # ==========================================================================
   # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS)
   # ==========================================================================
   SnsTopicoConclusao:
@@ -173,13 +167,12 @@ Resources:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
           CognitoAuthorizer:
-            UserPoolArn: !GetAtt CrediFacilUserPool.Arn
+            UserPoolArn: !GetAtt CrediFacilUserPool.Arn # 👈 Vinculado dinamicamente ao seu pool real
             IdentitySource: method.request.header.Authorization
 
   # ==========================================================================
-  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA (Core & API)
+  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA
   # ==========================================================================
-
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -228,7 +221,7 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          BDA_PROJECT_ARN: !Ref BedrockDataAutomationProject
+          BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
       Policies:
         - Statement:
             - Sid: AllowBedrockAutomationAsync
@@ -365,104 +358,6 @@ Resources:
       LogGroupName: !Sub "/aws/vended/states/credifacil-idp-pipeline-${Environment}"
       RetentionInDays: 7
 
-  # ==========================================================================
-  # 👥 CAMADA DE AUDITORIA HUMANA DECLARATIVA (Amazon A2I / SageMaker)
-  # ==========================================================================
-  PrivateWorkforce:
-    Type: AWS::SageMaker::Workforce
-    Properties:
-      WorkforceName: !Sub "credifacil-force-${Environment}"
-      CognitoConfig:
-        UserPool: !Ref CrediFacilUserPool
-        ClientId: !Ref CrediFacilUserPoolClient
-
-  CrediFacilWorkTeam:
-    Type: AWS::SageMaker::Workteam
-    Properties:
-      WorkteamName: !Sub "credifacil-analistas-${Environment}"
-      WorkforceName: !Ref PrivateWorkforce
-      Description: 'Equipe para revisao humana A2I do CrediFacil'
-      MemberDefinitions:
-        - CognitoMemberDefinition:
-            UserPool: !Ref CrediFacilUserPool
-            UserGroup: !Ref CrediFacilProfissionalGroup
-            ClientId: !Ref CrediFacilUserPoolClient
-    DependsOn: PrivateWorkforce
-
-  CrediFacilA2IRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: sagemaker.amazonaws.com
-            Action: "sts:AssumeRole"
-      Policies:
-        - PolicyName: CrediFacilA2IS3Access
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - "s3:GetObject"
-                  - "s3:PutObject"
-                  - "s3:ListBucket"
-                Resource:
-                  - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}"
-                  - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}/*"
-
-  CrediFacilHumanTaskUi:
-    Type: AWS::SageMaker::HumanTaskUi
-    Properties:
-      HumanTaskUiName: !Sub "credifacil-review-ui-${Environment}"
-      UiTemplate:
-        Content: |
-          <script src="https://assets.crowd.aws/crowd-html-element.js"></script>
-          <crowd-form>
-            <div style="padding: 20px; font-family: Arial, sans-serif;">
-              <h2 style="color: #232f3e;">🚨 Revisão de Documentos Hipotecários — CrediFácil</h2>
-              <p>A inteligência artificial identificou baixa confiança na extração dos dados pessoais deste pacote. Por favor, revise e corrigja as informações abaixo.</p>
-              <div style="display: flex; gap: 20px; margin-top: 20px;">
-                <div style="flex: 1; background-color: #f2f3f3; padding: 15px; border-radius: 5px;">
-                  <h3>Campos Críticos Solicitados</h3>
-                  <p><strong>Nome Completo:</strong> Certifique-se de que não há abreviações incorretas.</p>
-                  <p><strong>CPF:</strong> Deve conter 11 dígitos. Corrija pontuações se necessário.</p>
-                  <p><strong>Data de Nascimento:</strong> Formato padrão esperado YYYY-MM-DD.</p>
-                </div>
-                <div style="flex: 1; background-color: #ffffff; padding: 15px; border: 1px solid #eaeded; border-radius: 5px;">
-                  <h3>Formulário de Ajuste</h3>
-                  <p>
-                    <label for="nome">Nome Completo do Cliente:</label><br>
-                    <crowd-input name="nome" value="{{ task.input.extractedFields.nome.value }}" required></crowd-input>
-                  </p>
-                  <p>
-                    <label for="cpf">CPF Formatado:</label><br>
-                    <crowd-input name="cpf" value="{{ task.input.extractedFields.cpf.value }}" required></crowd-input>
-                  </p>
-                  <p>
-                    <label for="data_nascimento">Data de Nascimento:</label><br>
-                    <crowd-input name="data_nascimento" value="{{ task.input.extractedFields.data_nascimento.value }}" type="date" required></crowd-input>
-                  </p>
-                </div>
-              </div>
-            </div>
-          </crowd-form>
-
-  CrediFacilFlowDefinition:
-    Type: AWS::SageMaker::FlowDefinition
-    Properties:
-      FlowDefinitionName: !Sub "credifacil-pipeline-flow-${Environment}"
-      RoleArn: !GetAtt CrediFacilA2IRole.Arn
-      HumanLoopConfig:
-        HumanTaskUiArn: !Ref CrediFacilHumanTaskUi
-        TaskTitle: "Revisão de Confiança - CrediFácil"
-        TaskDescription: "Auditoria de dados extraídos com baixa confiança."
-        WorkteamArn: !GetAtt CrediFacilWorkTeam.WorkteamArn # 👈 100% Automatizado e Dinâmico!
-      OutputConfig:
-        S3OutputPath: !Sub "s3://credifacil-docs-saida-${Environment}/a2i-results/"
-
   A2iTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -470,7 +365,7 @@ Resources:
       Handler: handler.handler
       Environment:
         Variables:
-          A2I_FLOW_DEFINITION_ARN: !Ref CrediFacilFlowDefinition
+          A2I_FLOW_DEFINITION_ARN: !Ref A2iFlowDefinitionArn
       Policies:
         - Statement:
             - Sid: AllowSageMakerA2I
@@ -483,10 +378,10 @@ Outputs:
     Description: URL Base da API REST no API Gateway para consumo do Frontend
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
 
-  UserPoolId:
+  UserPoolId: # 🚀 Exposto para automação e gerência de usuários
     Description: ID do User Pool do Cognito gerado para o ambiente
     Value: !Ref CrediFacilUserPool
 
-  UserPoolClientId:
+  UserPoolClientId: # 🚀 Exposto para autenticação no Front-end / Postman
     Description: ID do Client do Cognito para autenticação
     Value: !Ref CrediFacilUserPoolClient
