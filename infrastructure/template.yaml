@@ -34,23 +34,8 @@ Globals:
 
 Resources:
   # ==========================================================================
-  # 🔑 CAMADA DE SEGURANÇA E ARMAZENAMENTO BASE
+  # 🔑 CAMADA DE ARMAZENAMENTO BASE (Criptografia Nativa AWS)
   # ==========================================================================
-  CrediFacilKmsKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: !Sub "Chave KMS para criptografia em repouso - CrediFacil (${Environment})"
-      Enabled: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: Permitir uso total da chave pela conta raiz
-            Effect: Allow
-            Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-            Action: "kms:*"
-            Resource: "*"
-
   BucketEntrada:
     Type: AWS::S3::Bucket
     Properties:
@@ -66,10 +51,6 @@ Resources:
     Properties:
       TableName: !Sub "credifacil-pacotes-${Environment}"
       BillingMode: PAY_PER_REQUEST
-      SSESpecification:
-        SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !Ref CrediFacilKmsKey
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -82,22 +63,20 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
-  # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS)
+  # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS - Criptografia Default)
   # ==========================================================================
   SnsTopicoConclusao:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "credifacil-conclusao-${Environment}"
-      KmsMasterKeyId: !Ref CrediFacilKmsKey
 
   SnsTopicoErros:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "credifacil-erros-${Environment}"
-      KmsMasterKeyId: !Ref CrediFacilKmsKey
 
   # ==========================================================================
-  # 🌐 CAMADA DE ROTEAMENTO (Amazon API Gateway REST - Sem travas de Cognito)
+  # 🌐 CAMADA DE ROTEAMENTO (Amazon API Gateway REST)
   # ==========================================================================
   CrediFacilRestApi:
     Type: AWS::Serverless::Api
@@ -202,15 +181,6 @@ Resources:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
-        - Version: '2012-10-17'
-          Statement: 
-            - Sid: AllowKMSOperationsForPersistence
-              Effect: Allow
-              Action:
-                - "kms:Encrypt"
-                - "kms:Decrypt"
-                - "kms:GenerateDataKey"
-              Resource: !GetAtt CrediFacilKmsKey.Arn
 
   QueryHandlerFunction:
     Type: AWS::Serverless::Function
