@@ -7,11 +7,10 @@ from src.shared.models import LoanPackageOutput
 
 logger = Logger(service="nova-structurer")
 
-# Inicialização dos clientes fora do handler para otimização de Cold Start
 s3_client = boto3.client("s3")
+# Cliente de runtime do Bedrock para chamadas de inferência
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-# Prompt de Sistema para blindar o comportamento do Modelo (DevSecOps Mindset)
 PROMPT_SISTEMA = (
     "Você é um especialista em auditoria de dados financeiros e hipotecários. "
     "Sua tarefa é analisar os dados brutos extraídos de documentos e acionar a ferramenta "
@@ -20,7 +19,7 @@ PROMPT_SISTEMA = (
 )
 
 def montar_payload_bedrock(dados_brutos: dict) -> dict:
-    """Prepara o corpo da requisição para a API Converse do Bedrock."""
+    """Prepara os parâmetros para a API Converse do Bedrock."""
     tool_config = {
         "tools": [obter_especificacao_ferramenta_loan()]
     }
@@ -33,14 +32,14 @@ def montar_payload_bedrock(dados_brutos: dict) -> dict:
     ]
     
     return {
-        "modelId": "amazon.nova-pro-v1:0", # Modelo Pro exigido no SRS
+        "modelId": "amazon.nova-pro-v1:0", 
         "messages": messages,
         "system": [{"text": PROMPT_SISTEMA}],
         "toolConfig": tool_config
     }
 
-def processar_resposta_bedrock(bedrock_response: dict, package_id: str, userId: str) -> dict:
-    """Captura a saída da ferramenta gerada pelo LLM e envelopa no modelo final de produção."""
+def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id: str) -> dict:
+    """Captura a saída da ferramenta gerada pelo LLM e envelopa no modelo de produção."""
     output_message = bedrock_response["output"]["message"]
     tool_requests = output_message.get("toolRequests", [])
     
@@ -66,7 +65,7 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, userId: 
         }
     }
     
-    # Validação em runtime: se a IA mandou algo fora do contrato, estoura o erro aqui!
+    # Validação em runtime via Pydantic
     validado = LoanPackageOutput(**payload_final)
     return validado.model_dump()
 
@@ -77,56 +76,47 @@ def handler(event, context):
         user_id = event.get("user_id", "sistema-anonimo")
         bucket_saida = event.get("bda_output_bucket")
         
-        # Prefixo base onde o BDA salvou os resultados desse pacote
         prefix_busca = f"bda-output/{package_id}/"
 
         logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
-        logger.info(f"Listando o prefixo {prefix_busca} no bucket {bucket_saida} para mapear a saída real do BDA")
 
-        # 🔍 SOLUÇÃO SÊNIOR: Lista tudo o que o BDA cuspiu dentro da pasta do pacote
+        # Lista os arquivos gerados pelo BDA no bucket de saída
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum arquivo gerado pelo BDA foi localizado no prefixo {prefix_busca}")
 
-        # Filtra todas as chaves encontradas que terminam com .json
         arquivos_json = [obj["Key"] for obj in s3_objects["Contents"] if obj["Key"].endswith(".json")]
         
         if not arquivos_json:
             raise FileNotFoundError(f"Nenhum arquivo JSON de extração foi encontrado no prefixo {prefix_busca}")
 
-        logger.info(f"Arquivos JSON encontrados no bucket de saída: {arquivos_json}")
-        
-        # Mapeia dinamicamente a chave real do arquivo gerado pelo Bedrock
         key_real_bda = arquivos_json[0]
-        logger.info(f"Puxando dados extraídos diretamente do arquivo real da AWS: {key_real_bda}")
+        logger.info(f"Mapeado arquivo de extração do BDA com sucesso: {key_real_bda}")
 
-        # 1. Busca o conteúdo do arquivo JSON dinâmico diretamente no S3
-        try:
-            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
-            bda_raw_content = s3_response["Body"].read().decode("utf-8")
-            dados_brutos = json.loads(bda_raw_content)
-        except Exception as s3_err:
-            logger.error(f"Falha ao ler o arquivo intermediário do BDA no S3 ({key_real_bda}): {str(s3_err)}")
-            raise s3_err
+        # Baixa os dados brutos extraídos pelo BDA
+        s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
+        bda_raw_content = s3_response["Body"].read().decode("utf-8")
+        dados_brutos = json.loads(bda_raw_content)
 
-        # 2. Prepara o payload seguindo as especificações da API do Bedrock
-        payload_bedrock = montar_payload_bedrock(dados_brutos)
-        model_id = payload_bedrock.pop("modelId")
-
-        # 3. Invoca o modelo Amazon Nova Pro via Bedrock Runtime
-        logger.info(f"Invocando o modelo {model_id} via Bedrock Runtime...")
-        response = bedrock_runtime.invoke_model(
-            modelId=model_id,
-            body=json.dumps(payload_bedrock)
+        # Prepara os parâmetros estruturados da chamada
+        params = montar_payload_bedrock(dados_brutos)
+        
+        # 🚀 CORREÇÃO CRÍTICA: Substituição do invoke_model por converse()
+        # Forçamos o uso do toolChoice para garantir o retorno da ferramenta de forma determinística
+        logger.info(f"Invocando o modelo {params['modelId']} via API Converse do Bedrock...")
+        response = bedrock_runtime.converse(
+            modelId=params["modelId"],
+            messages=params["messages"],
+            system=params["system"],
+            toolConfig=params["toolConfig"],
+            toolChoice={"tool": {"name": "estruturar_dados_solicitacao_credito"}}
         )
 
-        response_body = json.loads(response["body"].read().decode("utf-8"))
+        # Processa e valida a resposta unificada da API Converse
+        resultado_ia = processar_resposta_bedrock(response, package_id, user_id)
 
-        # 4. Processa a resposta do modelo e valida usando o Pydantic Model
-        resultado_ia = processar_resposta_bedrock(response_body, package_id, user_id)
-
-        # 5. RETORNO ESTRUTURADO: Alinha o contrato exato que a ResultWriter espera receber
+        # Retorna o mapa de saída esperado pelo ResultWriterFunction
         return {
             "package_id": package_id,
             "user_id": user_id,
