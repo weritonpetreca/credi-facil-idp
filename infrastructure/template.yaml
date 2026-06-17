@@ -328,7 +328,7 @@ Resources:
     Properties:
       Name: !Sub "credifacil-idp-pipeline-${Environment}"
       DefinitionUri: ../state_machines/idp_pipeline.json
-      Role: !GetAtt CrediFacilStateMachineRole.Arn # 🚀 Bypassa o SAM e usa a nossa Role real
+      Role: !GetAtt CrediFacilStateMachineRole.Arn
       DefinitionSubstitutions:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
@@ -344,7 +344,7 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
 
-  # 🛡️ ROLE CONTROLADA: Criada explicitamente para garantir que a AWS aplique as permissoes de log
+  # 🛡️ ROLE ISOLADA: Bypassa o bug do SAM e garante permissões de log nativas
   CrediFacilStateMachineRole:
     Type: AWS::IAM::Role
     Properties:

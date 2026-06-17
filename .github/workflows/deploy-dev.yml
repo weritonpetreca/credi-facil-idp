@@ -26,8 +26,9 @@ jobs:
       - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: us-east-1
+          audience: sts.amazonaws.com
 
       - name: SAM Build Application
         run: sam build --template-file infrastructure/template.yaml
@@ -72,20 +73,3 @@ jobs:
               SageMakerWorkteamArn="$WT_VAL" \
               A2iFlowDefinitionArn="$A2I_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
-
-      # 💥 DEBUG AUTOMÁTICO VIA API DE CHANGE SET
-      - name: Fetch CloudFormation ChangeSet Error Details on Failure
-        if: failure()
-        run: |
-          echo "=================== DETALHES DO ERRO REAL DO CHANGESET ==================="
-          LATEST_CS=$(aws cloudformation list-change-sets --stack-name credifacil-idp-dev --query "Summaries[0].ChangeSetName" --output text)
-          if [ "$LATEST_CS" != "None" ] && [ -n "$LATEST_CS" ]; then
-            aws cloudformation describe-change-set \
-              --stack-name credifacil-idp-dev \
-              --change-set-name "$LATEST_CS" \
-              --query "StatusReason" \
-              --output text
-          else
-            echo "Nenhum ChangeSet encontrado para inspecionar."
-          fi
-          echo "=========================================================================="
