@@ -156,6 +156,10 @@ Resources:
         Variables:
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
       Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - Statement:
             - Sid: AllowBedrockAutomationAsync
               Effect: Allow
