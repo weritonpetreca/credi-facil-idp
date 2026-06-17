@@ -8,7 +8,7 @@ from src.shared.models import LoanPackageOutput
 logger = Logger(service="nova-structurer")
 
 s3_client = boto3.client("s3")
-# Cliente de runtime do Bedrock para chamadas de inferência
+# Cliente de runtime do Bedrock para chamadas de inferência de alta performance
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PROMPT_SISTEMA = (
@@ -19,9 +19,11 @@ PROMPT_SISTEMA = (
 )
 
 def montar_payload_bedrock(dados_brutos: dict) -> dict:
-    """Prepara os parâmetros para a API Converse do Bedrock."""
+    """Prepara os parâmetros estruturados para a API Converse do Bedrock."""
     tool_config = {
-        "tools": [obter_especificacao_ferramenta_loan()]
+        "tools": [obter_especificacao_ferramenta_loan()],
+        # 🚀 FIX: No Boto3 Converse API, o determinismo do toolChoice é injetado DENTRO de toolConfig
+        "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
     }
     
     messages = [
@@ -65,7 +67,7 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id:
         }
     }
     
-    # Validação em runtime via Pydantic
+    # Validação rigorosa em runtime via Pydantic
     validado = LoanPackageOutput(**payload_final)
     return validado.model_dump()
 
@@ -80,7 +82,7 @@ def handler(event, context):
 
         logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
 
-        # Lista os arquivos gerados pelo BDA no bucket de saída
+        # Lista os arquivos gerados pelo BDA no bucket de saída de forma resiliente
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -94,29 +96,27 @@ def handler(event, context):
         key_real_bda = arquivos_json[0]
         logger.info(f"Mapeado arquivo de extração do BDA com sucesso: {key_real_bda}")
 
-        # Baixa os dados brutos extraídos pelo BDA
+        # Efetua a leitura do JSON bruto do BDA
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
         bda_raw_content = s3_response["Body"].read().decode("utf-8")
         dados_brutos = json.loads(bda_raw_content)
 
-        # Prepara os parâmetros estruturados da chamada
+        # Prepara as variáveis de injeção da IA
         params = montar_payload_bedrock(dados_brutos)
         
-        # 🚀 CORREÇÃO CRÍTICA: Substituição do invoke_model por converse()
-        # Forçamos o uso do toolChoice para garantir o retorno da ferramenta de forma determinística
+        # 🚀 CHAMADA CORRIGIDA: Parâmetros limpos e mapeados conforme o contrato nativo do SDK
         logger.info(f"Invocando o modelo {params['modelId']} via API Converse do Bedrock...")
         response = bedrock_runtime.converse(
             modelId=params["modelId"],
             messages=params["messages"],
             system=params["system"],
-            toolConfig=params["toolConfig"],
-            toolChoice={"tool": {"name": "estruturar_dados_solicitacao_credito"}}
+            toolConfig=params["toolConfig"]
         )
 
-        # Processa e valida a resposta unificada da API Converse
+        # Processa e valida os dados limpos gerados pelo Amazon Nova Pro
         resultado_ia = processar_resposta_bedrock(response, package_id, user_id)
 
-        # Retorna o mapa de saída esperado pelo ResultWriterFunction
+        # Retorna o payload assinado que a Lambda de escrita no banco/S3 precisa persistir
         return {
             "package_id": package_id,
             "user_id": user_id,
