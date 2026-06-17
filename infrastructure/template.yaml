@@ -328,6 +328,7 @@ Resources:
     Properties:
       Name: !Sub "credifacil-idp-pipeline-${Environment}"
       DefinitionUri: ../state_machines/idp_pipeline.json
+      Role: !GetAtt CrediFacilStateMachineRole.Arn # 🚀 Bypassa o SAM e usa a nossa Role real
       DefinitionSubstitutions:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
@@ -342,36 +343,47 @@ Resources:
               LogGroupArn: !GetAtt CrediFacilStateMachineLogGroup.Arn
         IncludeExecutionData: true
         Level: ALL
+
+  # 🛡️ ROLE CONTROLADA: Criada explicitamente para garantir que a AWS aplique as permissoes de log
+  CrediFacilStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
-        - Version: '2012-10-17'
-          Statement:
-            - Sid: AllowStepFunctionsCloudWatchLogging
-              Effect: Allow
-              Action:
-                - "logs:CreateLogDelivery"
-                - "logs:GetLogDelivery"
-                - "logs:UpdateLogDelivery"
-                - "logs:DeleteLogDelivery"
-                - "logs:ListLogDeliveries"
-                - "logs:PutLogEvents"
-                - "logs:CreateLogStream"
-                - "logs:DescribeLogGroups"
-                - "logs:DescribeLogStreams"
-              Resource: "*"
-        - LambdaInvokePolicy:
-            FunctionName: !Ref BdaInvokerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref BdaStatusPollerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ConfidenceCheckerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref A2iTriggerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref NovaStructurerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ResultWriterFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref NotificationFunction
+        - PolicyName: CrediFacilStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowCloudWatchLogging
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogDelivery"
+                  - "logs:GetLogDelivery"
+                  - "logs:UpdateLogDelivery"
+                  - "logs:DeleteLogDelivery"
+                  - "logs:ListLogDeliveries"
+                  - "logs:PutLogEvents"
+                  - "logs:CreateLogStream"
+                  - "logs:DescribeLogGroups"
+                  - "logs:DescribeLogStreams"
+                Resource: "*"
+              - Sid: AllowLambdaInvocation
+                Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource:
+                  - !GetAtt BdaInvokerFunction.Arn
+                  - !GetAtt BdaStatusPollerFunction.Arn
+                  - !GetAtt ConfidenceCheckerFunction.Arn
+                  - !GetAtt A2iTriggerFunction.Arn
+                  - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt ResultWriterFunction.Arn
+                  - !GetAtt NotificationFunction.Arn
 
   CrediFacilStateMachineLogGroup:
     Type: AWS::Logs::LogGroup
