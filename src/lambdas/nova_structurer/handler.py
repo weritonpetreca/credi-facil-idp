@@ -2,7 +2,7 @@ import json
 import os
 import boto3
 from aws_lambda_powertools import Logger
-from src.shared.tools import obtener_especificacao_ferramenta_loan
+from src.shared.tools import obter_especificacao_ferramenta_loan
 from src.shared.models import LoanPackageOutput
 
 logger = Logger(service="nova-structurer")
@@ -20,6 +20,7 @@ PROMPT_SISTEMA = (
 def montar_payload_bedrock(dados_brutos: dict) -> dict:
     """Prepara os parâmetros estruturados para a API Converse do Bedrock."""
     tool_config = {
+        # 🚀 CORREÇÃO: Garante o uso do nome correto da função aqui também
         "tools": [obter_especificacao_ferramenta_loan()],
         "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
     }
@@ -57,7 +58,6 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id:
     if isinstance(dados_extraidos_ia, str):
         dados_extraidos_ia = json.loads(dados_extraidos_ia)
         
-    # Envelopa os dados conforme o novo contrato internacionalizado do sistema
     payload_final = {
         "package_id": package_id,
         "status": "COMPLETED",
@@ -87,7 +87,6 @@ def handler(event, context):
 
         logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
 
-        # Lista os arquivos gerados pelo BDA no bucket de saída de forma dinâmica
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -101,12 +100,10 @@ def handler(event, context):
         key_real_bda = arquivos_json[0]
         logger.info(f"Mapeado arquivo de extração do BDA com sucesso: {key_real_bda}")
 
-        # Efetua a leitura do JSON bruto do BDA
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
         bda_raw_content = s3_response["Body"].read().decode("utf-8")
         dados_brutos = json.loads(bda_raw_content)
 
-        # Prepara as variáveis de injeção da IA
         params = montar_payload_bedrock(dados_brutos)
         
         logger.info(f"Invocando o modelo {params['modelId']} via API Converse do Bedrock...")
@@ -117,7 +114,6 @@ def handler(event, context):
             toolConfig=params["toolConfig"]
         )
 
-        # Processa e valida os dados limpos gerados pelo Amazon Nova Pro
         resultado_ia = processar_resposta_bedrock(response, package_id, user_id)
 
         return {
