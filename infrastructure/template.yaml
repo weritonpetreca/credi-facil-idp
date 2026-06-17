@@ -12,7 +12,7 @@ Parameters:
 
   BdaProjectId:
     Type: String
-    Default: "projeto-credifacil-bda-default"
+    Default: "e020be1b735a"
     Description: "ID do projeto criado no Bedrock Data Automation"
 
 Globals:

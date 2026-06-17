@@ -24,7 +24,7 @@ def handler(event, context):
         logger.info(f"Iniciando Job assíncrono no BDA para o pacote {package_id}")
 
         # Dynamic ARNs adequados ao padrão GA do Bedrock
-        project_arn = f"arn:aws:bedrock:us-east-1:{account_id}:data-automation-project/{BDA_PROJECT_ID}"
+        project_arn = os.environ.get("BDA_PROJECT_ARN")
         profile_arn = f"arn:aws:bedrock:us-east-1:{account_id}:data-automation-profile/us.data-automation-v1"
 
         # 🚀 CONTRATO ATUALIZADO: Parâmetros mapeados conforme a especificação GA da AWS
