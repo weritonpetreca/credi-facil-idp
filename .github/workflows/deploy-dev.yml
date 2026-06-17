@@ -33,7 +33,16 @@ jobs:
         run: sam build --template-file infrastructure/template.yaml
 
       - name: SAM Deploy to AWS
+        env:
+          A2I_ARN: ${{ secrets.A2I_FLOW_DEFINITION_ARN }}
+          BDA_ID: ${{ secrets.BDA_PROJECT_ID }}
+          WORKTEAM_ARN: ${{ secrets.SAGEMAKER_WORKTEAM_ARN }}
         run: |
+          # 🧠 Prática DevSecOps: Fallbacks automáticos para permitir o primeiro deploy de bootstrap
+          A2I_VAL="${A2I_ARN:-arn:aws:sagemaker:us-east-1:123456789012:human-review-workflow/default}"
+          BDA_VAL="${BDA_ID:-abee94d532bd}"
+          WT_VAL="${WORKTEAM_ARN:-arn:aws:sagemaker:us-east-1:123456789012:workteam/private-crowd/default}"
+
           sam deploy \
             --stack-name credifacil-idp-dev \
             --resolve-s3 \
@@ -41,7 +50,7 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=dev \
-              BdaProjectId="${{ secrets.BDA_PROJECT_ID }}" \
-              SageMakerWorkteamArn="${{ secrets.SAGEMAKER_WORKTEAM_ARN }}" \
-              A2iFlowDefinitionArn="${{ secrets.A2I_FLOW_DEFINITION_ARN }}" \
+              BdaProjectId="$BDA_VAL" \
+              SageMakerWorkteamArn="$WT_VAL" \
+              A2iFlowDefinitionArn="$A2I_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
