@@ -343,7 +343,8 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
       Policies:
-        - Statement:
+        - Version: '2012-10-17'
+          Statement:
             - Sid: AllowStepFunctionsCloudWatchLogging
               Effect: Allow
               Action:
