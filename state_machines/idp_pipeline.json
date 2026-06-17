@@ -1,19 +1,18 @@
 {
-  "Comment": "Orquestrador Core do Pipeline IDP - CrediFácil",
+  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil",
   "StartAt": "InvokeBDA",
   "States": {
     "InvokeBDA": {
       "Type": "Task",
       "Resource": "${BdaInvokerArn}",
-      "Next": "WaitBDA",
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "NotifyError" }]
+      "Next": "WaitForBDA"
     },
-    "WaitBDA": {
+    "WaitForBDA": {
       "Type": "Wait",
-      "Seconds": 30,
-      "Next": "PollBDAStatus"
+      "Seconds": 10,
+      "Next": "GetBDAStatus"
     },
-    "PollBDAStatus": {
+    "GetBDAStatus": {
       "Type": "Task",
       "Resource": "${BdaStatusPollerArn}",
       "Next": "CheckBDAStatus"
@@ -21,33 +20,22 @@
     "CheckBDAStatus": {
       "Type": "Choice",
       "Choices": [
-        { "Variable": "$.status_bda", "StringEquals": "IN_PROGRESS", "Next": "WaitBDA" },
-        { "Variable": "$.status_bda", "StringEquals": "COMPLETED", "Next": "CheckConfidence" },
-        { "Variable": "$.status_bda", "StringEquals": "FAILED", "Next": "NotifyError" }
-      ]
-    },
-    "CheckConfidence": {
-      "Type": "Task",
-      "Resource": "${ConfidenceCheckerArn}",
-      "Next": "RoutingDecision"
-    },
-    "RoutingDecision": {
-      "Type": "Choice",
-      "Choices": [
-        { "Variable": "$.needs_human_review", "BooleanEquals": true, "Next": "TriggerA2I" },
-        { "Variable": "$.needs_human_review", "BooleanEquals": false, "Next": "StructureWithNova" }
-      ]
-    },
-    "TriggerA2I": {
-      "Type": "Task",
-      "Resource": "${A2iTriggerArn}",
-      "Next": "StructureWithNova"
+        {
+          "Variable": "$.status",
+          "StringEquals": "SUCCESS",
+          "Next": "StructureWithNova"
+        },
+        {
+          "Variable": "$.status",
+          "StringEquals": "FAILED",
+          "Next": "NotifyError"
+        }
+      ],
+      "Default": "WaitForBDA"
     },
     "StructureWithNova": {
       "Type": "Task",
       "Resource": "${NovaStructurerArn}",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 10, "MaxAttempts": 2, "BackoffRate": 2.0 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "NotifyError" }],
       "Next": "WriteResult"
     },
     "WriteResult": {
@@ -58,19 +46,11 @@
     "NotifySuccess": {
       "Type": "Task",
       "Resource": "${NotificationArn}",
-      "Parameters": { "package_id.$": "$.package_id", "execution_status": "SUCCESS" },
       "End": true
     },
     "NotifyError": {
       "Type": "Task",
       "Resource": "${NotificationArn}",
-      "Parameters": { "package_id.$": "$.package_id", "execution_status": "ERROR", "error_message": "Falha crítica no pipeline." },
-      "Next": "MarkFailed"
-    },
-    "MarkFailed": {
-      "Type": "Task",
-      "Resource": "${ResultWriterArn}",
-      "Parameters": { "package_id.$": "$.package_id", "status": "FAILED" },
       "End": true
     }
   }
