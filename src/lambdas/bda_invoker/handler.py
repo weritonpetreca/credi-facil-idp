@@ -10,7 +10,7 @@ logger = Logger(service="bda-invoker")
 bedrock_client = boto3.client("bedrock")
 
 # Configurações externalizadas via variáveis de ambiente injetadas pelo SAM
-BDA_PROJECT_ID = os.environ.get("BDA_PROJECT_ID", "projeto-credifacil-bda-default")
+BDA_PROJECT_ARN = os.environ.get("BDA_PROJECT_ARN")
 
 def handler(event, context):
     try:
@@ -28,7 +28,7 @@ def handler(event, context):
 
         # Chamada oficial da API Converse/Data Automation Assíncrona do Bedrock
         response = bedrock_client.invoke_data_automation_async(
-            dataAutomationProjectArn=f"arn:aws:bedrock:us-east-1:{boto3.client('sts').get_caller_identity()['Account']}:data-automation-project/{BDA_PROJECT_ID}",
+            dataAutomationProjectArn=BDA_PROJECT_ARN,
             inputConfiguration={"s3Uri": input_s3_uri},
             outputConfiguration={"s3Uri": f"s3://{bucket_saida}/{prefixo_saida}"}
         )

@@ -13,7 +13,8 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.12
-    Architecture: arm64 # RNF-05: Arquitetura Graviton2 para máxima eficiência e menor custo
+    Architectures: 
+      - x86_64 # RNF-05: Arquitetura Graviton2 para máxima eficiência e menor custo
     Timeout: 30
     MemorySize: 256
     Tracing: Active # RO-04: Ativa o rastreio distribuído do AWS X-Ray automaticamente
@@ -86,6 +87,66 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
+  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito)
+  # ==========================================================================
+  CrediFacilUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "credifacil-users-${Environment}"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+  CrediFacilUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "credifacil-web-client-${Environment}"
+      UserPoolId: !Ref CrediFacilUserPool
+      GenerateSecret: false
+
+  CrediFacilProfissionalGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: "Profissional"
+      Description: "Grupo de profissionais e analistas de crédito do CrediFácil"
+      UserPoolId: !Ref CrediFacilUserPool
+
+  CrediFacilAdminUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      UserPoolId: !Ref CrediFacilUserPool
+      Username: "admin@credifacil.com.br"
+      UserAttributes:
+        - Name: email
+          Value: "admin@credifacil.com.br"
+        - Name: email_verified
+          Value: "true"
+
+  # ==========================================================================
+  # 🤖 MOTOR DE INTELIGÊNCIA ARTIFICIAL (Amazon Bedrock)
+  # ==========================================================================
+  BedrockDataAutomationProject:
+    Type: AWS::Bedrock::DataAutomationProject
+    Properties:
+      ProjectName: !Sub "credifacil-idp-project-${Environment}"
+      ProjectDescription: 'Projeto automatizado para extração de documentos do caso CrediFácil'
+      ProjectType: 'ASYNC'
+      StandardOutputConfiguration:
+        Document:
+          Extraction:
+            Granularity:
+              Types:
+                - 'DOCUMENT'
+                - 'PAGE'
+            BoundingBox:
+              State: 'ENABLED'
+          GenerativeField:
+            State: 'ENABLED'
+
+  # ==========================================================================
   # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS)
   # ==========================================================================
   SnsTopicoConclusao:
@@ -112,21 +173,20 @@ Resources:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
           CognitoAuthorizer:
-            UserPoolArn: !Sub "arn:aws:cognito-idp:us-east-1:${AWS::AccountId}:userpool/us-east-1_fakePoolId" # Substituído pelo ARN real no deploy
+            UserPoolArn: !GetAtt CrediFacilUserPool.Arn
             IdentitySource: method.request.header.Authorization
 
   # ==========================================================================
   # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA (Core & API)
   # ==========================================================================
 
-  # 1. Lambda: Pre-Signed URL (Emissão de Links de Ingestão)
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/lambdas/pre_signed_url/
       Handler: handler.handler
       Policies:
-        - S3CrudPolicy: # Permissão restrita para interagir com o Bucket de Entrada
+        - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
       Events:
         ApiGatewayTrigger:
@@ -136,12 +196,14 @@ Resources:
             Method: post
             RestApiId: !Ref CrediFacilRestApi
 
-  # 2. Lambda: Pipeline Trigger (Validação e Ignição da Esteira)
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/lambdas/pipeline_trigger/
       Handler: handler.handler
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -158,13 +220,15 @@ Resources:
             Method: post
             RestApiId: !Ref CrediFacilRestApi
 
-  # 3. Lambda: BDA Invoker (Disparo assíncrono do motor de IA)
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/lambdas/bda_invoker/
       Handler: handler.handler
       MemorySize: 512
+      Environment:
+        Variables:
+          BDA_PROJECT_ARN: !Ref BedrockDataAutomationProject
       Policies:
         - Statement:
             - Sid: AllowBedrockAutomationAsync
@@ -174,7 +238,6 @@ Resources:
                 - "sts:GetCallerIdentity"
               Resource: "*"
 
-  # 4. Lambda: BDA Status Poller (Monitor do estado da IA)
   BdaStatusPollerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -187,7 +250,6 @@ Resources:
               Action: "bedrock:GetDataAutomationStatus"
               Resource: "*"
 
-  # 5. Lambda: Confidence Checker (Roteador de Limiar)
   ConfidenceCheckerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -197,22 +259,20 @@ Resources:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
 
-  # 6. Lambda: Nova Structurer (LLM Tool Calling)
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/lambdas/nova_structurer/
       Handler: handler.handler
-      MemorySize: 1024 # Maior footprint de memória necessário para processar chamadas complexas de LLM
-      Timeout: 120    # Timeout estendido para mitigar variações de latência de inferência de IA
+      MemorySize: 1024
+      Timeout: 120
       Policies:
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
               Action: "bedrock:InvokeModel"
-              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0" # Escopo restrito ao modelo do Case
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
 
-  # 7. Lambda: Result Writer (Persistência Final)
   ResultWriterFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -223,10 +283,15 @@ Resources:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
-        - KMSSrudPolicy: # Permissão para usar a chave criptográfica nos salvamentos
-            KmsKeyArn: !GetAtt CrediFacilKmsKey.Arn
+        - Statement: 
+            - Sid: AllowKMSOperationsForPersistence
+              Effect: Allow
+              Action:
+                - "kms:Encrypt"
+                - "kms:Decrypt"
+                - "kms:GenerateDataKey"
+              Resource: !GetAtt CrediFacilKmsKey.Arn
 
-  # 8. Lambda: Query Handler (Leitura síncrona REST)
   QueryHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -245,7 +310,6 @@ Resources:
             Method: get
             RestApiId: !Ref CrediFacilRestApi
 
-  # 9. Lambda: Notification (Mensageria e Alertas)
   NotificationFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -253,9 +317,9 @@ Resources:
       Handler: handler.handler
       Policies:
         - SNSPublishMessagePolicy:
-            TopicArn: !Ref SnsTopicoConclusao
+            TopicName: !GetAtt SnsTopicoConclusao.TopicName
         - SNSPublishMessagePolicy:
-            TopicArn: !Ref SnsTopicoErros
+            TopicName: !GetAtt SnsTopicoErros.TopicName
 
   # ==========================================================================
   # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
@@ -280,7 +344,6 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
       Policies:
-        # Permissões mínimas para a máquina chamar todas as nossas Lambdas
         - LambdaInvokePolicy:
             FunctionName: !Ref BdaInvokerFunction
         - LambdaInvokePolicy:
@@ -296,19 +359,118 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref NotificationFunction
 
-  # Grupo de Logs para monitoramento do Workflow via CloudWatch
   CrediFacilStateMachineLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/vended/states/credifacil-idp-pipeline-${Environment}"
       RetentionInDays: 7
 
-  # Nova declaração da Lambda A2I para o template refletir o código acima
+  # ==========================================================================
+  # 👥 CAMADA DE AUDITORIA HUMANA DECLARATIVA (Amazon A2I / SageMaker)
+  # ==========================================================================
+  PrivateWorkforce:
+    Type: AWS::SageMaker::Workforce
+    Properties:
+      WorkforceName: !Sub "credifacil-force-${Environment}"
+      CognitoConfig:
+        UserPool: !Ref CrediFacilUserPool
+        ClientId: !Ref CrediFacilUserPoolClient
+
+  CrediFacilWorkTeam:
+    Type: AWS::SageMaker::Workteam
+    Properties:
+      WorkteamName: !Sub "credifacil-analistas-${Environment}"
+      WorkforceName: !Ref PrivateWorkforce
+      Description: 'Equipe para revisao humana A2I do CrediFacil'
+      MemberDefinitions:
+        - CognitoMemberDefinition:
+            UserPool: !Ref CrediFacilUserPool
+            UserGroup: !Ref CrediFacilProfissionalGroup
+            ClientId: !Ref CrediFacilUserPoolClient
+    DependsOn: PrivateWorkforce
+
+  CrediFacilA2IRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: CrediFacilA2IS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}"
+                  - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}/*"
+
+  CrediFacilHumanTaskUi:
+    Type: AWS::SageMaker::HumanTaskUi
+    Properties:
+      HumanTaskUiName: !Sub "credifacil-review-ui-${Environment}"
+      UiTemplate:
+        Content: |
+          <script src="https://assets.crowd.aws/crowd-html-element.js"></script>
+          <crowd-form>
+            <div style="padding: 20px; font-family: Arial, sans-serif;">
+              <h2 style="color: #232f3e;">🚨 Revisão de Documentos Hipotecários — CrediFácil</h2>
+              <p>A inteligência artificial identificou baixa confiança na extração dos dados pessoais deste pacote. Por favor, revise e corrigja as informações abaixo.</p>
+              <div style="display: flex; gap: 20px; margin-top: 20px;">
+                <div style="flex: 1; background-color: #f2f3f3; padding: 15px; border-radius: 5px;">
+                  <h3>Campos Críticos Solicitados</h3>
+                  <p><strong>Nome Completo:</strong> Certifique-se de que não há abreviações incorretas.</p>
+                  <p><strong>CPF:</strong> Deve conter 11 dígitos. Corrija pontuações se necessário.</p>
+                  <p><strong>Data de Nascimento:</strong> Formato padrão esperado YYYY-MM-DD.</p>
+                </div>
+                <div style="flex: 1; background-color: #ffffff; padding: 15px; border: 1px solid #eaeded; border-radius: 5px;">
+                  <h3>Formulário de Ajuste</h3>
+                  <p>
+                    <label for="nome">Nome Completo do Cliente:</label><br>
+                    <crowd-input name="nome" value="{{ task.input.extractedFields.nome.value }}" required></crowd-input>
+                  </p>
+                  <p>
+                    <label for="cpf">CPF Formatado:</label><br>
+                    <crowd-input name="cpf" value="{{ task.input.extractedFields.cpf.value }}" required></crowd-input>
+                  </p>
+                  <p>
+                    <label for="data_nascimento">Data de Nascimento:</label><br>
+                    <crowd-input name="data_nascimento" value="{{ task.input.extractedFields.data_nascimento.value }}" type="date" required></crowd-input>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </crowd-form>
+
+  CrediFacilFlowDefinition:
+    Type: AWS::SageMaker::FlowDefinition
+    Properties:
+      FlowDefinitionName: !Sub "credifacil-pipeline-flow-${Environment}"
+      RoleArn: !GetAtt CrediFacilA2IRole.Arn
+      HumanLoopConfig:
+        HumanTaskUiArn: !Ref CrediFacilHumanTaskUi
+        TaskTitle: "Revisão de Confiança - CrediFácil"
+        TaskDescription: "Auditoria de dados extraídos com baixa confiança."
+        WorkteamArn: !GetAtt CrediFacilWorkTeam.WorkteamArn # 👈 100% Automatizado e Dinâmico!
+      OutputConfig:
+        S3OutputPath: !Sub "s3://credifacil-docs-saida-${Environment}/a2i-results/"
+
   A2iTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/lambdas/a2i_trigger/
       Handler: handler.handler
+      Environment:
+        Variables:
+          A2I_FLOW_DEFINITION_ARN: !Ref CrediFacilFlowDefinition
       Policies:
         - Statement:
             - Sid: AllowSageMakerA2I
@@ -320,3 +482,11 @@ Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway para consumo do Frontend
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
+
+  UserPoolId:
+    Description: ID do User Pool do Cognito gerado para o ambiente
+    Value: !Ref CrediFacilUserPool
+
+  UserPoolClientId:
+    Description: ID do Client do Cognito para autenticação
+    Value: !Ref CrediFacilUserPoolClient
