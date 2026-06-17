@@ -76,17 +76,38 @@ def handler(event, context):
         package_id = event.get("package_id")
         user_id = event.get("user_id", "sistema-anonimo")
         bucket_saida = event.get("bda_output_bucket")
-        key_saida = event.get("bda_output_key")
+        
+        # Prefixo base onde o BDA salvou os resultados desse pacote
+        prefix_busca = f"bda-output/{package_id}/"
 
         logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
+        logger.info(f"Listando o prefixo {prefix_busca} no bucket {bucket_saida} para mapear a saída real do BDA")
 
-        # 1. Busca o arquivo JSON intermediário gerado pelo BDA diretamente no S3
+        # 🔍 SOLUÇÃO SÊNIOR: Lista tudo o que o BDA cuspiu dentro da pasta do pacote
+        s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
+        
+        if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
+            raise FileNotFoundError(f"Nenhum arquivo gerado pelo BDA foi localizado no prefixo {prefix_busca}")
+
+        # Filtra todas as chaves encontradas que terminam com .json
+        arquivos_json = [obj["Key"] for obj in s3_objects["Contents"] if obj["Key"].endswith(".json")]
+        
+        if not arquivos_json:
+            raise FileNotFoundError(f"Nenhum arquivo JSON de extração foi encontrado no prefixo {prefix_busca}")
+
+        logger.info(f"Arquivos JSON encontrados no bucket de saída: {arquivos_json}")
+        
+        # Mapeia dinamicamente a chave real do arquivo gerado pelo Bedrock
+        key_real_bda = arquivos_json[0]
+        logger.info(f"Puxando dados extraídos diretamente do arquivo real da AWS: {key_real_bda}")
+
+        # 1. Busca o conteúdo do arquivo JSON dinâmico diretamente no S3
         try:
-            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_saida)
+            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
             bda_raw_content = s3_response["Body"].read().decode("utf-8")
             dados_brutos = json.loads(bda_raw_content)
         except Exception as s3_err:
-            logger.error(f"Falha ao ler o arquivo intermediário do BDA no S3 ({key_saida}): {str(s3_err)}")
+            logger.error(f"Falha ao ler o arquivo intermediário do BDA no S3 ({key_real_bda}): {str(s3_err)}")
             raise s3_err
 
         # 2. Prepara o payload seguindo as especificações da API do Bedrock
