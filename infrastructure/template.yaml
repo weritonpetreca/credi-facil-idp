@@ -188,6 +188,8 @@ Resources:
       MemorySize: 1024
       Timeout: 120
       Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
