@@ -14,11 +14,11 @@
           "type": "object",
           "properties": {
             "nome": { "type": "string" },
-            "cpf": { "type": "string", "pattern": "^\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}$" },
+            "documento_identificacao": { "type": "string" },
             "data_nascimento": { "type": "string", "format": "date" },
             "confianca": { "type": "number" }
           },
-          "required": ["nome", "cpf", "data_nascimento", "confianca"]
+          "required": ["nome", "documento_identificacao", "data_nascimento", "confianca"]
         }
       },
       "required": ["identidade"]

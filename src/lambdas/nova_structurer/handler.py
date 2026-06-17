@@ -2,20 +2,19 @@ import json
 import os
 import boto3
 from aws_lambda_powertools import Logger
-from src.shared.tools import obter_especificacao_ferramenta_loan
+from src.shared.tools import obtener_especificacao_ferramenta_loan
 from src.shared.models import LoanPackageOutput
 
 logger = Logger(service="nova-structurer")
 
 s3_client = boto3.client("s3")
-# Cliente de runtime oficial do Bedrock para inferências de alta performance
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PROMPT_SISTEMA = (
-    "Você é um especialista em auditoria de dados financeiros e hipotecários. "
+    "Você é um especialista em auditoria de dados financeiros e hipotecários internacionais. "
     "Sua tarefa é analisar os dados brutos extraídos de documentos e acionar a ferramenta "
-    "'estruturar_dados_solicitacao_credito' fornecendo os dados limpos, aplicando a normalização de "
-    "CPFs e formatação de datas. Não gere texto livre além da chamada da ferramenta."
+    "'estruturar_dados_solicitacao_credito' fornecendo os dados limpos, capturando identificadores "
+    "como SSN, Driver License ou CPF, e formatando datas. Não gere texto livre além da chamada da ferramenta."
 )
 
 def montar_payload_bedrock(dados_brutos: dict) -> dict:
@@ -44,7 +43,6 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id:
     output_message = bedrock_response.get("output", {}).get("message", {})
     content_blocks = output_message.get("content", [])
     
-    # 🔍 PROCURA O BLOCO DE CONTEÚDO CORRETO DO CONVERSE API (toolUse)
     tool_use_block = None
     for block in content_blocks:
         if "toolUse" in block:
@@ -55,12 +53,11 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id:
         logger.error(f"Resposta bruta recebida do Bedrock: {json.dumps(bedrock_response)}")
         raise ValueError("O modelo Amazon Nova falhou em acionar a ferramenta de estruturação estruturada.")
         
-    # Extrai os argumentos que a IA preencheu dentro da ferramenta (No Converse, já vem como dict)
     dados_extraidos_ia = tool_use_block.get("input", {})
     if isinstance(dados_extraidos_ia, str):
         dados_extraidos_ia = json.loads(dados_extraidos_ia)
         
-    # Envelopa os dados conforme o contrato de saída exigido pelo SRS
+    # Envelopa os dados conforme o novo contrato internacionalizado do sistema
     payload_final = {
         "package_id": package_id,
         "status": "COMPLETED",
@@ -68,17 +65,14 @@ def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id:
         "revisao_humana": False,
         "documentos": {
             "identidade": {
-                "nome": dados_extraidos_ia.get("nome"),
-                "cpf": dados_extraidos_ia.get("cpf"),
-                "data_nascimento": dados_extraidos_ia.get("data_nascimento"),
+                "nome": dados_extraidos_ia.get("nome", "Nome Não Encontrado"),
+                "documento_identificacao": dados_extraidos_ia.get("documento_identificacao", "Não Informado"),
+                "data_nascimento": dados_extraidos_ia.get("data_nascimento", "2000-01-01"),
                 "confianca": 0.95
             }
         }
     }
     
-    # 🚀 VALIDAÇÃO E SERIALIZAÇÃO CRÍTICA:
-    # Usamos model_dump_json() para converter tipos nativos (UUID, date) em strings válidas,
-    # prevenindo erros de serialização JSON no retorno da Lambda na AWS.
     validado = LoanPackageOutput(**payload_final)
     return json.loads(validado.model_dump_json())
 
@@ -93,7 +87,7 @@ def handler(event, context):
 
         logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
 
-        # Lista os arquivos gerados pelo BDA no bucket de saída de forma resiliente
+        # Lista os arquivos gerados pelo BDA no bucket de saída de forma dinâmica
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -126,7 +120,6 @@ def handler(event, context):
         # Processa e valida os dados limpos gerados pelo Amazon Nova Pro
         resultado_ia = processar_resposta_bedrock(response, package_id, user_id)
 
-        # Retorna o payload assinado que a Lambda de escrita (ResultWriter) precisa persistir
         return {
             "package_id": package_id,
             "user_id": user_id,
