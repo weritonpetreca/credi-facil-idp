@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CrediFacil IDP - Infraestrutura Completa de Pipelines e Lambdas (Hackathon 2026)
+  CrediFacil IDP - Core Pipeline de Processamento de Documentos (Hackathon 2026)
 
 Parameters:
   Environment:
@@ -14,16 +14,6 @@ Parameters:
     Type: String
     Default: "projeto-credifacil-bda-default"
     Description: "ID do projeto criado no Bedrock Data Automation"
-
-  SageMakerWorkteamArn:
-    Type: String
-    Default: "arn:aws:sagemaker:us-east-1:123456789012:workteam/private-crowd/default"
-    Description: "ARN do time de revisores cadastrados no SageMaker"
-
-  A2iFlowDefinitionArn:
-    Type: String
-    Default: "arn:aws:sagemaker:us-east-1:123456789012:flow-definition/default"
-    Description: "ARN do fluxo de revisao humana do SageMaker A2I"
 
 Globals:
   Function:
@@ -92,45 +82,6 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
-  # 🔐 PROVEDOR DE IDENTIDADE (Amazon Cognito)
-  # ==========================================================================
-  CrediFacilUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: !Sub "credifacil-users-${Environment}"
-      AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
-      UsernameAttributes:
-        - email
-      AutoVerifiedAttributes:
-        - email
-
-  CrediFacilUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub "credifacil-web-client-${Environment}"
-      UserPoolId: !Ref CrediFacilUserPool
-      GenerateSecret: false
-
-  CrediFacilProfissionalGroup:
-    Type: AWS::Cognito::UserPoolGroup
-    Properties:
-      GroupName: "Profissional"
-      Description: "Grupo de profissionais e analistas de crédito do CrediFácil"
-      UserPoolId: !Ref CrediFacilUserPool
-
-  CrediFacilAdminUser:
-    Type: AWS::Cognito::UserPoolUser
-    Properties:
-      UserPoolId: !Ref CrediFacilUserPool
-      Username: "admin@credifacil.com.br"
-      UserAttributes:
-        - Name: email
-          Value: "admin@credifacil.com.br"
-        - Name: email_verified
-          Value: "true"
-
-  # ==========================================================================
   # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS)
   # ==========================================================================
   SnsTopicoConclusao:
@@ -146,22 +97,16 @@ Resources:
       KmsMasterKeyId: !Ref CrediFacilKmsKey
 
   # ==========================================================================
-  # 🌐 CAMADA DE ROTEAMENTO (Amazon API Gateway REST)
+  # 🌐 CAMADA DE ROTEAMENTO (Amazon API Gateway REST - Sem travas de Cognito)
   # ==========================================================================
   CrediFacilRestApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
       Cors: "'*'"
-      Auth:
-        DefaultAuthorizer: CognitoAuthorizer
-        Authorizers:
-          CognitoAuthorizer:
-            UserPoolArn: !GetAtt CrediFacilUserPool.Arn
-            IdentitySource: method.request.header.Authorization
 
   # ==========================================================================
-  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA
+  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA CORE
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
@@ -233,15 +178,6 @@ Resources:
               Action: "bedrock:GetDataAutomationStatus"
               Resource: "*"
 
-  ConfidenceCheckerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: ../src/lambdas/confidence_checker/
-      Handler: handler.handler
-      Policies:
-        - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
-
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -305,21 +241,6 @@ Resources:
         - SNSPublishMessagePolicy:
             TopicName: !Sub "credifacil-erros-${Environment}"
 
-  A2iTriggerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: ../src/lambdas/a2i_trigger/
-      Handler: handler.handler
-      Environment:
-        Variables:
-          A2I_FLOW_DEFINITION_ARN: !Ref A2iFlowDefinitionArn
-      Policies:
-        - Statement:
-            - Sid: AllowSageMakerA2I
-              Effect: Allow
-              Action: "sagemaker:StartHumanLoop"
-              Resource: "*"
-
   # ==========================================================================
   # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
   # ==========================================================================
@@ -332,8 +253,6 @@ Resources:
       DefinitionSubstitutions:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
-        ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
-        A2iTriggerArn: !GetAtt A2iTriggerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
@@ -344,7 +263,6 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
 
-  # 🛡️ ROLE ISOLADA: Bypassa o bug do SAM e garante permissões de log nativas
   CrediFacilStateMachineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -379,8 +297,6 @@ Resources:
                 Resource:
                   - !GetAtt BdaInvokerFunction.Arn
                   - !GetAtt BdaStatusPollerFunction.Arn
-                  - !GetAtt ConfidenceCheckerFunction.Arn
-                  - !GetAtt A2iTriggerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
@@ -395,11 +311,3 @@ Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway para consumo do Frontend
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
-
-  UserPoolId:
-    Description: ID do User Pool do Cognito gerado para o ambiente
-    Value: !Ref CrediFacilUserPool
-
-  UserPoolClientId:
-    Description: ID do Client do Cognito para autenticação
-    Value: !Ref CrediFacilUserPoolClient
