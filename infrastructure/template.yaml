@@ -183,8 +183,8 @@ Resources:
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/nova_structurer/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.nova_structurer.handler.handler
       MemorySize: 1024
       Timeout: 120
       Policies:
