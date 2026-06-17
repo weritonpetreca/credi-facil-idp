@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CrediFacil IDP - Core Pipeline de Processamento de Documentos (Hackathon 2026)
+  CrediFacil IDP - Pipeline IDP com Lambda Layers de Produção (Hackathon 2026)
 
 Parameters:
   Environment:
@@ -23,6 +23,9 @@ Globals:
     Timeout: 30
     MemorySize: 256
     Tracing: Active
+    # 🔑 O PULO DO GATO: Todas as Lambdas herdam o Layer automaticamente aqui
+    Layers:
+      - !Ref CrediFacilDependenciesLayer
     Environment:
       Variables:
         ENV: !Ref Environment
@@ -34,7 +37,23 @@ Globals:
 
 Resources:
   # ==========================================================================
-  # 🔑 CAMADA DE ARMAZENAMENTO BASE (Criptografia Nativa AWS)
+  # 📦 CAMADA DE DEPENDÊNCIAS CENTRAL (Lambda Layer)
+  # ==========================================================================
+  CrediFacilDependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "credifacil-dependencies-${Environment}"
+      Description: "Camada unificada com as bibliotecas do projeto (Powertools, Pydantic, Boto3)"
+      ContentUri: ../src/layers/dependencies/
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - arm64
+    Metadata:
+      BuildMethod: python3.12 # Força o SAM a compilar o requirements.txt na estrutura correta da AWS
+
+  # ==========================================================================
+  # 🔑 CAMADA DE ARMAZENAMENTO BASE
   # ==========================================================================
   BucketEntrada:
     Type: AWS::S3::Bucket
@@ -63,7 +82,7 @@ Resources:
           KeyType: RANGE
 
   # ==========================================================================
-  # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS - Criptografia Default)
+  # 📢 CAMADA DE NOTIFICAÇÕES (Amazon SNS)
   # ==========================================================================
   SnsTopicoConclusao:
     Type: AWS::SNS::Topic
@@ -85,7 +104,7 @@ Resources:
       Cors: "'*'"
 
   # ==========================================================================
-  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA CORE
+  # 🚀 DECLARAÇÃO DAS FUNÇÕES LAMBDA CORE (Sem redundância de requirements)
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
@@ -226,9 +245,7 @@ Resources:
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
-      # 🚀 VITÓRIA: Propriedade Logging removida completamente para ignorar o bloqueio da conta
 
-  # 🛡️ ROLE TOTALMENTE COMPATÍVEL COM A TRAVA DA CONTA
   CrediFacilStateMachineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -254,12 +271,6 @@ Resources:
                   - !GetAtt NovaStructurerFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
-
-  CrediFacilStateMachineLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/vended/states/credifacil-idp-pipeline-${Environment}"
-      RetentionInDays: 7
 
 Outputs:
   ApiEndpoint:
