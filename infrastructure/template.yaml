@@ -65,21 +65,11 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-entrada-${Environment}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyId: !Ref CrediFacilKmsKey
 
   BucketSaida:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-saida-${Environment}"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyId: !Ref CrediFacilKmsKey
 
   CrediFacilDynamoTable:
     Type: AWS::DynamoDB::Table
