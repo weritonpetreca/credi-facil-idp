@@ -356,7 +356,7 @@ Resources:
                 - "logs:CreateLogStream"
                 - "logs:DescribeLogGroups"
                 - "logs:DescribeLogStreams"
-              Resource: !Sub "${CrediFacilStateMachineLogGroup.Arn}:*"
+              Resource: "*"
         - LambdaInvokePolicy:
             FunctionName: !Ref BdaInvokerFunction
         - LambdaInvokePolicy:
