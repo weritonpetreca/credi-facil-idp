@@ -310,9 +310,9 @@ Resources:
       Handler: handler.handler
       Policies:
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt SnsTopicoConclusao.TopicName
+            TopicName: !Sub "credifacil-conclusao-${Environment}"
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt SnsTopicoErros.TopicName
+            TopicName: !Sub "credifacil-erros-${Environment}"
 
   # ==========================================================================
   # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
