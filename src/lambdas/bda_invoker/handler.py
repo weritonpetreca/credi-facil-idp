@@ -7,7 +7,7 @@ from aws_lambda_powertools import Logger
 logger = Logger(service="bda-invoker")
 
 # Inicialização do cliente de controle do Bedrock
-bedrock_client = boto3.client("bedrock")
+bedrock_client = boto3.client('bedrock-data-automation-runtime', region_name='us-east-1')
 
 # Configurações externalizadas via variáveis de ambiente injetadas pelo SAM
 BDA_PROJECT_ARN = os.environ.get("BDA_PROJECT_ARN")

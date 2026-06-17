@@ -28,7 +28,7 @@ def test_bda_invoker_handler_success(mock_boto3_client):
     mock_sts.get_caller_identity.return_value = {"Account": "635106763014"}
     
     def side_effect(service_name, *args, **kwargs):
-        if service_name == "bedrock":
+        if service_name in ["bedrock", "bedrock-data-automation-runtime"]:
             return mock_bedrock
         if service_name == "sts":
             return mock_sts
