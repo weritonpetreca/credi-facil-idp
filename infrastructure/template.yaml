@@ -342,6 +342,20 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
       Policies:
+        - Statement:
+            - Sid: AllowStepFunctionsCloudWatchLogging
+              Effect: Allow
+              Action:
+                - "logs:CreateLogDelivery"
+                - "logs:GetLogDelivery"
+                - "logs:UpdateLogDelivery"
+                - "logs:DeleteLogDelivery"
+                - "logs:ListLogDeliveries"
+                - "logs:PutLogEvents"
+                - "logs:CreateLogStream"
+                - "logs:DescribeLogGroups"
+                - "logs:DescribeLogStreams"
+              Resource: "*"
         - LambdaInvokePolicy:
             FunctionName: !Ref BdaInvokerFunction
         - LambdaInvokePolicy:
