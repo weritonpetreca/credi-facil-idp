@@ -4,10 +4,11 @@ const fileList = document.getElementById("fileList");
 const statusBox = document.getElementById("statusBox");
 const submitButton = document.getElementById("submitButton");
 
-// 🚀 CONEXÃO COM O SEU API GATEWAY REAL
+// 🚀 CONEXÃO UNIFICADA COM O SEU API GATEWAY REAL
 const API_URL = "https://zrky80ks0l.execute-api.us-east-1.amazonaws.com/dev/";
 const MIN_FILES = 1;
 const MAX_FILES = 8;
+let pollingInterval = null; // ✅ CORREÇÃO: Declarado explicitamente no escopo global
 
 documentsInput.addEventListener("change", () => {
   const files = Array.from(documentsInput.files);
@@ -33,36 +34,37 @@ uploadForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  // Prepara o payload no contrato esperado pela rota v1/packages/upload-urls
   const payloadToLambda = {
     documentos: files.map((file) => file.name)
   };
 
   try {
     setLoading(true);
+    document.getElementById("analyticsDashboard").style.display = "none";
     updateStatus("Registrando lote e coletando credenciais do S3...", "processing");
 
-    // 1. Coleta as URLs pré-assinadas da AWS via API Gateway
     const uploadInstructions = await getUploadInstructions(payloadToLambda);
 
     updateStatus("Enviando documentos diretamente para o Storage seguro...", "processing");
 
-    // 2. Transmite os arquivos em paralelo para o S3 (Ativando o Tracker Reativo)
     await uploadFilesToS3(files, uploadInstructions);
 
     updateStatus(
-      `Sucesso! Lote ${uploadInstructions.package_id} recebido. O processamento reativo foi iniciado em background.`,
-      "success"
+      `Sucesso! Lote enviado. O processamento reativo foi iniciado em background. Monitorando...`,
+      "processing"
     );
 
     uploadForm.reset();
     renderFileList([]);
+
+    // Dispara o monitoramento ativo usando o ID gerado pela AWS
+    iniciarMonitoramentoLote(uploadInstructions.package_id);
+
   } catch (error) {
     updateStatus(
       error.message || "Não foi possível concluir o envio. Verifique os arquivos e tente novamente.",
       "error"
     );
-  } finally {
     setLoading(false);
   }
 });
@@ -102,7 +104,6 @@ async function getUploadInstructions(payloadToLambda) {
     throw new Error(data?.erro || "Erro ao solicitar autorização de upload.");
   }
 
-  // Validação corrigida para aceitar o Objeto/Dicionário mapeado por arquivos
   if (!data?.uploads || typeof data.uploads !== 'object') {
     throw new Error("Resposta inválida do servidor. Instruções de upload ausentes.");
   }
@@ -112,7 +113,6 @@ async function getUploadInstructions(payloadToLambda) {
 
 async function uploadFilesToS3(files, uploadInstructions) {
   for (const file of files) {
-    // Busca direta por chave no dicionário (Rápido e sem loops desnecessários)
     const instruction = uploadInstructions.uploads[file.name];
 
     if (!instruction) {
@@ -151,5 +151,137 @@ function updateStatus(message, type) {
 
 function setLoading(isLoading) {
   submitButton.disabled = isLoading;
-  submitButton.textContent = isLoading ? "Enviando para a AWS..." : "Enviar documentos";
+  submitButton.textContent = isLoading ? "Enviando para a AWS..." : "Iniciar Processamento Inteligente";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+});
+
+function iniciarMonitoramentoLote(packageId) {
+  if (pollingInterval) clearInterval(pollingInterval);
+
+  pollingInterval = setInterval(async () => {
+    try {
+      // ✅ CORREÇÃO: Alterado de API_BASE_URL para API_URL para manter a consistência mestre
+      const response = await fetch(`${API_URL}v1/packages/${packageId}`);
+      if (!response.ok) return;
+
+      const result = await response.json();
+      
+      if (result.status === "PROCESSING") {
+        updateStatus(`Lote em processamento na AWS... Extraindo metadados estruturais via Bedrock BDA.`, "processing");
+      } 
+      else if (result.status === "COMPLETED") {
+        clearInterval(pollingInterval);
+        setLoading(false);
+        updateStatus("Análise finalizada com sucesso! Relatório gerado.", "success");
+        
+        plotarDashboardAnalitico(result.dados_extraidos);
+        
+        const score = result.dados_extraidos?.cliente?.score_credito?.valor ?? 0;
+        document.getElementById("modalScore").textContent = `${score} pontos`;
+        document.getElementById("successModal").style.display = "flex";
+
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification("CrediFácil IDP Engine", {
+            body: `Análise concluída para o proponente! Score: ${score} pontos. Clique para ver.`,
+          });
+        }
+      } 
+      else if (result.status === "FAILED") {
+        clearInterval(pollingInterval);
+        setLoading(false);
+        updateStatus(`A esteira falhou: ${result.erro_processamento || "Erro desconhecido"}`, "error");
+      }
+    } catch (err) {
+      console.error("Erro no polling do tracker:", err);
+    }
+  }, 4000);
+}
+
+function fecharModalEVerResultado() {
+  document.getElementById("successModal").style.display = "none";
+  document.getElementById("analyticsDashboard").scrollIntoView({ behavior: "smooth" });
+}
+
+// ✅ ADICIONADO: Camada de renderização visual completa que estava ausente no arquivo anterior
+function plotarDashboardAnalitico(dados) {
+  if (!dados) return;
+
+  const cliente = dados.cliente || {};
+  const sistema = dados.sistema || {};
+  const validacao = dados.validacao || {};
+  const docs = dados.documentos_analisados || [];
+
+  document.getElementById("analyticsDashboard").style.display = "block";
+
+  document.getElementById("resNome").textContent = cliente.nome || "Não Identificado";
+  document.getElementById("resDoc").textContent = cliente.documento_identificacao || "Não Fornecido";
+  document.getElementById("resRenda").textContent = `US$ ${procMaxValor(docs, ['amount_numeric', 'Gross Pay', 'renda_bruta_informada']).toFixed(2)}`;
+  document.getElementById("resSaldo").textContent = `US$ ${procMaxValor(docs, ['saldo_bancario_fechamento', 'balance', 'amount']).toFixed(2)}`;
+  document.getElementById("badgeModelo").textContent = sistema.processamento?.modelo_utilizado || "Amazon Nova Pro";
+
+  const scoreElement = document.getElementById("resScoreValue");
+  const catElement = document.getElementById("resRiscoCategoria");
+  
+  scoreElement.textContent = cliente.score_credito?.valor ?? 0;
+  catElement.textContent = (cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toUpperCase();
+
+  if (cliente.classificacao_risco?.categoria === "baixo") {
+    catElement.style.background = "#d1fae5"; catElement.style.color = "#065f46";
+  } else if (cliente.classificacao_risco?.categoria === "medio") {
+    catElement.style.background = "#fef3c7"; catElement.style.color = "#92400e";
+  } else {
+    catElement.style.background = "#fee2e2"; catElement.style.color = "#991b1b";
+  }
+
+  document.getElementById("resJustificativaBox").textContent = cliente.classificacao_risco?.justificativa || "Sem justificativa.";
+
+  renderCheckliItem("chkNome", "Nome consistente entre documentos", validacao.nome_consistente_entre_documentos);
+  renderCheckliItem("chkNasc", "Data de nascimento consistente", validacao.data_nascimento_consistente);
+  renderCheckliItem("chkId", "Documento de identidade presente", validacao.documento_identificacao_presente);
+  renderCheckliItem("chkRenda", "Comprovante de renda anexado", validacao.comprovante_renda_presente);
+  renderCheckliItem("chkExtrato", "Extrato bancário de liquidez presente", validacao.extrato_bancario_presente);
+
+  const tableBody = document.getElementById("tableDocsBody");
+  tableBody.innerHTML = "";
+  
+  docs.forEach(d => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold;">${d.tipo_documento}</td>
+      <td style="padding: 10px; border: 1px solid #cbd5e1; color: #475569;">${d.arquivo_original}</td>
+      <td style="padding: 10px; border: 1px solid #cbd5e1;"><span class="header-badge" style="background: ${d.status_extracao === 'sucesso' ? '#eff6ff' : '#f8fafc'}; color: ${d.status_extracao === 'sucesso' ? '#1e40af' : '#64748b'}; border: none; padding: 4px 10px;">${d.status_extracao}</span></td>
+      <td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: 500;">${(d.confianca_media * 100).toFixed(1)}%</td>
+    `;
+    tableBody.appendChild(row);
+  });
+}
+
+function renderCheckliItem(elementId, text, status) {
+  const el = document.getElementById(elementId);
+  if (status === true) {
+    el.textContent = `✅ ${text}`; el.style.color = "#166534";
+  } else if (status === false) {
+    el.textContent = `❌ ${text}`; el.style.color = "#991b1b";
+  } else {
+    el.textContent = `⚪ ${text} (Não Avaliado)`; el.style.color = "#64748b";
+  }
+}
+
+function procMaxValor(docs, chaves) {
+  let max = 0;
+  docs.forEach(d => {
+    chaves.forEach(c => {
+      const val = d.campos_extraidos?.[c];
+      if (val) {
+        const numeric = parseFloat(String(val).replace(/[^0-9.]/g, '')) || 0;
+        if (numeric > max) max = numeric;
+      }
+    });
+  });
+  return max;
 }

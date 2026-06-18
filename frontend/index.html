@@ -125,7 +125,17 @@
   <footer class="footer">
     <p>CrediFácil • Análise inteligente de documentos</p>
   </footer>
-
+  <div id="successModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-icon">🎉</div>
+      <h3>Análise Concluída com Sucesso!</h3>
+      <p>O dossiê do proponente foi processado pelo motor analítico do Amazon Nova Pro.</p>
+      <div class="modal-meta">
+        <strong>Score Calculado:</strong> <span id="modalScore">-</span>
+      </div>
+      <button onclick="fecharModalEVerResultado()" class="modal-btn">Visualizar Relatório Completo</button>
+    </div>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
