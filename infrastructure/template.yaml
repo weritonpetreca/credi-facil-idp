@@ -131,7 +131,7 @@ Resources:
       Criador: Grupo12
 
   # ==========================================================================
-  # 🚀 COMPONENTES DE ENTRADA (Totalmente Desacoplados por String)
+  # 🚀 COMPONENTES DE ENTRADA
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
@@ -163,7 +163,6 @@ Resources:
       Handler: src.lambdas.pipeline_trigger.handler.handler
       Environment:
         Variables:
-          # 🚀 LOGICA DE MATURIDADE: Injeta o ARN via Substring para evitar dependência física de Grafo
           STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
@@ -192,7 +191,6 @@ Resources:
       Timeout: 15
       Environment:
         Variables:
-          # 🚀 LOGICA DE MATURIDADE: Injeta o ARN via Substring para evitar dependência física de Grafo
           STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
@@ -208,15 +206,17 @@ Resources:
           Properties:
             Bucket: !Ref BucketEntrada
             Events: s3:ObjectCreated:*
+            # 🚀 CORREÇÃO CRÍTICA: Sintaxe do filtro alinhada com o esquema nativo do SAM
             Filter:
-              Filters:
-                - Name: prefix
-                  Value: packages/
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: packages/
     Tags:
       Criador: Grupo12
 
   # ==========================================================================
-  # ⚙️ COMPONENTES INTERNOS DO WORKFLOW (Leaf Nodes Lineares)
+  # ⚙️ COMPONENTES INTERNOS DO WORKFLOW
   # ==========================================================================
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
@@ -335,9 +335,6 @@ Resources:
     Tags:
       Criador: Grupo12
 
-  # ==========================================================================
-  # ⚙️ ORQUESTRADOR SERVERLESS (AWS Step Functions)
-  # ==========================================================================
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -364,9 +361,7 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      # 🚀 CORREÇÃO CRÍTICA: Bloco de Policies e Tags indentados corretamente para dentro de Properties
       Policies:
         - PolicyName: CrediFacilStateMachinePolicy
           PolicyDocument:
@@ -381,6 +376,9 @@ Resources:
                   - !GetAtt NovaStructurerFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
 Outputs:
   ApiEndpoint:
