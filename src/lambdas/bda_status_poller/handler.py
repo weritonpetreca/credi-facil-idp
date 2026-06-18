@@ -1,48 +1,66 @@
-import os
+import json
 import boto3
-from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="bda-status-poller")
-
-# 🚀 CORREÇÃO CRÍTICA 1: Instancia o cliente de runtime correto do Data Automation (GA)
 bedrock_client = boto3.client("bedrock-data-automation-runtime", region_name="us-east-1")
 
 def handler(event, context):
     try:
-        job_id = event.get("bda_job_id")
         package_id = event.get("package_id")
+        job_ids = event.get("bda_job_ids", [])
         
-        if not job_id:
-            raise ValueError("O parâmetro bda_job_id não foi fornecido no estado do fluxo.")
+        if not job_ids and event.get("bda_job_id"):
+            job_ids = [event.get("bda_job_id")]
 
-        logger.info(f"Consultando status do Job BDA via invocationArn para o pacote {package_id}")
+        if not job_ids:
+            raise ValueError("Nenhum identificador de Job (bda_job_ids) foi localizado no payload.")
 
-        # 🔑 CORREÇÃO CRÍTICA 2: No cliente GA, o método exige 'invocationArn' no lugar de 'automationJobId'
-        response = bedrock_client.get_data_automation_status(
-            invocationArn=job_id
-        )
-        
-        # Captura o status retornado pela AWS (ex: 'Success', 'InProgress', 'Failed')
-        status_bruto = response.get("status", "FAILED")
-        logger.info(f"Status bruto retornado pelo Bedrock BDA: {status_bruto}")
+        logger.info(f"Avaliando o progresso de {len(job_ids)} sub-jobs ativos no BDA para o pacote {package_id}")
 
-        # 🔄 ALINHAMENTO COM A STATE MACHINE: Força a string para caixa alta ('SUCCESS' ou 'FAILED')
-        # Isso garante que o Choice State ($.status) no idp_pipeline.json tome a decisão correta
-        status_normalizado = status_bruto.upper()
-        
-        if "ERROR" in status_normalizado or "VALIDATION" in status_normalizado:
-            status_normalizado = "FAILED"
+        todos_concluidos = True
 
-        # Injeta o status normalizado na raiz do evento para o Step Functions mapear
-        event["status"] = status_normalizado
-        event["status_bda"] = status_bruto  # Mantém o original para fins de rastreabilidade
-        
-        return event
+        for job_id in job_ids:
+            response = bedrock_client.get_data_automation_status(invocationArn=job_id)
+            logger.info(f"Resposta bruta do Bedrock para o job {job_id}: {json.dumps(response, default=str)}")
+            
+            raw_status = response.get("Status") or response.get("status") or "IN_PROGRESS"
+            status_upper = str(raw_status).upper()
+            
+            logger.info(f"Sub-job [{job_id}] -> Estado extraído e normalizado: {status_upper}")
 
-    except ClientError as e:
-        logger.error(f"Erro do SDK ao consultar status no Bedrock: {str(e)}")
-        raise e
+            if status_upper in ["FAILED", "ERROR"]:
+                msg_erro = (
+                    response.get("Error", {}).get("Message") or 
+                    response.get("error", {}).get("message", "Erro interno BDA")
+                )
+                return {
+                    "status": "FAILED",
+                    "package_id": package_id,
+                    "errorMessage": f"O processamento do arquivo no Job {job_id} quebrou: {msg_erro}"
+                }
+            
+            if status_upper not in ["COMPLETED", "SUCCESS", "SUCCESSFUL"]:
+                todos_concluidos = False
+
+        if todos_concluidos:
+            logger.info("🔥 Malha de processamento concluída! Modificando status para SUCCESS para o Choice State.")
+            return {
+                "status": "SUCCESS", # 🚀 CORREÇÃO CIRÚRGICA: Alinhado com $.status == "SUCCESS" do seu template
+                "package_id": package_id,
+                "bda_job_ids": job_ids,
+                "bda_output_bucket": event.get("bda_output_bucket"),
+                "user_id": event.get("user_id")
+            }
+
+        return {
+            "status": "IN_PROGRESS",
+            "package_id": package_id,
+            "bda_job_ids": job_ids,
+            "bda_output_bucket": event.get("bda_output_bucket"),
+            "user_id": event.get("user_id")
+        }
+
     except Exception as e:
-        logger.error(f"Erro inesperado no poller de status: {str(e)}")
+        logger.error(f"Falha ao computar status da malha de sub-jobs: {str(e)}")
         raise e

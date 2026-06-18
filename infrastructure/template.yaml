@@ -235,6 +235,14 @@ Resources:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - Statement:
+            - Sid: PermissaoListagemParaPastasS3
+              Effect: Allow
+              Action:
+                - "s3:ListBucket"
+                - "s3:ListBucketVersions"
+              Resource:
+                - !Sub "arn:aws:s3:::credifacil-docs-entrada-${Environment}"
+                - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}"
             - Sid: AllowBedrockAutomationAsync
               Effect: Allow
               Action: 
@@ -269,7 +277,7 @@ Resources:
         Variables:
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
-        - S3ReadPolicy:
+        - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
