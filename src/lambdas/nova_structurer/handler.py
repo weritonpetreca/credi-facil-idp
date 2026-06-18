@@ -177,7 +177,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             },
             "processamento": {
                 "status": "processado_com_alertas" if len(principais_alertas) > 0 else "processado",
-                "modelo_utilizado": name_modelo_final,
+                "modelo_utilizado": nome_modelo_final, # 🚀 FIX CIRÚRGICO: Corrigido de name_modelo_final para nome_modelo_final
                 "bda_project_arn": os.environ.get("BDA_PROJECT_ARN"),
                 "quantidade_tokens": {
                     "input_tokens": metricas_tokens["input"],
@@ -310,7 +310,7 @@ def handler(event, context):
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
 
-        # 🚀 A LINHA VENCEDORA REINSERIDA: Salva o output.json consolidado na raiz do pacote no S3
+        # Salva o output.json consolidado na raiz do pacote no S3
         s3_client.put_object(
             Bucket=bucket_saida,
             Key=f"results/{package_id}/output.json",
