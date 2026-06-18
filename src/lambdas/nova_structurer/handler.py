@@ -12,33 +12,34 @@ bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PROMPT_SISTEMA = (
     "Você é um motor analítico avançado de submissão de crédito imobiliário e hipotecário. "
-    "Sua tarefa é analisar os dados consolidados extraídos de múltiplos documentos do pacote, "
-    "classificar os tipos de documentos identificados e preencher a ferramenta estruturada. "
-    "Extraia dados cadastrais e financeiros (Gross Pay, Net Pay, saldos e deduções) de todas as pessoas localizadas."
+    "A entrada contém um array com dados limpos de MÚLTIPLOS documentos extraídos do pacote de empréstimo. "
+    "Sua obrigação absoluta é iterar por CADA objeto do array de entrada, extrair TODAS as pessoas e "
+    "documentos localizados e mapear na ferramenta estruturada. "
+    "Atenção: Você encontrará documentos de pessoas distintas (ex: MARÍA GARCÍA e JOHN STILES). "
+    "Você NÃO PODE omitir nenhum indivíduo. Popule o array 'achados_documentais' com todos os achados."
 )
 
-def limpar_ruido_bda(bda_json: dict) -> dict:
+def limpar_ruido_recursivo(dados: any) -> any:
     """
-    Filtro de Sifting de Dados: Remove coordenadas geométricas (boundingBox, polygons)
-    e metadados de layout pesados, reduzindo o consumo de tokens em até 90%.
+    Filtro Recursivo Profundo: Varre toda a árvore do JSON eliminando dados geométricos pesados,
+    reduzindo o tamanho do payload e preservando chaves úteis de formulários e identidades do BDA.
     """
-    dados_limpos = {}
-    if "text" in bda_json:
-        dados_limpos["texto_puro"] = bda_json["text"]
+    CHAVES_INUTEIS = {
+        "boundingBox", "polygon", "geometry", "coordinates", "location", 
+        "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight",
+        "geometryData", "xy", "box"
+    }
+    
+    if isinstance(dados, dict):
+        return {
+            k: limpar_ruido_recursivo(v) 
+            for k, v in dados.items() 
+            if k not in CHAVES_INUTEIS
+        }
+    elif isinstance(dados, list):
+        return [limpar_ruido_recursivo(item) for item in dados]
         
-    if "key_values" in bda_json:
-        dados_limpos["pares_chave_valor"] = [
-            {"chave": kv.get("key"), "valor": kv.get("value")} 
-            for kv in bda_json["key_values"] if kv.get("key")
-        ]
-        
-    if "blocks" in bda_json:
-        dados_limpos["linhas_texto"] = [
-            b.get("text") for b in bda_json["blocks"] 
-            if b.get("blockType") == "LINE" and b.get("text")
-        ]
-        
-    return dados_limpos if dados_limpos else bda_json
+    return dados
 
 def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
     """
@@ -48,7 +49,6 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
     pontuacao = 0
     justificativas = []
     
-    # Se o lote contiver múltiplos proponentes/co-proponentes não correlacionados
     if len(tabela_clientes) > 1:
         justificativas.append("Análise consolidada para múltiplos proponentes identificados no dossiê.")
 
@@ -99,20 +99,12 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
         else:
             justificativas_individuo.append("Ausência de colchão financeiro ou extrato com saldo zerado (0/30 pts).")
 
-        # Consolida a pontuação ponderada do indivíduo
         pontuacao += score_individuo
         justificativas.append(f"[{nome}]: " + " ".join(justificativas_individuo))
 
-    # Tira a média caso haja mais de um cliente, limitando os ranges
     pontuacao_final = max(0, min(100, int(pontuacao / max(1, len(tabela_clientes)))))
+    risco = "LOW_RISK" if pontuacao_final >= 80 else ("MEDIUM_RISK" if pontuacao_final >= 50 else "HIGH_RISK")
     
-    if pontuacao_final >= 80:
-        risco = "LOW_RISK"
-    elif 50 <= pontuacao_final < 80:
-        risco = "MEDIUM_RISK"
-    else:
-        risco = "HIGH_RISK"
-        
     return {
         "pontuacao": pontuacao_final,
         "classificacao_risco": risco,
@@ -123,10 +115,10 @@ def handler(event, context):
     try:
         package_id = event.get("package_id")
         user_id = event.get("user_id", "sistema")
-        bucket_saida = event.get("bda_output_bucket")
+        bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
 
-        logger.info(f"Iniciando consolidação inteligente com sifting de dados para o pacote {package_id}")
+        logger.info(f"Iniciando consolidação com deep sifting para o pacote {package_id}")
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -138,8 +130,9 @@ def handler(event, context):
                 s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
                 json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
                 
-                # Executa a limpeza atômica de ruídos geométricos
-                conteudos_brutos.append(limpar_ruido_bda(json_bruto))
+                # 🚀 DEEP SIFTING: Varre recursivamente limpando apenas o lixo geométrico
+                json_higienizado = limpar_ruido_recursivo(json_bruto)
+                conteudos_brutos.append(json_higienizado)
 
         tool_config = {
             "tools": [obter_especificacao_ferramenta_loan()],
@@ -148,7 +141,7 @@ def handler(event, context):
         
         messages = [{
             "role": "user",
-            "content": [{"text": f"Consolide e classifique a seguinte massa de dados limpa: {json.dumps(conteudos_brutos)}"}]
+            "content": [{"text": f"Processe a seguinte lista de payloads extraídos do BDA: {json.dumps(conteudos_brutos)}"}]
         }]
 
         logger.info("Invocando o Amazon Nova Pro via API Converse...")
@@ -159,14 +152,12 @@ def handler(event, context):
             toolConfig=tool_config
         )
 
-        # 🪙 OBSERVABILIDADE FINANCEIRA: Captura e expõe os tokens consumidos nativamente pela chamada
         usage = response.get("usage", {})
         input_tokens = usage.get("inputTokens", 0)
         output_tokens = usage.get("outputTokens", 0)
-        
-        # Cálculo de custos baseado na tabela oficial do Amazon Nova Pro ($0.0008 / 1k input e $0.0032 / 1k output)
         custo_calculado_usd = ((input_tokens / 1000) * 0.0008) + ((output_tokens / 1000) * 0.0032)
-        logger.info(f"Métricas de Consumo do Lote - Input Tokens: {input_tokens} | Output Tokens: {output_tokens} | Custo Estimado: ${custo_calculado_usd:.6f}")
+        
+        logger.info(f"Consumo de Tokens - Input: {input_tokens} | Output: {output_tokens} | Custo USD: ${custo_calculado_usd:.6f}")
 
         content_blocks = response.get("output", {}).get("message", {}).get("content", [])
         tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
@@ -208,7 +199,6 @@ def handler(event, context):
                 }
             })
 
-        # Processamento do score de crédito de mercado e confiança
         confianca_global = sum(confiancas_acumuladas) / max(1, len(confiancas_acumuladas))
         scoring = calcular_matriz_score_mercado(tabela_clientes_final)
 
@@ -219,14 +209,12 @@ def handler(event, context):
             "tabela_clientes": tabela_clientes_final
         }
 
-        # Injeta metadados de auditoria financeira no retorno para o escritor salvar
         metricas_auditoria = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "custo_estimado_usd": round(custo_calculado_usd, 6)
         }
 
-        # Validação estrita via Pydantic
         LoanPackageOutput(**json_estruturado_final)
 
         return {
