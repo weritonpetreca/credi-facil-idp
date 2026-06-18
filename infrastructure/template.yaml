@@ -133,13 +133,13 @@ Resources:
       Criador: Grupo12
 
   # ==========================================================================
-  # 🚀 FUNÇÕES LAMBDA CORE
+  # 🚀 GATILHOS E COMPONENTES DE ENTRADA (Mapeamento de CodeUri Saneado)
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/pre_signed_url/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.pre_signed_url.handler.handler
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -158,8 +158,8 @@ Resources:
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/pipeline_trigger/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.pipeline_trigger.handler.handler
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
@@ -181,11 +181,46 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  # 🚀 RESTAURADO: Rastreador atômico nativo do S3 para disparar reativamente
+  S3UploadTrackerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.s3_upload_tracker.handler.handler
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - Statement:
+            - Sid: AllowStepFunctionsExecution
+              Effect: Allow
+              Action: "states:StartExecution"
+              Resource: !Ref CrediFacilStateMachine
+      Events:
+        S3ObjectCreatedEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref BucketEntrada
+            Events: s3:ObjectCreated:*
+            Filter:
+              Filters:
+                - Name: prefix
+                  Value: packages/
+    Tags:
+      Criador: Grupo12
+
+  # ==========================================================================
+  # ⚙️ MÁQUINA DE ESTADOS E STEPS INTERNOS
+  # ==========================================================================
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/bda_invoker/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.bda_invoker.handler.handler
       MemorySize: 512
       Environment:
         Variables:
@@ -208,8 +243,8 @@ Resources:
   BdaStatusPollerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/bda_status_poller/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.bda_status_poller.handler.handler
       Policies:
         - Statement:
             - Sid: AllowGetAutomationStatus
@@ -222,8 +257,8 @@ Resources:
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/nova_structurer/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.nova_structurer.handler.handler
       MemorySize: 1024
       Timeout: 120
       Policies:
@@ -240,8 +275,8 @@ Resources:
   ResultWriterFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/result_writer/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.result_writer.handler.handler
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -255,8 +290,8 @@ Resources:
   QueryHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/query_handler/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.query_handler.handler.handler
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -277,8 +312,8 @@ Resources:
   NotificationFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src/lambdas/notification/
-      Handler: handler.handler
+      CodeUri: ../
+      Handler: src.lambdas.notification.handler.handler
       Policies:
         - SNSPublishMessagePolicy:
             TopicName: !Sub "credifacil-conclusao-${Environment}"
@@ -287,9 +322,6 @@ Resources:
     Tags:
       Criador: Grupo12
 
-  # ==========================================================================
-  # ⚙️ ORQUESTRADOR SERVERLESS (AWS Step Functions)
-  # ==========================================================================
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -316,7 +348,6 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
-          # 🚀 CORREÇÃO: Tags movidas para dentro de Properties
       Tags:
         - Key: Criador
           Value: Grupo12
