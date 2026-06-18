@@ -101,7 +101,7 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
 
     pontuacao_final = max(0, min(100, int(pontuacao / max(1, len(tabela_clientes)))))
     risco = "LOW_RISK" if pontuacao_final >= 80 else ("MEDIUM_RISK" if pontuacao_final >= 50 else "HIGH_RISK")
-    return {"pontuacao": pontuacao_final, "classificacao_risco": risk, "justificativa": " | ".join(justificativas)}
+    return {"pontuacao": pontuacao_final, "classificacao_risco": risco, "justificativa": " | ".join(justificativas)}
 
 def handler(event, context):
     try:
