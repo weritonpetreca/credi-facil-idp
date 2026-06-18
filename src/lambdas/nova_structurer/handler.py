@@ -103,7 +103,6 @@ def handler(event, context):
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum artefato do BDA localizado no prefixo {prefix_busca}")
 
-        # Dicionário temporário para agrupar as extrações por pessoa na fase final
         tabela_clientes_final = {}
         confiancas_acumuladas = []
         
@@ -112,9 +111,9 @@ def handler(event, context):
         total_custo_usd = 0.0
         idx = 0
 
-        # 🚀 PASSO 1: Iteração isolada por arquivo gerado pelo BDA
         for obj in s3_objects["Contents"]:
-            if not obj["Key"].endswith(".json") or "manifest" not in obj["Key"].lower():
+            # 🚀 CORREÇÃO CRÍTICA: Pula se NÃO for json ou se FOR o arquivo de manifesto
+            if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
                 continue
                 
             idx += 1
@@ -135,7 +134,6 @@ def handler(event, context):
                 "content": [{"text": f"Extraia os dados deste documento: {json.dumps(json_higienizado)}"}]
             }]
 
-            # Invocação dedicada do Nova Pro para ESTE arquivo específico
             response = bedrock_runtime.converse(
                 modelId="amazon.nova-pro-v1:0",
                 messages=messages,
@@ -143,7 +141,6 @@ def handler(event, context):
                 toolConfig=tool_config
             )
 
-            # Acumula métricas financeiras de observabilidade
             usage = response.get("usage", {})
             in_t = usage.get("inputTokens", 0)
             out_t = usage.get("outputTokens", 0)
@@ -162,9 +159,7 @@ def handler(event, context):
             if isinstance(achado, str):
                 achado = json.loads(achado)
 
-            # 🚀 PASSO 2: Salva o JSON estruturado individual deste arquivo no bucket de resultados
             s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_bda}_structured.json"
-            logger.info(f"Salvando artefato individual no S3: {s3_key_intermediaria}")
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=s3_key_intermediaria,
@@ -172,7 +167,6 @@ def handler(event, context):
                 ContentType="application/json"
             )
 
-            # 🚀 PASSO 3: Agrupamento em memória para Consolidação Determinística
             nome = achado.get("nome_titular", "").strip().upper()
             if not nome or "UNKNOWN" in nome or len(nome) < 3:
                 continue
@@ -190,7 +184,6 @@ def handler(event, context):
                     "documentos_vinculados": []
                 }
             
-            # Se localizou o ID em um documento posterior, complementa o cadastro mestre
             if tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] == "Não Localizado" and achado.get("numero_identificacao"):
                 tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] = achado.get("numero_identificacao")
 
@@ -203,7 +196,6 @@ def handler(event, context):
                 }
             })
 
-        # 🚀 PASSO 4: Consolidação Final e Geração de Scores de Risco de Mercado
         if not tabela_clientes_final:
             raise ValueError("Nenhum cliente válido pôde ser extraído de nenhum dos arquivos do lote.")
 
