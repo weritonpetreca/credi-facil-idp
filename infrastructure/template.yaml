@@ -59,6 +59,10 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+      # 🚀 NOVO: Força o S3 a enviar notificações de criação/mutação para o barramento do EventBridge
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
 
   BucketSaida:
     Type: AWS::S3::Bucket
@@ -235,6 +239,41 @@ Resources:
             TopicName: !Sub "credifacil-conclusao-${Environment}"
         - SNSPublishMessagePolicy:
             TopicName: !Sub "credifacil-erros-${Environment}"
+
+  S3UploadTrackerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.s3_upload_tracker.handler.handler
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - Statement:
+            - Sid: AllowStepFunctionsExecution
+              Effect: Allow
+              Action: "states:StartExecution"
+              Resource: !Ref CrediFacilStateMachine
+      Events:
+        S3ObjectCreatedEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - "Object Created"
+              detail:
+                bucket:
+                  name:
+                    - !Sub "credifacil-docs-entrada-${Environment}"
+                object:
+                  key:
+                    - prefix: "packages/"
 
   # ==========================================================================
   # 🔄 ORQUESTRADOR CENTRAL (AWS Step Functions)
