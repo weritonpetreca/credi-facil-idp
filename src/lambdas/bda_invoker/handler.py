@@ -19,26 +19,18 @@ def handler(event, context):
         bucket_entrada = f"credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}"
         prefix_entrada = f"packages/{package_id}/"
 
-        logger.info(f"Iniciando busca pelo arquivo real no S3 para o pacote {package_id}")
+        logger.info(f"Iniciando orquestração em lote do BDA para o pacote: {package_id}")
 
-        # 🔍 SOLUÇÃO 1: Lista a pasta do S3 para capturar o nome real do PDF válido
-        s3_objects = s3_client.list_objects_v2(Bucket=bucket_entrada, Prefix=prefix_entrada)
-        
-        if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
-            raise FileNotFoundError(f"Nenhum documento encontrado na pasta {prefix_entrada}")
-
-        # Pega o primeiro arquivo real listado (ignora a estrutura de pastas)
-        arquivo_real_key = s3_objects["Contents"][0]["Key"]
-        
-        # Monta a URI apontando cirurgicamente para o ARQUIVO, e nao para a pasta
-        input_s3_uri = f"s3://{bucket_entrada}/{arquivo_real_key}"
-        logger.info(f"URI de entrada resolvida com sucesso: {input_s3_uri}")
+        # 🚀 CORREÇÃO CIRÚRGICA: Apontamos para a PASTA (prefixo) e não mais para o index [0].
+        # O Bedrock Data Automation vai varrer e processar todos os 6 PDFs do diretório em paralelo.
+        input_s3_uri = f"s3://{bucket_entrada}/{prefix_entrada}"
+        logger.info(f"URI de lote configurada para o BDA: {input_s3_uri}")
 
         project_arn = os.environ.get("BDA_PROJECT_ARN")
         account_id = boto3.client('sts').get_caller_identity()['Account']
         profile_arn = f"arn:aws:bedrock:us-east-1:{account_id}:data-automation-profile/us.data-automation-v1"
 
-        # 🚀 CHAMADA ATUALIZADA: Agora com o ponteiro do arquivo exato
+        # Chamada assíncrona passando o ponteiro da pasta completa
         response = bedrock_client.invoke_data_automation_async(
             inputConfiguration={"s3Uri": input_s3_uri},
             outputConfiguration={"s3Uri": f"s3://{bucket_saida}/{prefixo_saida}"},
@@ -49,7 +41,7 @@ def handler(event, context):
         )
         
         job_id = response["invocationArn"]
-        logger.info(f"Job BDA criado com sucesso. ARN de Invocação: {job_id}")
+        logger.info(f"Job BDA em Lote criado com sucesso. ARN de Invocação: {job_id}")
 
         return {
             "package_id": package_id,
