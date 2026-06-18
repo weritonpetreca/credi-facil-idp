@@ -131,7 +131,7 @@ Resources:
       Criador: Grupo12
 
   # ==========================================================================
-  # 🚀 FUNÇÕES LAMBDA CORE (Injeções Isoladas de Escopo S3)
+  # 🚀 COMPONENTES DE ENTRADA (Totalmente Desacoplados por String)
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
@@ -140,8 +140,7 @@ Resources:
       Handler: src.lambdas.pre_signed_url.handler.handler
       Environment:
         Variables:
-          # 🚀 INJEÇÃO LOCAL: Apenas quem assina URLs precisa saber o nome do bucket de entrada
-          BUCKET_ENTRADA: !Ref BucketEntrada
+          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${Environment}"
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -164,7 +163,8 @@ Resources:
       Handler: src.lambdas.pipeline_trigger.handler.handler
       Environment:
         Variables:
-          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+          # 🚀 LOGICA DE MATURIDADE: Injeta o ARN via Substring para evitar dependência física de Grafo
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -172,7 +172,7 @@ Resources:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Ref CrediFacilStateMachine
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -192,8 +192,8 @@ Resources:
       Timeout: 15
       Environment:
         Variables:
-          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
-          # 🚀 DE DESAFIADO A MESTRE: Sem variáveis do S3 aqui, o CloudFormation quebra o ciclo vicioso!
+          # 🚀 LOGICA DE MATURIDADE: Injeta o ARN via Substring para evitar dependência física de Grafo
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -201,7 +201,7 @@ Resources:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Ref CrediFacilStateMachine
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Events:
         S3ObjectCreatedEvent:
           Type: S3
@@ -215,6 +215,9 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  # ==========================================================================
+  # ⚙️ COMPONENTES INTERNOS DO WORKFLOW (Leaf Nodes Lineares)
+  # ==========================================================================
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -224,8 +227,8 @@ Resources:
       Environment:
         Variables:
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
-          BUCKET_ENTRADA: !Ref BucketEntrada
-          BUCKET_SAIDA: !Ref BucketSaida
+          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${Environment}"
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -264,7 +267,7 @@ Resources:
       Timeout: 120
       Environment:
         Variables:
-          BUCKET_SAIDA: !Ref BucketSaida
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -283,7 +286,7 @@ Resources:
       Handler: src.lambdas.result_writer.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Ref BucketSaida
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -301,7 +304,7 @@ Resources:
       Handler: src.lambdas.query_handler.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Ref BucketSaida
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
