@@ -112,13 +112,13 @@ def handler(event, context):
         idx = 0
 
         for obj in s3_objects["Contents"]:
-            # 🚀 CORREÇÃO CRÍTICA: Pula se NÃO for json ou se FOR o arquivo de manifesto
             if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
                 continue
                 
             idx += 1
-            nome_arquivo_bda = obj["Key"].split("/")[-1]
-            logger.info(f"Processando documento individual [{idx}]: {nome_arquivo_bda}")
+            # 🚀 CORREÇÃO CRÍTICA 1: Substitui as barras por underscores para gerar um nome de arquivo intermediário único no S3
+            nome_arquivo_unico = obj["Key"].replace("bda-output/", "").replace("/", "_")
+            logger.info(f"Processando documento individual [{idx}]: {nome_arquivo_unico}")
             
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
             json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -152,14 +152,15 @@ def handler(event, context):
             tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
             
             if not tool_use_block:
-                logger.warning(f"O Amazon Nova falhou ao estruturar o arquivo {nome_arquivo_bda}. Ignorando.")
+                logger.warning(f"O Amazon Nova falhou ao estruturar o arquivo {nome_arquivo_unico}. Ignorando.")
                 continue
 
             achado = tool_use_block.get("input", {})
             if isinstance(achado, str):
                 achado = json.loads(achado)
 
-            s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_bda}_structured.json"
+            # Salva o arquivo intermediário usando o nome único gerado
+            s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_unico}_structured.json"
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=s3_key_intermediaria,
@@ -215,7 +216,7 @@ def handler(event, context):
             "custo_estimado_usd": round(total_custo_usd, 6)
         }
 
-        logger.info(f"Fim da esteira. Custos acumulados: ${total_custo_usd:.6f} | Clientes localizados: {list(tabela_clientes_final.keys())}")
+        logger.info(f"Fim da esteira. Custos: ${total_custo_usd:.6f} | Clientes: {list(tabela_clientes_final.keys())}")
         LoanPackageOutput(**json_estruturado_final)
 
         return {
