@@ -10,10 +10,13 @@ logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
+# 🚀 PROMPT OPTIMIZATION: Força o modelo a extrair os IDs sem deixar passar em branco
 PROMPT_SISTEMA = (
-    "Você é um agente analítico especialista em extração de dados para crédito imobiliário. "
-    "Sua única tarefa é analisar o texto bruto extraído de UM ÚNICO documento e mapear seus dados "
-    "na ferramenta estruturada fornecida. Identifique com precisão o nome do titular e valores financeiros."
+    "Você é um agente analítico especialista em extração de dados para crédito. "
+    "Sua tarefa é analisar a estrutura JSON vinda do BDA de UM ÚNICO documento e extrair os dados. "
+    "ATENÇÃO CRÍTICA: Identifique e extraia com precisão o número do documento de identificação "
+    "(como SSN, Tax ID, Drivers License Number, CPF) e preencha obrigatoriamente o campo 'numero_identificacao'. "
+    "Nunca retorne vazio ou 'Não Localizado' se houver um número identificador presente no texto do documento."
 )
 
 def limpar_ruido_recursivo(dados: any) -> any:
@@ -78,6 +81,10 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
         else:
             justificativas_individuo.append("Sem colchão de liquidez (0/30 pts).")
 
+        # 🚀 NOVIDADE: Acopla o score individual e a justificativa isolada no nó de cada cliente
+        dados["score_atribuido"] = score_individuo
+        dados["justificativa_individual"] = " ".join(justificativas_individuo)
+
         pontuacao += score_individuo
         justificativas.append(f"[{nome}]: " + " ".join(justificativas_individuo))
 
@@ -109,16 +116,12 @@ def handler(event, context):
         total_input_tokens = 0
         total_output_tokens = 0
         total_custo_usd = 0.0
-        idx = 0
 
         for obj in s3_objects["Contents"]:
             if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
                 continue
                 
-            idx += 1
-            # 🚀 CORREÇÃO CRÍTICA 1: Substitui as barras por underscores para gerar um nome de arquivo intermediário único no S3
             nome_arquivo_unico = obj["Key"].replace("bda-output/", "").replace("/", "_")
-            logger.info(f"Processando documento individual [{idx}]: {nome_arquivo_unico}")
             
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
             json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -152,14 +155,12 @@ def handler(event, context):
             tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
             
             if not tool_use_block:
-                logger.warning(f"O Amazon Nova falhou ao estruturar o arquivo {nome_arquivo_unico}. Ignorando.")
                 continue
 
             achado = tool_use_block.get("input", {})
             if isinstance(achado, str):
                 achado = json.loads(achado)
 
-            # Salva o arquivo intermediário usando o nome único gerado
             s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_unico}_structured.json"
             s3_client.put_object(
                 Bucket=bucket_saida,
@@ -210,22 +211,17 @@ def handler(event, context):
             "tabela_clientes": tabela_clientes_final
         }
 
-        metricas_auditoria = {
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "custo_estimado_usd": round(total_custo_usd, 6)
-        }
-
-        logger.info(f"Fim da esteira. Custos: ${total_custo_usd:.6f} | Clientes: {list(tabela_clientes_final.keys())}")
-        LoanPackageOutput(**json_estruturado_final)
-
         return {
             "package_id": package_id,
             "user_id": user_id,
             "bda_output_bucket": bucket_saida,
             "confianca_geral": round(confianca_global, 2),
             "revisao_humana": True if scoring["classificacao_risco"] == "MEDIUM_RISK" else False,
-            "metricas_consumo": metricas_auditoria,
+            "metricas_consumo": {
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "custo_estimado_usd": round(total_custo_usd, 6)
+            },
             "json_estruturado": json_estruturado_final
         }
 
