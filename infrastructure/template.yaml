@@ -51,6 +51,17 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - "PUT"
+              - "POST"
+              - "GET"
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
       Tags:
         - Key: Criador
           Value: Grupo12
@@ -59,6 +70,15 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-saida-${Environment}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - "GET"
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
       Tags:
         - Key: Criador
           Value: Grupo12
