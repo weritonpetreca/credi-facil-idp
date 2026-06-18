@@ -10,120 +10,132 @@ logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-PROMPT_SISTEMA = (
-    "Você é um especialista em auditoria de dados financeiros e hipotecários internacionais. "
-    "Sua tarefa é analisar os dados brutos extraídos de documentos e acionar a ferramenta "
-    "'estruturar_dados_solicitacao_credito' fornecendo os dados limpos, capturando identificadores "
-    "como SSN, Driver License ou CPF, e formatando datas. Não gere texto livre além da chamada da ferramenta."
-)
-
-def montar_payload_bedrock(dados_brutos: dict) -> dict:
-    """Prepara os parâmetros estruturados para a API Converse do Bedrock."""
-    tool_config = {
-        # 🚀 CORREÇÃO: Garante o uso do nome correto da função aqui também
-        "tools": [obter_especificacao_ferramenta_loan()],
-        "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
-    }
+def calcular_matriz_score(tabela_clientes: dict) -> dict:
+    """Aplica o motor determinístico de scoring sobre o consolidado da tabela de clientes."""
+    pontuacao = 100
+    justificativas = []
     
-    messages = [
-        {
-            "role": "user",
-            "content": [{"text": f"Dados brutos recebidos para estruturação: {json.dumps(dados_brutos)}"}]
-        }
-    ]
+    if len(tabela_clientes) > 1:
+        pontuacao -= 30
+        justificativas.append("Presença de múltiplos proponentes/fiadores no lote (-30 pts).")
+        
+    for nome, dados in tabela_clientes.items():
+        docs = [d["tipo_documento"] for d in dados["documentos_vinculados"]]
+        
+        # Validação de consistência de acervo por cliente
+        if "IDENTITY_DOCUMENT" not in docs:
+            pontuacao -= 20
+            justificativas.append(f"Cliente {nome} carece de documento oficial de identidade homologado (-20 pts).")
+            
+        # Avaliação de ranges de renda/balanço
+        for doc in dados["documentos_vinculados"]:
+            fin = doc["dados_financeiros"]
+            renda = fin.get("renda_bruta_informada", 0.0)
+            saldo = fin.get("saldo_bancario_fechamento", 0.0)
+            
+            if doc["tipo_documento"] in ["PAY_STUB", "TAX_DOCUMENT"] and renda < 1000.0 and renda > 0:
+                pontuacao -= 15
+                justificativas.append(f"Renda identificada para {nome} abaixo do range de segurança (-15 pts).")
+            if doc["tipo_documento"] == "BANK_STATEMENT" and saldo > 50000.0:
+                pontuacao += 15
+                justificativas.append(f"Balanço bancário de {nome} indica liquidez excelente (+15 pts).")
+
+    pontuacao = max(0, min(100, pontuacao))
+    risco = "LOW_RISK" if pontuacao >= 80 else ("MEDIUM_RISK" if pontuacao >= 50 else "HIGH_RISK")
     
     return {
-        "modelId": "amazon.nova-pro-v1:0", 
-        "messages": messages,
-        "system": [{"text": PROMPT_SISTEMA}],
-        "toolConfig": tool_config
+        "pontuacao": pontuacao,
+        "classificacao_risco": risco,
+        "justificativa": " | ".join(justificativas) if justificativas else "Dossiê limpo e em conformidade técnica."
     }
-
-def processar_resposta_bedrock(bedrock_response: dict, package_id: str, user_id: str) -> dict:
-    """Captura a saída da ferramenta 'toolUse' gerada pelo LLM e envelopa no modelo de produção."""
-    output_message = bedrock_response.get("output", {}).get("message", {})
-    content_blocks = output_message.get("content", [])
-    
-    tool_use_block = None
-    for block in content_blocks:
-        if "toolUse" in block:
-            tool_use_block = block["toolUse"]
-            break
-            
-    if not tool_use_block:
-        logger.error(f"Resposta bruta recebida do Bedrock: {json.dumps(bedrock_response)}")
-        raise ValueError("O modelo Amazon Nova falhou em acionar a ferramenta de estruturação estruturada.")
-        
-    dados_extraidos_ia = tool_use_block.get("input", {})
-    if isinstance(dados_extraidos_ia, str):
-        dados_extraidos_ia = json.loads(dados_extraidos_ia)
-        
-    payload_final = {
-        "package_id": package_id,
-        "status": "COMPLETED",
-        "confianca_geral": 0.95, 
-        "revisao_humana": False,
-        "documentos": {
-            "identidade": {
-                "nome": dados_extraidos_ia.get("nome", "Nome Não Encontrado"),
-                "documento_identificacao": dados_extraidos_ia.get("documento_identificacao", "Não Informado"),
-                "data_nascimento": dados_extraidos_ia.get("data_nascimento", "2000-01-01"),
-                "confianca": 0.95
-            }
-        }
-    }
-    
-    validado = LoanPackageOutput(**payload_final)
-    return json.loads(validado.model_dump_json())
 
 def handler(event, context):
-    """Ponto de entrada do Step Functions para a estruturação com LLM"""
     try:
         package_id = event.get("package_id")
-        user_id = event.get("user_id", "sistema-anonimo")
+        user_id = event.get("user_id", "sistema")
         bucket_saida = event.get("bda_output_bucket")
-        
         prefix_busca = f"bda-output/{package_id}/"
 
-        logger.info(f"Iniciando a fase de estruturação inteligente para o pacote {package_id}")
+        logger.info(f"Iniciando varredura relacional para o pacote {package_id}")
 
+        # 🔍 CAPTURA MULTI-DOCUMENTO: Lista a pasta inteira de saídas do BDA no S3
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
-        
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
-            raise FileNotFoundError(f"Nenhum arquivo gerado pelo BDA foi localizado no prefixo {prefix_busca}")
+            raise FileNotFoundError(f"Nenhum artefato do BDA localizado no prefixo {prefix_busca}")
 
-        arquivos_json = [obj["Key"] for obj in s3_objects["Contents"] if obj["Key"].endswith(".json")]
+        conteudos_brutos = []
+        for obj in s3_objects["Contents"]:
+            if obj["Key"].endswith(".json") and "manifest" not in obj["Key"].lower():
+                s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
+                conteudos_brutos.append(json.loads(s3_response["Body"].read().decode("utf-8")))
+
+        # Configura e executa a chamada Converse com o Amazon Nova Pro
+        tool_config = {
+            "tools": [obter_especificacao_ferramenta_loan()],
+            "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
+        }
         
-        if not arquivos_json:
-            raise FileNotFoundError(f"Nenhum arquivo JSON de extração foi encontrado no prefixo {prefix_busca}")
+        messages = [{
+            "role": "user",
+            "content": [{"text": f"Consolide e classifique a seguinte massa de dados bruta extraída do pacote: {json.dumps(conteudos_brutos)}"}]
+        }]
 
-        key_real_bda = arquivos_json[0]
-        logger.info(f"Mapeado arquivo de extração do BDA com sucesso: {key_real_bda}")
-
-        s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key_real_bda)
-        bda_raw_content = s3_response["Body"].read().decode("utf-8")
-        dados_brutos = json.loads(bda_raw_content)
-
-        params = montar_payload_bedrock(dados_brutos)
-        
-        logger.info(f"Invocando o modelo {params['modelId']} via API Converse do Bedrock...")
+        logger.info("Invocando o Amazon Nova Pro via API Converse...")
         response = bedrock_runtime.converse(
-            modelId=params["modelId"],
-            messages=params["messages"],
-            system=params["system"],
-            toolConfig=params["toolConfig"]
+            modelId="amazon.nova-pro-v1:0",
+            messages=messages,
+            toolConfig=tool_config
         )
 
-        resultado_ia = processar_resposta_bedrock(response, package_id, user_id)
+        tool_requests = response["output"]["message"].get("toolRequests", [])
+        if not tool_requests:
+            raise ValueError("O modelo falhou em popular a tabela analítica do dossiê.")
 
+        dados_ia = json.loads(tool_requests[0]["input"])
+        
+        # Algoritmo de mapeamento relacional: Agrupa os achados por cliente (Nome)
+        tabela_clientes_final = {}
+        for achado in dados_ia.get("achados_documentais", []):
+            nome = achado["nome_titular"]
+            if nome not in tabela_clientes_final:
+                tabela_clientes_final[nome] = {
+                    "cadastro": {
+                        "nome": nome,
+                        "documento_identificacao": achado.get("numero_identificacao", "Não Localizado"),
+                        "data_nascimento": achado.get("data_nascimento") if achado.get("data_nascimento") else None
+                    },
+                    "documentos_vinculados": []
+                }
+            
+            tabela_clientes_final[nome]["documentos_vinculados"].append({
+                "tipo_documento": achado["tipo_documento"],
+                "confianca": 0.95,
+                "dados_financeiros": {
+                    "renda_bruta_informada": achado.get("renda_bruta_informada", 0.0),
+                    "saldo_bancario_fechamento": achado.get("saldo_bancario_fechamento", 0.0)
+                }
+            })
+
+        # Calcula a matriz final de score de crédito
+        scoring = calcular_matriz_score(tabela_clientes_final)
+
+        # Montagem do payload de saída final validado via Pydantic
+        payload_saida = {
+            "package_id": package_id,
+            "status": "COMPLETED",
+            "score_global": scoring,
+            "tabela_clientes": tabela_clientes_final
+        }
+
+        validado = LoanPackageOutput(**payload_saida)
         return {
             "package_id": package_id,
             "user_id": user_id,
-            "confianca_geral": resultado_ia.get("confianca_geral", 0.95),
-            "revisao_humana": resultado_ia.get("revisao_humana", False),
-            "json_estruturado": resultado_ia
+            "confianca_geral": 0.95,
+            "revisao_humana": True if scoring["classificacao_risco"] == "HIGH_RISK" else False,
+            "json_estruturado": json.loads(validado.model_dump_json())
         }
 
     except Exception as e:
-        logger.error(f"Falha crítica na Lambda NovaStructurer: {str(e)}")
+        logger.error(f"Falha crítica no motor estruturador: {str(e)}")
         raise e

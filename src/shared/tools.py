@@ -1,25 +1,37 @@
 def obter_especificacao_ferramenta_loan() -> dict:
     """
-    Retorna a especificação da ferramenta que o Amazon Nova preencherá.
-    Este formato segue estritamente o padrão exigido pela API Converse do Bedrock.
+    Retorna a especificação da ferramenta analítica em lote.
+    Segue estritamente o padrão de inputSchema exigido pela API Converse do Bedrock.
     """
     return {
         "toolSpec": {
             "name": "estruturar_dados_solicitacao_credito",
-            "description": "Formata e padroniza os dados extraídos de documentos hipotecários e de identidade internacionais.",
+            "description": "Classifica e extrai os dados de todos os documentos e pessoas localizadas no pacote.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "nome": {"type": "string", "description": "Nome completo do cliente extraído do documento"},
-                        # 🚀 MUDANÇA: Campo generalizado para aceitar SSN, Driver License ou CPF
-                        "documento_identificacao": {
-                            "type": "string", 
-                            "description": "Número do documento de identidade localizado (pode ser SSN, Driver License ou CPF)"
-                        },
-                        "data_nascimento": {"type": "string", "description": "Data de nascimento no padrão YYYY-MM-DD"}
+                        "achados_documentais": {
+                            "type": "array",
+                            "description": "Lista de todos os documentos e registros de pessoas identificados na massa de dados",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "nome_titular": {"type": "string", "description": "Nome completo associado a este documento específico"},
+                                    "tipo_documento": {
+                                        "type": "string", 
+                                        "enum": ["IDENTITY_DOCUMENT", "PAY_STUB", "BANK_STATEMENT", "TAX_DOCUMENT", "UNKNOWN"]
+                                    },
+                                    "numero_identificacao": {"type": "string", "description": "SSN, CPF ou número de licença encontrado"},
+                                    "data_nascimento": {"type": "string", "description": "Data de nascimento se disponível (YYYY-MM-DD)"},
+                                    "renda_bruta_informada": {"type": "number", "description": "Valor de Gross Pay ou salários localizados"},
+                                    "saldo_bancario_fechamento": {"type": "number", "description": "Saldo final de contas correntes ou investimentos"}
+                                },
+                                "required": ["nome_titular", "tipo_documento"]
+                            }
+                        }
                     },
-                    "required": ["nome", "documento_identificacao", "data_nascimento"]
+                    "required": ["achados_documentais"]
                 }
             }
         }

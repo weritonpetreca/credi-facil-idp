@@ -4,25 +4,46 @@
   "type": "object",
   "properties": {
     "package_id": { "type": "string", "format": "uuid" },
-    "status": { "type": "string", "enum": ["PROCESSING", "NEEDS_REVIEW", "COMPLETED", "FAILED"] },
-    "confianca_geral": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-    "revisao_humana": { "type": "boolean" },
-    "documentos": {
+    "status": { "type": "string" },
+    "score_global": {
       "type": "object",
       "properties": {
-        "identidade": {
-          "type": "object",
-          "properties": {
-            "nome": { "type": "string" },
-            "documento_identificacao": { "type": "string" },
-            "data_nascimento": { "type": "string", "format": "date" },
-            "confianca": { "type": "number" }
-          },
-          "required": ["nome", "documento_identificacao", "data_nascimento", "confianca"]
-        }
+        "pontuacao": { "type": "integer" },
+        "classificacao_risco": { "type": "string" },
+        "justificativa": { "type": "string" }
       },
-      "required": ["identidade"]
+      "required": ["pontuacao", "classificacao_risco", "justificativa"]
+    },
+    "tabela_clientes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cadastro": {
+            "type": "object",
+            "properties": {
+              "nome": { "type": "string" },
+              "documento_identificacao": { "type": "string" },
+              "data_nascimento": { "type": "string" }
+            },
+            "required": ["nome", "documento_identificacao"]
+          },
+          "documentos_vinculados": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tipo_documento": { "type": "string" },
+                "confianca": { "type": "number" },
+                "dados_financeiros": { "type": "object" }
+              },
+              "required": ["tipo_documento", "confianca"]
+            }
+          }
+        },
+        "required": ["cadastro", "documentos_vinculados"]
+      }
     }
   },
-  "required": ["package_id", "status", "confianca_geral", "revisao_humana", "documentos"]
+  "required": ["package_id", "status", "score_global", "tabela_clientes"]
 }

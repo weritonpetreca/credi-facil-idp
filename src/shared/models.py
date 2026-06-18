@@ -1,20 +1,31 @@
 from pydantic import BaseModel, Field, UUID4
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import date
 
-class IdentidadeModel(BaseModel):
-    nome: str = Field(..., description="Nome completo extraído do documento")
-    # 🚀 MUDANÇA: Campo internacionalizado para suportar a massa de dados do Hackathon
-    documento_identificacao: str = Field(..., description="Documento de identificação (SSN, Driver License ou CPF)")
-    data_nascimento: date = Field(..., description="Data de nascimento no padrão ISO YYYY-MM-DD")
-    confianca: float = Field(..., ge=0.0, le=1.0)
+class ScoreAnalise(BaseModel):
+    pontuacao: int = Field(..., ge=0, le=100)
+    classificacao_risco: str
+    justificativa: str
 
-class DocumentosPacote(BaseModel):
-    identidade: IdentidadeModel
+class CadastroModel(BaseModel):
+    nome: str = Field(..., description="Nome completo do indivíduo")
+    documento_identificacao: str = Field(..., description="SSN, Driver License ou CPF identificado")
+    data_nascimento: Optional[date] = Field(None, description="Data de nascimento formatada")
+
+class DocumentoExtraido(BaseModel):
+    tipo_documento: str = Field(..., description="IDENTITY_DOCUMENT, PAY_STUB, BANK_STATEMENT, TAX_DOCUMENT")
+    confianca: float = Field(..., ge=0.0, le=1.0)
+    dados_financeiros: Dict[str, Any] = Field(default_factory=dict, description="Dados de renda ou saldo absorvidos")
+
+class ClienteConsolidado(BaseModel):
+    cadastro: CadastroModel
+    documentos_vinculados: List[DocumentoExtraido] = Field(default_factory=list)
 
 class LoanPackageOutput(BaseModel):
     package_id: UUID4
     status: str
-    confianca_geral: float = Field(..., ge=0.0, le=1.0)
-    revisao_humana: bool
-    documentos: DocumentosPacote
+    score_global: ScoreAnalise
+    tabela_clientes: Dict[str, ClienteConsolidado] = Field(
+        default_factory=dict, 
+        description="Mapeamento tipo tabela indexada pelo nome do cliente"
+    )
