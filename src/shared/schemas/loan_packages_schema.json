@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LoanPackageOutput",
+  "type": "object",
+  "properties": {
+    "package_id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string" },
+    "score_global": {
+      "type": "object",
+      "properties": {
+        "pontuacao": { "type": "integer" },
+        "classificacao_risco": { "type": "string" },
+        "justificativa": { "type": "string" }
+      },
+      "required": ["pontuacao", "classificacao_risco", "justificativa"]
+    },
+    "tabela_clientes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cadastro": {
+            "type": "object",
+            "properties": {
+              "nome": { "type": "string" },
+              "documento_identificacao": { "type": "string" },
+              "data_nascimento": { "type": "string" }
+            },
+            "required": ["nome", "documento_identificacao"]
+          },
+          "documentos_vinculados": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tipo_documento": { "type": "string" },
+                "confianca": { "type": "number" },
+                "dados_financeiros": { "type": "object" }
+              },
+              "required": ["tipo_documento", "confianca"]
+            }
+          }
+        },
+        "required": ["cadastro", "documentos_vinculados"]
+      }
+    }
+  },
+  "required": ["package_id", "status", "score_global", "tabela_clientes"]
+}

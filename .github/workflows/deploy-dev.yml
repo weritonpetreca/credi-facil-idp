@@ -2,10 +2,10 @@ name: Deploy Dev Environment
 
 on:
   push:
-    branches: [ develop ] # Dispara automaticamente ao atualizar a develop
+    branches: [ develop ]
 
 permissions:
-  id-token: write # Obrigatorio para autenticacao segura via OIDC
+  id-token: write
   contents: read
 
 jobs:
@@ -23,21 +23,47 @@ jobs:
       - name: Setup AWS SAM CLI
         uses: aws-actions/setup-sam@v2
 
-      # Autenticação Segura (Shift-Left) sem chaves estáticas expostas
       - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: us-east-1
+          audience: sts.amazonaws.com
 
       - name: SAM Build Application
         run: sam build --template-file infrastructure/template.yaml
 
-      - name: SAM Deploy to AWS
+      - name: Auto-Clean ROLLBACK_COMPLETE Stack
         run: |
+          echo "Checando status atual da stack credifacil-idp-dev..."
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name credifacil-idp-dev --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "STACK_NOT_FOUND")
+          
+          echo "Status detectado: $STACK_STATUS"
+          
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "⚠️ Stack detectada em ROLLBACK_COMPLETE. Iniciando expurgo automático..."
+            aws cloudformation delete-stack --stack-name credifacil-idp-dev
+            
+            echo "Aguardando a AWS finalizar a exclusao..."
+            aws cloudformation wait stack-delete-complete --stack-name credifacil-idp-dev
+            echo "✅ Terreno limpo com sucesso! Pronto para o novo deploy."
+          else
+            echo "✅ Stack inexistente ou em estado saudavel. Seguindo em frente."
+          fi
+
+      - name: SAM Deploy to AWS
+        env:
+          BDA_ID: ${{ secrets.BDA_PROJECT_ID }}
+        run: |
+          # 🧠 Prática DevSecOps: Fallbacks automáticos para permitir o primeiro deploy de bootstrap
+          BDA_VAL="${BDA_ID:-abee94d532bd}"
+
           sam deploy \
             --stack-name credifacil-idp-dev \
+            --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --parameter-overrides Environment=dev \
+            --parameter-overrides \
+              Environment=dev \
+              BdaProjectId="$BDA_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
