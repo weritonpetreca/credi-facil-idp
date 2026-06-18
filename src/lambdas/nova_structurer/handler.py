@@ -10,6 +10,13 @@ logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
+PROMPT_SISTEMA = (
+    "Você é um motor analítico de submissão de crédito imobiliário internacional. "
+    "Sua tarefa é analisar os dados consolidados extraídos de múltiplos documentos do pacote, "
+    "classificar os tipos de documentos identificados e preencher a ferramenta estruturada. "
+    "Identifique nomes, documentos (SSN/DL/CPF), rendas (Gross/Net) e saldos bancários."
+)
+
 def calcular_matriz_score(tabela_clientes: dict) -> dict:
     """Aplica o motor determinístico de scoring sobre o consolidado da tabela de clientes."""
     pontuacao = 100
@@ -58,7 +65,7 @@ def handler(event, context):
 
         logger.info(f"Iniciando varredura relacional para o pacote {package_id}")
 
-        # 🔍 CAPTURA MULTI-DOCUMENTO: Lista a pasta inteira de saídas do BDA no S3
+        # Lista a pasta inteira de saídas do BDA no S3
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum artefato do BDA localizado no prefixo {prefix_busca}")
@@ -69,7 +76,7 @@ def handler(event, context):
                 s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
                 conteudos_brutos.append(json.loads(s3_response["Body"].read().decode("utf-8")))
 
-        # Configura e executa a chamada Converse com o Amazon Nova Pro
+        # Configura as ferramentas seguindo o padrão oficial Bedrock Converse
         tool_config = {
             "tools": [obter_especificacao_ferramenta_loan()],
             "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
@@ -84,16 +91,23 @@ def handler(event, context):
         response = bedrock_runtime.converse(
             modelId="amazon.nova-pro-v1:0",
             messages=messages,
+            system=[{"text": PROMPT_SISTEMA}],
             toolConfig=tool_config
         )
 
-        tool_requests = response["output"]["message"].get("toolRequests", [])
-        if not tool_requests:
+        # 🚀 CORREÇÃO CRÍTICA: Varre o array content para extrair o toolUse no formato nativo da AWS
+        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+        tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
+        
+        if not tool_use_block:
+            logger.error(f"Resposta crua do Bedrock sem chamada de ferramenta: {json.dumps(response)}")
             raise ValueError("O modelo falhou em popular a tabela analítica do dossiê.")
 
-        dados_ia = json.loads(tool_requests[0]["input"])
+        dados_ia = tool_use_block.get("input", {})
+        if isinstance(dados_ia, str):
+            dados_ia = json.loads(dados_ia)
         
-        # Algoritmo de mapeamento relacional: Agrupa os achados por cliente (Nome)
+        # Agrupa os achados documentais por cliente (Nome)
         tabela_clientes_final = {}
         for achado in dados_ia.get("achados_documentais", []):
             nome = achado["nome_titular"]
