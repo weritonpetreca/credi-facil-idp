@@ -17,6 +17,31 @@ PROMPT_SISTEMA = (
     "Identifique nomes, documentos (SSN/DL/CPF), rendas (Gross/Net) e saldos bancários."
 )
 
+def limpar_ruido_bda(bda_json: dict) -> dict:
+    """Remove metadados geométricos e estruturais pesados para focar apenas no texto útil."""
+    dados_limpos = {}
+    
+    # Captura textos puros e linhagens textuais se existirem
+    if "text" in bda_json:
+        dados_limpos["texto_extraido"] = bda_json["text"]
+        
+    # Captura o sumário analítico ou blocos de chaves/valores simplificados
+    if "key_values" in bda_json:
+        dados_limpos["chaves_valores"] = [
+            {"chave": kv.get("key"), "valor": kv.get("value")} 
+            for kv in bda_json["key_values"] if kv.get("key")
+        ]
+        
+    # Se a estrutura for baseada em arvores de blocos padrão (estilo Textract)
+    if "blocks" in bda_json:
+        dados_limpos["linhas_texto"] = [
+            b.get("text") for b in bda_json["blocks"] 
+            if b.get("blockType") == "LINE" and b.get("text")
+        ]
+        
+    # Retorna o dicionário higienizado ou o payload cru caso não encontre chaves conhecidas
+    return dados_limpos if dados_limpos else bda_json
+
 def calcular_matriz_score(tabela_clientes: dict) -> dict:
     """Aplica o motor determinístico de scoring sobre o consolidado da tabela de clientes."""
     pontuacao = 100
@@ -74,7 +99,11 @@ def handler(event, context):
         for obj in s3_objects["Contents"]:
             if obj["Key"].endswith(".json") and "manifest" not in obj["Key"].lower():
                 s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
-                conteudos_brutos.append(json.loads(s3_response["Body"].read().decode("utf-8")))
+                json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
+                
+                # 🚀 HIGIENIZAÇÃO ATIVADA: Remove o ruído geométrico de cada arquivo individualmente
+                json_higienizado = limpar_ruido_bda(json_bruto)
+                conteudos_brutos.append(json_higienizado)
 
         # Configura as ferramentas seguindo o padrão oficial Bedrock Converse
         tool_config = {
