@@ -10,7 +10,6 @@ logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-# 🚀 PROMPT OPTIMIZATION: Força o modelo a extrair os IDs sem deixar passar em branco
 PROMPT_SISTEMA = (
     "Você é um agente analítico especialista em extração de dados para crédito. "
     "Sua tarefa é analisar a estrutura JSON vinda do BDA de UM ÚNICO documento e extrair os dados. "
@@ -20,11 +19,7 @@ PROMPT_SISTEMA = (
 )
 
 def limpar_ruido_recursivo(dados: any) -> any:
-    CHAVES_INUTEIS = {
-        "boundingBox", "polygon", "geometry", "coordinates", "location", 
-        "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight",
-        "geometryData", "xy", "box"
-    }
+    CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
     if isinstance(dados, dict):
         return {k: limpar_ruido_recursivo(v) for k, v in dados.items() if k not in CHAVES_INUTEIS}
     elif isinstance(dados, list):
@@ -34,7 +29,6 @@ def limpar_ruido_recursivo(dados: any) -> any:
 def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
     pontuacao = 0
     justificativas = []
-    
     if len(tabela_clientes) > 1:
         justificativas.append("Análise consolidada multi-proponente detectada no dossiê.")
 
@@ -81,21 +75,14 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
         else:
             justificativas_individuo.append("Sem colchão de liquidez (0/30 pts).")
 
-        # 🚀 NOVIDADE: Acopla o score individual e a justificativa isolada no nó de cada cliente
         dados["score_atribuido"] = score_individuo
         dados["justificativa_individual"] = " ".join(justificativas_individuo)
-
         pontuacao += score_individuo
         justificativas.append(f"[{nome}]: " + " ".join(justificativas_individuo))
 
     pontuacao_final = max(0, min(100, int(pontuacao / max(1, len(tabela_clientes)))))
     risco = "LOW_RISK" if pontuacao_final >= 80 else ("MEDIUM_RISK" if pontuacao_final >= 50 else "HIGH_RISK")
-    
-    return {
-        "pontuacao": pontuacao_final,
-        "classificacao_risco": risco,
-        "justificativa": " | ".join(justificativas)
-    }
+    return {"pontuacao": pontuacao_final, "classificacao_risco": risco, "justificativa": " | ".join(justificativas)}
 
 def handler(event, context):
     try:
@@ -103,8 +90,6 @@ def handler(event, context):
         user_id = event.get("user_id", "sistema")
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
-
-        logger.info(f"Iniciando processamento isolado por documento para o pacote {package_id}")
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -121,6 +106,11 @@ def handler(event, context):
             if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
                 continue
                 
+            # 🚀 EXTRAÇÃO DA LINHAGEM: Descobre o nome do arquivo original que gerou essa subpasta
+            # Estrutura do caminho: bda-output/{package_id}/{nome_do_pdf_original}/...
+            partes_caminho = obj["Key"].split("/")
+            nome_pdf_original = partes_caminho[2] if len(partes_caminho) > 2 else "desconhecido.pdf"
+            
             nome_arquivo_unico = obj["Key"].replace("bda-output/", "").replace("/", "_")
             
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
@@ -145,11 +135,8 @@ def handler(event, context):
             )
 
             usage = response.get("usage", {})
-            in_t = usage.get("inputTokens", 0)
-            out_t = usage.get("outputTokens", 0)
-            total_input_tokens += in_t
-            total_output_tokens += out_t
-            total_custo_usd += ((in_t / 1000) * 0.0008) + ((out_t / 1000) * 0.0032)
+            total_input_tokens += usage.get("inputTokens", 0)
+            total_output_tokens += usage.get("outputTokens", 0)
 
             content_blocks = response.get("output", {}).get("message", {}).get("content", [])
             tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
@@ -161,10 +148,9 @@ def handler(event, context):
             if isinstance(achado, str):
                 achado = json.loads(achado)
 
-            s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_unico}_structured.json"
             s3_client.put_object(
                 Bucket=bucket_saida,
-                Key=s3_key_intermediaria,
+                Key=f"results/{package_id}/intermediates/{nome_arquivo_unico}",
                 Body=json.dumps(achado, ensure_ascii=False),
                 ContentType="application/json"
             )
@@ -189,17 +175,18 @@ def handler(event, context):
             if tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] == "Não Localizado" and achado.get("numero_identificacao"):
                 tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] = achado.get("numero_identificacao")
 
+            # 🚀 INJEÇÃO DE LINHAGEM DE STORAGE: Acopla o caminho absoluto do bucket de entrada no histórico
+            uri_s3_entrada = f"s3://credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}/packages/{package_id}/{nome_pdf_original}"
+
             tabela_clientes_final[nome]["documentos_vinculados"].append({
                 "tipo_documento": achado["tipo_documento"],
                 "confianca": score_doc,
+                "arquivo_origem_s3": uri_s3_entrada, # Campo de auditoria injetado!
                 "dados_financeiros": {
                     "renda_bruta_informada": float(achado.get("renda_bruta_informada", 0.0) or 0.0),
                     "saldo_bancario_fechamento": float(achado.get("saldo_bancario_fechamento", 0.0) or 0.0)
                 }
             })
-
-        if not tabela_clientes_final:
-            raise ValueError("Nenhum cliente válido pôde ser extraído de nenhum dos arquivos do lote.")
 
         confianca_global = sum(confiancas_acumuladas) / max(1, len(confiancas_acumuladas))
         scoring = calcular_matriz_score_mercado(tabela_clientes_final)
@@ -217,11 +204,7 @@ def handler(event, context):
             "bda_output_bucket": bucket_saida,
             "confianca_geral": round(confianca_global, 2),
             "revisao_humana": True if scoring["classificacao_risco"] == "MEDIUM_RISK" else False,
-            "metricas_consumo": {
-                "input_tokens": total_input_tokens,
-                "output_tokens": total_output_tokens,
-                "custo_estimado_usd": round(total_custo_usd, 6)
-            },
+            "metricas_consumo": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens, "custo_estimado_usd": round((total_input_tokens*0.0008/1000)+(total_output_tokens*0.0032/1000), 6)},
             "json_estruturado": json_estruturado_final
         }
 
