@@ -44,16 +44,18 @@ def handler(event, context):
             }
 
         # Desembrulha os tipos do DynamoDB para um dicionário Python limpo
-        status = item["status"]["S"]
-        uploaded_by = item["uploadedBy"]["S"]
-        uploaded_at = item["uploadedAt"]["S"]
+        status = item.get("status", {}).get("S", "UNKNOWN")
+        uploaded_by = item.get("uploadedBy", {}).get("S", "sistema")
+        uploaded_at = item.get("uploadedAt", {}).get("S", "")
         
         resposta_base = {
             "package_id": package_id,
             "status": status,
             "uploaded_by": uploaded_by,
             "uploaded_at": uploaded_at,
-            "human_review": item.get("humanReview", {}).get("BOOL", False)
+            "human_review": item.get("humanReview", {}).get("BOOL", False),
+            "confidence_score": float(item.get("confidenceScore", {}).get("N", "0.0")),
+            "tokens_consumidos": item.get("tokens_consumidos", {}).get("S", "Não computado")
         }
 
         # 2. SE CONCLUÍDO, BUSCA PAYLOAD COMPLETO NO S3
