@@ -8,7 +8,8 @@ from aws_lambda_powertools import Logger
 logger = Logger(service="s3-upload-tracker")
 
 db_client = boto3.client("dynamodb", region_name="us-east-1")
-sf_client = boto3.client("states", region_name="us-east-1")
+# 🚀 CORREÇÃO DEFINITIVA: O nome correto do serviço no Boto3 é 'stepfunctions'
+sf_client = boto3.client("stepfunctions", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN")
@@ -22,11 +23,11 @@ def handler(event, context):
             logger.warning("Nenhum registro localizado no payload do evento.")
             return {"status": "SKIPPED"}
             
-        # 🚀 PROTEÇÃO 1: Captura e decodifica caracteres especiais e espaços da URL do S3
+        # Captura e decodifica caracteres especiais e espaços da URL do S3
         raw_key = records[0].get("s3", {}).get("object", {}).get("key", "")
         s3_key = urllib.parse.unquote_plus(raw_key)
         
-        # 🚀 PROTEÇÃO 2: Limpa barras iniciais e espaços que quebram validações de string
+        # Limpa barras iniciais e espaços que quebram validações de string
         s3_key = s3_key.lstrip("/")
         logger.info(f"Chave S3 higienizada para análise: '{s3_key}'")
         
@@ -66,7 +67,7 @@ def handler(event, context):
 
         logger.info(f"Contador do pacote {package_id}: {uploaded}/{expected} | Estado atual: {status_atual}")
 
-        # 🚀 DISPARO AUTOMÁTICO REATIVO: Ativa quando o último arquivo bate no storage
+        # DISPARO AUTOMÁTICO REATIVO: Ativa quando o último arquivo bate no storage
         if uploaded == expected and status_atual == "AWAITING_UPLOAD":
             try:
                 # Altera o estado para evitar execuções concorrentes duplicadas
