@@ -269,7 +269,7 @@ Resources:
         Variables:
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
       Policies:
-        - S3ReadPolicy:
+        - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
