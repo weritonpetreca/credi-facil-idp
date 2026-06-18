@@ -10,13 +10,32 @@ logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
+# 🚀 PROMPT REFINADO: Regras explícitas para decodificação de Formulários W-2 e Tax Documents
 PROMPT_SISTEMA = (
-    "Você é um agente analítico especialista em extração de dados para crédito. "
-    "Sua tarefa é analisar a estrutura JSON vinda do BDA de UM ÚNICO documento e extrair os dados. "
-    "ATENÇÃO CRÍTICA: Identifique e extraia com precisão o número do documento de identificação "
-    "(como SSN, Tax ID, Drivers License Number, CPF) e preencha obrigatoriamente o campo 'numero_identificacao'. "
-    "Nunca retorne vazio ou 'Não Localizado' se houver um número identificador presente no texto do documento."
+    "Você é um agente analítico de elite especialista em extração de dados financeiros.\n"
+    "Sua tarefa é analisar o texto bruto e a estrutura JSON de um único documento para preencher a ferramenta.\n\n"
+    "DIRETRIZES DE OURO PARA FORMULÁRIOS W-2 E TAX DOCUMENTS:\n"
+    "1. Se o documento contiver 'Form W-2', 'Wage and Tax Statement' ou declarações de imposto, classifique obrigatoriamente como 'TAX_DOCUMENT'.\n"
+    "2. IDENTIFICAÇÃO DO TITULAR: Em formulários W-2, o titular ('nome_titular') é SEMPRE o Empregado (Employee), localizado em campos como 'Employee's first name and initial / Last name'. NUNCA use o nome do Empregador (Employer).\n"
+    "3. NÚMERO DE IDENTIFICAÇÃO: Capture o 'Employee's social security number' ou 'SSN' e injete inteiramente sem máscaras no campo 'numero_identificacao'.\n"
+    "4. DADOS FINANCEIROS: Mapeie o valor de 'Wages, tips, other compensation' (geralmente Box 1) para o campo 'renda_bruta_informada'.\n"
+    "Seja extremamente rigoroso e preciso. Não ignore dados explícitos."
 )
+
+# 🚀 ENGENHARIA DE DADOS: Extrator recursivo para criar uma linha do tempo de texto plano legível para o LLM
+def extrair_texto_linear(dados: any) -> list:
+    textos = []
+    if isinstance(dados, dict):
+        for k, v in dados.items():
+            if k in ["text", "textString", "value", "content"] and isinstance(v, str):
+                if len(v.strip()) > 0:
+                    textos.append(v.strip())
+            else:
+                textos.extend(extrair_texto_linear(v))
+    elif isinstance(dados, list):
+        for item in dados:
+            textos.extend(extrair_texto_linear(item))
+    return textos
 
 def limpar_ruido_recursivo(dados: any) -> any:
     CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
@@ -37,7 +56,7 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
         justificativas_individuo = []
         
         doc_id = dados["cadastro"].get("documento_identificacao", "")
-        if doc_id and "não localizado" not in doc_id.lower():
+        if doc_id and "não localizado" not in doc_id.lower() and "não informado" not in doc_id.lower():
             score_individuo += 30
             justificativas_individuo.append("KYC homologado (30/30 pts).")
         else:
@@ -53,9 +72,9 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
         if renda_maxima >= 4000.0:
             score_individuo += 40
             justificativas_individuo.append(f"Renda ${renda_maxima:.2f} excelente (40/40 pts).")
-        elif 2000.0 <= renda_maxima < 4000.0:
+        elif 100.0 <= renda_maxima < 4000.0:
             score_individuo += 25
-            justificativas_individuo.append(f"Renda ${renda_maxima:.2f} moderada (25/40 pts).")
+            justificativas_individuo.append(f"Renda ${renda_maxima:.2f} identificada (25/40 pts).")
         else:
             justificativas_individuo.append("Renda insuficiente ou não localizada (0/40 pts).")
 
@@ -82,7 +101,7 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
 
     pontuacao_final = max(0, min(100, int(pontuacao / max(1, len(tabela_clientes)))))
     risco = "LOW_RISK" if pontuacao_final >= 80 else ("MEDIUM_RISK" if pontuacao_final >= 50 else "HIGH_RISK")
-    return {"pontuacao": pontuacao_final, "classificacao_risco": risco, "justificativa": " | ".join(justificativas)}
+    return {"pontuacao": pontuacao_final, "classificacao_risco": risk, "justificativa": " | ".join(justificativas)}
 
 def handler(event, context):
     try:
@@ -100,21 +119,20 @@ def handler(event, context):
         
         total_input_tokens = 0
         total_output_tokens = 0
-        total_custo_usd = 0.0
 
         for obj in s3_objects["Contents"]:
             if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
                 continue
                 
-            # 🚀 EXTRAÇÃO DA LINHAGEM: Descobre o nome do arquivo original que gerou essa subpasta
-            # Estrutura do caminho: bda-output/{package_id}/{nome_do_pdf_original}/...
             partes_caminho = obj["Key"].split("/")
             nome_pdf_original = partes_caminho[2] if len(partes_caminho) > 2 else "desconhecido.pdf"
-            
             nome_arquivo_unico = obj["Key"].replace("bda-output/", "").replace("/", "_")
             
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
             json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
+            
+            # 🚀 FLATTENING CONTEXT: Junta o texto linearizado e o JSON estruturado para dar visão total à IA
+            texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
             json_higienizado = limpar_ruido_recursivo(json_bruto)
 
             tool_config = {
@@ -122,9 +140,15 @@ def handler(event, context):
                 "toolChoice": {"tool": {"name": "estruturar_dados_documento_individual"}}
             }
             
+            # Montagem rica do payload de entrada da IA
+            conteudo_input_hibrido = (
+                f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
+                f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
+            )
+
             messages = [{
                 "role": "user",
-                "content": [{"text": f"Extraia os dados deste documento: {json.dumps(json_higienizado)}"}]
+                "content": [{"text": conteudo_input_hibrido}]
             }]
 
             response = bedrock_runtime.converse(
@@ -175,18 +199,20 @@ def handler(event, context):
             if tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] == "Não Localizado" and achado.get("numero_identificacao"):
                 tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] = achado.get("numero_identificacao")
 
-            # 🚀 INJEÇÃO DE LINHAGEM DE STORAGE: Acopla o caminho absoluto do bucket de entrada no histórico
             uri_s3_entrada = f"s3://credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}/packages/{package_id}/{nome_pdf_original}"
 
             tabela_clientes_final[nome]["documentos_vinculados"].append({
                 "tipo_documento": achado["tipo_documento"],
                 "confianca": score_doc,
-                "arquivo_origem_s3": uri_s3_entrada, # Campo de auditoria injetado!
+                "arquivo_origem_s3": uri_s3_entrada,
                 "dados_financeiros": {
                     "renda_bruta_informada": float(achado.get("renda_bruta_informada", 0.0) or 0.0),
                     "saldo_bancario_fechamento": float(achado.get("saldo_bancario_fechamento", 0.0) or 0.0)
                 }
             })
+
+        if not tabela_clientes_final:
+            raise ValueError("Nenhum cliente válido pôde ser extraído de nenhum dos arquivos do lote.")
 
         confianca_global = sum(confiancas_acumuladas) / max(1, len(confiancas_acumuladas))
         scoring = calcular_matriz_score_mercado(tabela_clientes_final)
