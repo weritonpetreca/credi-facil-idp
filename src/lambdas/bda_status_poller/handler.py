@@ -22,8 +22,6 @@ def handler(event, context):
 
         for job_id in job_ids:
             response = bedrock_client.get_data_automation_status(invocationArn=job_id)
-            
-            # 🚀 CORREÇÃO CIRÚRGICA: default=str adicionado para serializar com segurança os objetos datetime do Boto3
             logger.info(f"Resposta bruta do Bedrock para o job {job_id}: {json.dumps(response, default=str)}")
             
             raw_status = response.get("Status") or response.get("status") or "IN_PROGRESS"
@@ -46,10 +44,11 @@ def handler(event, context):
                 todos_concluidos = False
 
         if todos_concluidos:
-            logger.info("🔥 Malha de processamento concluída! Todos os documentos foram triturados com sucesso.")
+            logger.info("🔥 Malha de processamento concluída! Modificando status para SUCCESS para o Choice State.")
             return {
-                "status": "COMPLETED",
+                "status": "SUCCESS", # 🚀 CORREÇÃO CIRÚRGICA: Alinhado com $.status == "SUCCESS" do seu template
                 "package_id": package_id,
+                "bda_job_ids": job_ids,
                 "bda_output_bucket": event.get("bda_output_bucket"),
                 "user_id": event.get("user_id")
             }
