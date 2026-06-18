@@ -23,16 +23,14 @@ def handler(event, context):
         for job_id in job_ids:
             response = bedrock_client.get_data_automation_status(invocationArn=job_id)
             
-            # Log do payload bruto para auditoria caso necessário no CloudWatch
-            logger.info(f"Resposta bruta do Bedrock para o job {job_id}: {json.dumps(response)}")
+            # 🚀 CORREÇÃO CIRÚRGICA: default=str adicionado para serializar com segurança os objetos datetime do Boto3
+            logger.info(f"Resposta bruta do Bedrock para o job {job_id}: {json.dumps(response, default=str)}")
             
-            # 🚀 CORREÇÃO CIRÚRGICA: Captura insensível a caixa para chaves do Boto3 (Status ou status)
             raw_status = response.get("Status") or response.get("status") or "IN_PROGRESS"
             status_upper = str(raw_status).upper()
             
             logger.info(f"Sub-job [{job_id}] -> Estado extraído e normalizado: {status_upper}")
 
-            # Validação elástica para estados de falha
             if status_upper in ["FAILED", "ERROR"]:
                 msg_erro = (
                     response.get("Error", {}).get("Message") or 
@@ -44,7 +42,6 @@ def handler(event, context):
                     "errorMessage": f"O processamento do arquivo no Job {job_id} quebrou: {msg_erro}"
                 }
             
-            # Só consideramos aceitável o avanço se bater em um dos ranges de sucesso estáveis
             if status_upper not in ["COMPLETED", "SUCCESS", "SUCCESSFUL"]:
                 todos_concluidos = False
 
@@ -57,7 +54,6 @@ def handler(event, context):
                 "user_id": event.get("user_id")
             }
 
-        # Se houver arquivo pendente, devolve a lista para manter o loop de espera do Step Functions
         return {
             "status": "IN_PROGRESS",
             "package_id": package_id,
