@@ -42,7 +42,7 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
             logger.error(f"Erro do SDK S3 ao gerar URL pré-assinada para {doc_name}: {str(e)}")
             raise e
             
-    return urls_generadas
+    return urls_geradas
 
 def handler(event, context):
     try:
