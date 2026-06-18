@@ -20,16 +20,20 @@ def handler(event, context):
         timestamp_atual = datetime.utcnow().isoformat() + "Z"
         s3_key_final = f"results/{package_id}/output.json"
         
-        # 🚀 CORREÇÃO CIRÚRGICA: Conversão float segura para garantir que o DynamoDB receba um número válido
         try:
             confianca_lote = str(float(event.get("confianca_geral", 1.0)))
         except (ValueError, TypeError):
             confianca_lote = "1.0"
             
         decisao_lote = str(event.get("decisao_sugerida") or "revisar")
-        tokens_uso = str(event.get("metricas_consumo", {}).get("input_tokens", 0) + event.get("metricas_consumo", {}).get("output_tokens", 0))
         
-        # 1. Atualização mestre da tabela de Pacotes
+        # 🚀 CORREÇÃO CIRÚRGICA: Mapeamento de tokens ajustado para ler o nó interno em conformidade com o novo JSON mestre
+        proc_data = json_estruturado.get("sistema", {}).get("processamento", {})
+        tokens_data = proc_data.get("quantidade_tokens", {})
+        total_tokens = tokens_data.get("total_tokens", 0)
+        tokens_uso = f"{total_tokens} tokens"
+        
+        # 1. Atualização mestre da tabela de Pacotes contendo volumetria real calculada
         db_client.update_item(
             TableName=TABLE_PACOTES,
             Key={
@@ -42,13 +46,13 @@ def handler(event, context):
                 ":comp": {"S": "COMPLETED"},
                 ":ts": {"S": timestamp_atual},
                 ":s3k": {"S": s3_key_final},
-                ":cs": {"N": confianca_lote}, # Gravado de forma segura como número
-                ":tk": {"S": f"{tokens_uso} tokens"},
-                ":ds": {"S": decisao_lote} # Nova string gravada com segurança
+                ":cs": {"N": confianca_lote},
+                ":tk": {"S": tokens_uso}, # Persistindo volumetria real com sucesso!
+                ":ds": {"S": decisao_lote}
             }
         )
         
-        # 2. Persistência Alinhada ao Novo Schema de Cliente Único (Single-Client Strategy)
+        # 2. Persistência Alinhada ao Novo Schema de Cliente Único
         cliente_data = json_estruturado.get("cliente", {})
         sistema_data = json_estruturado.get("sistema", {})
         

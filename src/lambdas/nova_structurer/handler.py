@@ -202,24 +202,58 @@ def handler(event, context):
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
 
+        logger.info(f"Iniciando esteira de cliente único para o pacote {package_id}")
+
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum arquivo BDA localizado sob o prefixo {prefix_busca}")
+
+        # 🚀 ENGENHARIA DE DEDUPLICAÇÃO: Agrupa os arquivos por pasta de documento original
+        mapa_documentos = {}
+        for obj in s3_objects["Contents"]:
+            key = obj["Key"]
+            if not key.endswith(".json") or "manifest" in key.lower() or "job_metadata" in key.lower():
+                continue
+                
+            partes = key.split("/")
+            if len(partes) < 3:
+                continue
+            nome_pdf_original = partes[2]
+            
+            if nome_pdf_original not in mapa_documentos:
+                mapa_documentos[nome_pdf_original] = []
+            mapa_documentos[nome_pdf_original].append(obj)
 
         intermediarios_coletados = []
         confiancas_físicas = []
         total_input_tokens = 0
         total_output_tokens = 0
 
-        for obj in s3_objects["Contents"]:
-            if not obj["Key"].endswith(".json") or "manifest" in obj["Key"].lower():
-                continue
-                
-            partes = obj["Key"].split("/")
-            nome_pdf_original = partes[2] if len(partes) > 2 else "documento.pdf"
-            nome_arquivo_unico = obj["Key"].replace("bda-output/", "").replace("/", "_")
+        # Seleciona estritamente um arquivo de resultado por documento físico enviado
+        for nome_pdf_original, lista_objetos in mapa_documentos.items():
+            obj_selecionado = None
             
-            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
+            # Prioridade 1: Custom Output (Blueprint de negócio)
+            for o in lista_objetos:
+                if "custom_output" in o["Key"]:
+                    obj_selecionado = o
+                    break
+            # Prioridade 2: Standard Output (Genérico de layout)
+            if not obj_selecionado:
+                for o in lista_objetos:
+                    if "standard_output" in o["Key"]:
+                        obj_selecionado = o
+                        break
+            if not obj_selecionado and lista_objetos:
+                obj_selecionado = lista_objetos[0]
+
+            if not obj_selecionado:
+                continue
+
+            logger.info(f"Elegendo arquivo definitivo de análise: {obj_selecionado['Key']}")
+            nome_arquivo_unico = obj_selecionado["Key"].replace("bda-output/", "").replace("/", "_")
+            
+            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj_selecionado["Key"])
             json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
             
             texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
@@ -258,7 +292,7 @@ def handler(event, context):
 
             achado["arquivo_original"] = nome_pdf_original
             achado["s3_key_origem"] = f"packages/{package_id}/{nome_pdf_original}"
-            achado["s3_key_resultado_bda"] = obj["Key"]
+            achado["s3_key_resultado_bda"] = obj_selecionado["Key"]
             
             confiancas_físicas.append(float(achado.get("confianca_extracao", 1.0)))
 
@@ -287,8 +321,8 @@ def handler(event, context):
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
             "bda_output_bucket": bucket_saida,
-            "confianca_geral": round(confianca_global_media, 2), # 🚀 CORRIGIDO: Agora sempre retorna um número (Ex: 0.95)
-            "decisao_sugerida": json_final_consolidado["resultado_final"]["decisao_sugerida"], # Novo campo limpo de texto
+            "confianca_geral": round(confianca_global_media, 2),
+            "decisao_sugerida": json_final_consolidado["resultado_final"]["decisao_sugerida"],
             "revisao_humana": True if json_final_consolidado["cliente"]["classificacao_risco"]["categoria"] == "medio" else False,
             "json_estruturado": json_final_consolidado
         }
