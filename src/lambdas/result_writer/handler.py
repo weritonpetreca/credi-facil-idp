@@ -22,9 +22,13 @@ def handler(event, context):
         timestamp_atual = datetime.utcnow().isoformat() + "Z"
         
         # 1. Atualização do log transacional do Pacote
+        # 🚀 CORREÇÃO CIRÚRGICA: Devolvido "SK": "METADATA" para casar com o schema composto do template.yaml
         db_client.update_item(
             TableName=TABLE_PACOTES,
-            Key={"PK": {"S": package_id}},
+            Key={
+                "PK": {"S": package_id},
+                "SK": {"S": "METADATA"}
+            },
             UpdateExpression="SET #st = :comp, processedAt = :ts",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
@@ -40,7 +44,7 @@ def handler(event, context):
             cadastro = dados.get("cadastro", {})
             doc_id = str(cadastro.get("documento_identificacao", "")).strip()
             
-            # 🚀 BALA DE PRATA: Fallback de PK dinâmica para garantir a criação da linha mesmo sem ID
+            # Fallback de PK dinâmica para garantir a criação da linha mesmo sem ID
             if not doc_id or "não localizado" in doc_id.lower():
                 pk_cliente = f"CLIENT#{nome_cliente.replace(' ', '_')}"
                 doc_id_salvar = "Não Informado"
@@ -48,17 +52,17 @@ def handler(event, context):
                 pk_cliente = f"CLIENT#{doc_id}"
                 doc_id_salvar = doc_id
 
-            # Extrai os dados individuais ou recorre ao global de fallback
+            # Mapeamento dinâmico de scores isolados gerados pelo estruturador
             score_individuo = dados.get("score_atribuido", score_global.get("pontuacao", 0))
             justificativa_individuo = dados.get("justificativa_individual", score_global.get("justificativa", ""))
             risco_individuo = "LOW_RISK" if score_individuo >= 80 else ("MEDIUM_RISK" if score_individuo >= 50 else "HIGH_RISK")
 
-            logger.info(f"Gravando proponente: {nome_cliente} com a PK: {pk_cliente}")
+            logger.info(f"Gravando proponente mestre: {nome_cliente} com a PK: {pk_cliente}")
             
             db_client.put_item(
                 TableName=TABLE_CLIENTES,
                 Item={
-                    "PK": {"S": pk_cliente},
+                    "PK": {"S": pk_cliente}, # Tabela de clientes usa chave simples PK apenas
                     "nome_completo": {"S": nome_cliente},
                     "documento_identificacao": {"S": doc_id_salvar},
                     "data_nascimento": {"S": cadastro.get("data_nascimento") or "Não Informada"},
