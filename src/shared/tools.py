@@ -25,9 +25,12 @@ def obter_especificacao_ferramenta_loan() -> dict:
                                     "numero_identificacao": {"type": "string", "description": "SSN, CPF ou número de licença encontrado"},
                                     "data_nascimento": {"type": "string", "description": "Data de nascimento se disponível (YYYY-MM-DD)"},
                                     "renda_bruta_informada": {"type": "number", "description": "Valor de Gross Pay ou salários localizados"},
-                                    "saldo_bancario_fechamento": {"type": "number", "description": "Saldo final de contas correntes ou investimentos"}
+                                    "saldo_bancario_fechamento": {"type": "number", "description": "Saldo final de contas correntes ou investimentos"},
+                                    "confianca_extracao": {
+                                        "type": "number", 
+                                        "description": "Score de 0.0 a 1.0 avaliando a clareza e ausência de truncamento ou rasuras nos dados deste documento."
                                 },
-                                "required": ["nome_titular", "tipo_documento"]
+                                "required": ["nome_titular", "tipo_documento", "confianca_extracao"]
                             }
                         }
                     },

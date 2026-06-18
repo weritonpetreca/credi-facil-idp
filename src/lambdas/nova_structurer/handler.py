@@ -179,10 +179,15 @@ def handler(event, context):
             dados_ia = json.loads(dados_ia)
         
         tabela_clientes_final = {}
+        confiancas_acumuladas = []
+
         for achado in dados_ia.get("achados_documentais", []):
             nome = achado["nome_titular"].strip().upper()
             if not nome:
                 continue
+
+            score_doc = float(achado.get("confianca_extracao", 0.95))
+            confiancas_acumuladas.append(score_doc)
                 
             if nome not in tabela_clientes_final:
                 tabela_clientes_final[nome] = {
@@ -196,14 +201,15 @@ def handler(event, context):
             
             tabela_clientes_final[nome]["documentos_vinculados"].append({
                 "tipo_documento": achado["tipo_documento"],
-                "confianca": 0.95,
+                "confianca": score_doc,
                 "dados_financeiros": {
                     "renda_bruta_informada": float(achado.get("renda_bruta_informada", 0.0) or 0.0),
                     "saldo_bancario_fechamento": float(achado.get("saldo_bancario_fechamento", 0.0) or 0.0)
                 }
             })
 
-        # Processamento do score de crédito de mercado
+        # Processamento do score de crédito de mercado e confiança
+        confianca_global = sum(confiancas_acumuladas) / max(1, len(confiancas_acumuladas))
         scoring = calcular_matriz_score_mercado(tabela_clientes_final)
 
         json_estruturado_final = {
@@ -226,7 +232,8 @@ def handler(event, context):
         return {
             "package_id": package_id,
             "user_id": user_id,
-            "confianca_geral": 0.95,
+            "bda_output_bucket": bucket_saida,
+            "confianca_geral": round(confianca_global, 2),
             "revisao_humana": True if scoring["classificacao_risco"] == "MEDIUM_RISK" else False,
             "metricas_consumo": metricas_auditoria,
             "json_estruturado": json_estruturado_final

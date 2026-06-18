@@ -16,9 +16,14 @@ def handler(event, context):
     try:
         package_id = event.get("package_id")
         json_estruturado = event.get("json_estruturado", {})
-        bucket_saida = event.get("bda_output_bucket")
         metricas = event.get("metricas_consumo", {})
         
+        # 🚀 CONTINGÊNCIA ATIVADA: Se o evento vier vazio devido ao redrive, o os.environ salva o deploy!
+        bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
+        
+        if not bucket_saida:
+            raise ValueError("O nome do bucket de saída não pôde ser resolvido via payload ou ambiente.")
+            
         s3_key_final = f"results/{package_id}/output.json"
         
         logger.info(f"Salvando artefato completo no S3: s3://{bucket_saida}/{s3_key_final}")
@@ -31,6 +36,7 @@ def handler(event, context):
 
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         score_data = json_estruturado.get("score_global", {})
+        confianca_real = str(event.get("confianca_geral", 0.90))
         
         # 1. ESCRITA NA TABELA DE WORKFLOW (Apenas metadados da execução)
         logger.info(f"Atualizando a tabela de transações do workflow: {TABLE_TRANSACOES}")
@@ -46,13 +52,13 @@ def handler(event, context):
                 ":comp": {"S": "COMPLETED"},
                 ":ts": {"S": timestamp_atual},
                 ":s3": {"S": s3_key_final},
-                ":conf": {"N": "0.95"},
+                ":conf": {"N": confianca_real},
                 ":hr": {"BOOL": event.get("revisao_humana", False)},
                 ":tok": {"S": f"In: {metricas.get('input_tokens', 0)} | Out: {metricas.get('output_tokens', 0)}"}
             }
         )
 
-        # 🚀 2. ESCRITA NA TABELA EXCLUSIVA DE CLIENTES MESTRE (Perene e Acumulativa)
+        # 2. ESCRITA NA TABELA EXCLUSIVA DE CLIENTES MESTRE (Perene e Acumulativa)
         tabela_clientes = json_estruturado.get("tabela_clientes", {})
         for nome_cliente, payload_cliente in tabela_clientes.items():
             cadastro = payload_cliente.get("cadastro", {})
@@ -62,11 +68,9 @@ def handler(event, context):
                 logger.warning(f"Ignorando atualização mestre para {nome_cliente}: Ausência de ID estável.")
                 continue
                 
-            # Na tabela exclusiva de clientes, a chave primária simples é o CLIENT#<DOCUMENTO>
             pk_cliente = f"CLIENT#{doc_id}"
             logger.info(f"Atualizando cadastro mestre isolado na tabela {TABLE_CLIENTES_MESTRE} para: {pk_cliente}")
             
-            # Executa uma gravação limpa contendo o histórico consolidado e as notas de scoring calculadas
             db_client.put_item(
                 TableName=TABLE_CLIENTES_MESTRE,
                 Item={
