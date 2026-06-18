@@ -35,25 +35,38 @@ Globals:
 
 Resources:
   # ==========================================================================
-  # 🔑 CAMADA DE PERSISTÊNCIA DEDICADA (Tabela Mestre de Clientes)
+  # 🔑 DEPENDECIAS & COMPONENTES BASE
   # ==========================================================================
-  CrediFacilClientesTable:
-    Type: AWS::DynamoDB::Table
+  CrediFacilDependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
     Properties:
-      TableName: !Sub "credifacil-clientes-${Environment}"
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: PK
-          AttributeType: S
-      KeySchema:
-        - AttributeName: PK
-          KeyType: HASH
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      LayerName: !Sub "credifacil-dependencies-${Environment}"
+      ContentUri: ../src/layers/dependencies/
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - arm64
+    Metadata:
+      BuildMethod: python3.12
+
+  BucketEntrada:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+    Tags:
+      - Key: Criador
+        Value: Grupo12
+
+  BucketSaida:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "credifacil-docs-saida-${Environment}"
+    Tags:
+      - Key: Criador
+        Value: Grupo12
 
   # ==========================================================================
-  # 🗂️ CAMADA DE PROCESSAMENTO DE ESTEIRA (Tabela Transacional de Lotes)
+  # 🗄️ CAMADA DE ARMAZENAMENTO (Tabelas Isoladas de Domínio)
   # ==========================================================================
   CrediFacilDynamoTable:
     Type: AWS::DynamoDB::Table
@@ -70,60 +83,63 @@ Resources:
           KeyType: HASH
         - AttributeName: SK
           KeyType: RANGE
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+    Tags:
+      - Key: Criador
+        Value: Grupo12
 
-  # ==========================================================================
-  # 🚀 LAMBDAS CORE: ATUALIZAÇÃO DE POLÍTICAS DE ACESSO (Princípio do Menor Privilégio)
-  # ==========================================================================
-  ResultWriterFunction:
-    Type: AWS::Serverless::Function
+  CrediFacilClientesTable:
+    Type: AWS::DynamoDB::Table
     Properties:
-      CodeUri: ../
-      Handler: src.lambdas.result_writer.handler.handler
-      Policies:
-        - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
-        - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
-        # 🚀 ATUALIZAÇÃO DE SEGURANÇA: Concede permissão de escrita/leitura na nova tabela mestre
-        - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-clientes-${Environment}"
-      Tags:
-        Criador: Grupo12
-
-  QueryHandlerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: ../
-      Handler: src.lambdas.query_handler.handler.handler
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
-        # 🚀 ATUALIZAÇÃO DE SEGURANÇA: Permite que o resolvedor de buscas consulte perfis estáveis se necessário
-        - DynamoDBReadPolicy:
-            TableName: !Sub "credifacil-clientes-${Environment}"
-        - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
-      Events:
-        ApiGatewayTrigger:
-          Type: Api
-          Properties:
-            Path: /v1/packages/{packageId}
-            Method: get
-            RestApiId: !Ref CrediFacilRestApi
-      Tags:
-        Criador: Grupo12
+      TableName: !Sub "credifacil-clientes-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+    Tags:
+      - Key: Criador
+        Value: Grupo12
 
   # ==========================================================================
-  # 📢 RECURSOS ADICIONAIS DO ECOSSISTEMA (Garantindo a consistência das Tags)
+  # 📢 ECOSSISTEMA DE MENSAGERIA (Amazon SNS)
+  # ==========================================================================
+  SnsTopicoConclusao:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "credifacil-conclusao-${Environment}"
+    Tags:
+      - Key: Criador
+        Value: Grupo12
+
+  SnsTopicoErros:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "credifacil-erros-${Environment}"
+    Tags:
+      - Key: Criador
+        Value: Grupo12
+
+  # ==========================================================================
+  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (A Peça que Estava Faltando!)
+  # ==========================================================================
+  CrediFacilRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors: "'*'"
+    Tags:
+      Criador: Grupo12
+
+  # ==========================================================================
+  # 🚀 FUNÇÕES LAMBDA CORE
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../
-      Handler: src.lambdas.pre_signed_url.handler.handler
+      CodeUri: ../src/lambdas/pre_signed_url/
+      Handler: handler.handler
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -136,14 +152,14 @@ Resources:
             Path: /v1/packages/upload-urls
             Method: post
             RestApiId: !Ref CrediFacilRestApi
-      Tags:
-        Criador: Grupo12
+    Tags:
+      Criador: Grupo12
 
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../
-      Handler: src.lambdas.pipeline_trigger.handler.handler
+      CodeUri: ../src/lambdas/pipeline_trigger/
+      Handler: handler.handler
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
@@ -162,37 +178,163 @@ Resources:
             Path: /v1/packages/{packageId}/process
             Method: post
             RestApiId: !Ref CrediFacilRestApi
-      Tags:
-        Criador: Grupo12
+    Tags:
+      Criador: Grupo12
 
-  BucketEntrada:
-    Type: AWS::S3::Bucket
+  BdaInvokerFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      BucketName: !Sub "credifacil-docs-entrada-${Environment}"
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      CodeUri: ../src/lambdas/bda_invoker/
+      Handler: handler.handler
+      MemorySize: 512
+      Environment:
+        Variables:
+          BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - Statement:
+            - Sid: AllowBedrockAutomationAsync
+              Effect: Allow
+              Action: 
+                - "bedrock:InvokeDataAutomationAsync"
+                - "sts:GetCallerIdentity"
+              Resource: "*"
+    Tags:
+      Criador: Grupo12
 
-  BucketSaida:
-    Type: AWS::S3::Bucket
+  BdaStatusPollerFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      BucketName: !Sub "credifacil-docs-saida-${Environment}"
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      CodeUri: ../src/lambdas/bda_status_poller/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Sid: AllowGetAutomationStatus
+              Effect: Allow
+              Action: "bedrock:GetDataAutomationStatus"
+              Resource: "*"
+    Tags:
+      Criador: Grupo12
 
-  SnsTopicoConclusao:
-    Type: AWS::SNS::Topic
+  NovaStructurerFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      TopicName: !Sub "credifacil-conclusao-${Environment}"
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      CodeUri: ../src/lambdas/nova_structurer/
+      Handler: handler.handler
+      MemorySize: 1024
+      Timeout: 120
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - Statement:
+            - Sid: AllowBedrockNovaInvoke
+              Effect: Allow
+              Action: "bedrock:InvokeModel"
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
+    Tags:
+      Criador: Grupo12
 
-  SnsTopicoErros:
-    Type: AWS::SNS::Topic
+  ResultWriterFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      TopicName: !Sub "credifacil-erros-${Environment}"
-      Tags:
-        - Key: Criador
-          Value: Grupo12
+      CodeUri: ../src/lambdas/result_writer/
+      Handler: handler.handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-clientes-${Environment}"
+    Tags:
+      Criador: Grupo12
+
+  QueryHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/lambdas/query_handler/
+      Handler: handler.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - DynamoDBReadPolicy:
+            TableName: !Sub "credifacil-clientes-${Environment}"
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+      Events:
+        ApiGatewayTrigger:
+          Type: Api
+          Properties:
+            Path: /v1/packages/{packageId}
+            Method: get
+            RestApiId: !Ref CrediFacilRestApi
+    Tags:
+      Criador: Grupo12
+
+  NotificationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/lambdas/notification/
+      Handler: handler.handler
+      Policies:
+        - SNSPublishMessagePolicy:
+            TopicName: !Sub "credifacil-conclusao-${Environment}"
+        - SNSPublishMessagePolicy:
+            TopicName: !Sub "credifacil-erros-${Environment}"
+    Tags:
+      Criador: Grupo12
+
+  # ==========================================================================
+  # ⚙️ ORQUESTRADOR SERVERLESS (AWS Step Functions)
+  # ==========================================================================
+  CrediFacilStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "credifacil-idp-pipeline-${Environment}"
+      DefinitionUri: ../state_machines/idp_pipeline.json
+      Role: !GetAtt CrediFacilStateMachineRole.Arn
+      DefinitionSubstitutions:
+        BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
+        BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
+        NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        ResultWriterArn: !GetAtt ResultWriterFunction.Arn
+        NotificationArn: !GetAtt NotificationFunction.Arn
+    Tags:
+      Criador: Grupo12
+
+  CrediFacilStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/grupo-alunos-permission-boundary"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CrediFacilStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowLambdaInvocation
+                Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource:
+                  - !GetAtt BdaInvokerFunction.Arn
+                  - !GetAtt BdaStatusPollerFunction.Arn
+                  - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt ResultWriterFunction.Arn
+                  - !GetAtt NotificationFunction.Arn
+    Tags:
+      - Key: Criador
+        Value: Grupo12
+
+Outputs:
+  ApiEndpoint:
+    Description: URL Base da API REST no API Gateway
+    Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
