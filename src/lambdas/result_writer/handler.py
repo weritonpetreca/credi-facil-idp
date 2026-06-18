@@ -8,20 +8,20 @@ logger = Logger(service="result-writer")
 s3_client = boto3.client("s3")
 db_client = boto3.client("dynamodb")
 
-TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
+# Tabelas separadas injetadas via variáveis globais do template.yaml
+TABLE_TRANSACOES = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
+TABLE_CLIENTES_MESTRE = os.environ.get("CLIENTS_DYNAMODB_TABLE", "credifacil-clientes-dev")
 
 def handler(event, context):
     try:
-        logger.info(f"Gravando resultados consolidados no ecossistema de dados.")
-        
         package_id = event.get("package_id")
         json_estruturado = event.get("json_estruturado", {})
         bucket_saida = event.get("bda_output_bucket")
+        metricas = event.get("metricas_consumo", {})
         
-        # Caminho definitivo do artefato analítico de negócio no S3
         s3_key_final = f"results/{package_id}/output.json"
         
-        logger.info(f"Persistindo JSON estruturado global no S3: s3://{bucket_saida}/{s3_key_final}")
+        logger.info(f"Salvando artefato completo no S3: s3://{bucket_saida}/{s3_key_final}")
         s3_client.put_object(
             Bucket=bucket_saida,
             Key=s3_key_final,
@@ -32,52 +32,54 @@ def handler(event, context):
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         score_data = json_estruturado.get("score_global", {})
         
-        # 1. Atualiza o status do processo transacional na tabela de workflows
-        logger.info(f"Atualizando estado do workflow transacional para o pacote {package_id}")
+        # 1. ESCRITA NA TABELA DE WORKFLOW (Apenas metadados da execução)
+        logger.info(f"Atualizando a tabela de transações do workflow: {TABLE_TRANSACOES}")
         db_client.update_item(
-            TableName=TABLE_NAME,
+            TableName=TABLE_TRANSACOES,
             Key={
                 "PK": {"S": package_id},
                 "SK": {"S": "METADATA"}
             },
-            UpdateExpression="SET #st = :comp, processedAt = :ts, resultS3Key = :s3, confidenceScore = :conf, humanReview = :hr",
+            UpdateExpression="SET #st = :comp, processedAt = :ts, resultS3Key = :s3, confidenceScore = :conf, humanReview = :hr, tokens_consumidos = :tok",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":comp": {"S": "COMPLETED"},
                 ":ts": {"S": timestamp_atual},
                 ":s3": {"S": s3_key_final},
                 ":conf": {"N": "0.95"},
-                ":hr": {"BOOL": event.get("revisao_humana", False)}
+                ":hr": {"BOOL": event.get("revisao_humana", False)},
+                ":tok": {"S": f"In: {metricas.get('input_tokens', 0)} | Out: {metricas.get('output_tokens', 0)}"}
             }
         )
 
-        # 🚀 2. A MAGIA DA TABELA MESTRE: Consolida e salva/atualiza os dados perenes de cada Cliente
+        # 🚀 2. ESCRITA NA TABELA EXCLUSIVA DE CLIENTES MESTRE (Perene e Acumulativa)
         tabela_clientes = json_estruturado.get("tabela_clientes", {})
-        
         for nome_cliente, payload_cliente in tabela_clientes.items():
             cadastro = payload_cliente.get("cadastro", {})
             doc_id = cadastro.get("documento_identificacao", "").strip()
             
             if not doc_id or "não localizado" in doc_id.lower():
-                logger.warning(f"Ignorando gravação mestre para {nome_cliente} devido a ausência de documento estável.")
+                logger.warning(f"Ignorando atualização mestre para {nome_cliente}: Ausência de ID estável.")
                 continue
                 
+            # Na tabela exclusiva de clientes, a chave primária simples é o CLIENT#<DOCUMENTO>
             pk_cliente = f"CLIENT#{doc_id}"
-            logger.info(f"Persistindo/Atualizando registro perene na tabela mestre de clientes: {pk_cliente}")
+            logger.info(f"Atualizando cadastro mestre isolado na tabela {TABLE_CLIENTES_MESTRE} para: {pk_cliente}")
             
-            # Grava os dados do perfil unificado do cliente. Se ele já existia, atualiza os dados cadastrais
-            # e anexa a referência do último pacote de empréstimo processado por ele.
+            # Executa uma gravação limpa contendo o histórico consolidado e as notas de scoring calculadas
             db_client.put_item(
-                TableName=TABLE_NAME,
+                TableName=TABLE_CLIENTES_MESTRE,
                 Item={
                     "PK": {"S": pk_cliente},
-                    "SK": {"S": "PROFILE"},
                     "nome_completo": {"S": cadastro.get("nome")},
                     "documento_identificacao": {"S": doc_id},
-                    "data_nascimento": {"S": cadastro.get("data_nascimento") if cadastro.get("data_nascimento") else "Não Informada"},
-                    "ultima_atualizacao": {"S": timestamp_atual},
-                    "ultimo_package_id": {"S": package_id},
-                    "historico_financeiro_sumarizado": {"S": json.dumps(payload_cliente.get("documentos_vinculados", []))}
+                    "data_nascimento": {"S": str(cadastro.get("data_nascimento") or "Não Informada")},
+                    "score_atribuido": {"N": str(score_data.get("pontuacao", 0))},
+                    "classificacao_risco": {"S": score_data.get("classificacao_risco", "UNKNOWN")},
+                    "justificativa_analise": {"S": score_data.get("justificativa", "")},
+                    "ultimo_package_vinculado": {"S": package_id},
+                    "data_ultima_atualizacao": {"S": timestamp_atual},
+                    "documentos_historico_json": {"S": json.dumps(payload_cliente.get("documentos_vinculados", []))}
                 }
             )
 
