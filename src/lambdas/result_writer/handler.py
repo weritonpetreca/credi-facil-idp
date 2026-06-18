@@ -20,6 +20,9 @@ def handler(event, context):
         tabela_clientes = json_estruturado.get("tabela_clientes", {})
         
         timestamp_atual = datetime.utcnow().isoformat() + "Z"
+        s3_key_final = f"results/{package_id}/output.json"
+        confianca_lote = str(event.get("confianca_geral", 0.0))
+        tokens_uso = str(event.get("metricas_consumo", {}).get("input_tokens", 0) + event.get("metricas_consumo", {}).get("output_tokens", 0))
         
         # 1. Atualização do log transacional do Pacote
         # 🚀 CORREÇÃO CIRÚRGICA: Devolvido "SK": "METADATA" para casar com o schema composto do template.yaml
@@ -29,11 +32,14 @@ def handler(event, context):
                 "PK": {"S": package_id},
                 "SK": {"S": "METADATA"}
             },
-            UpdateExpression="SET #st = :comp, processedAt = :ts",
+            UpdateExpression="SET #st = :comp, processedAt = :ts, resultS3Key = :s3k, confidenceScore = :cs, tokens_consumidos = :tk",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":comp": {"S": "COMPLETED"},
-                ":ts": {"S": timestamp_atual}
+                ":ts": {"S": timestamp_atual},
+                ":s3k": {"S": s3_key_final},
+                ":cs": {"N": confianca_lote},
+                ":tk": {"S": f"{tokens_uso} tokens"}
             }
         )
         
