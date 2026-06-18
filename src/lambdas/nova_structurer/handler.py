@@ -11,61 +11,41 @@ s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 PROMPT_SISTEMA = (
-    "Você é um motor analítico avançado de submissão de crédito imobiliário e hipotecário. "
-    "A entrada contém um array com dados limpos de MÚLTIPLOS documentos extraídos do pacote de empréstimo. "
-    "Sua obrigação absoluta é iterar por CADA objeto do array de entrada, extrair TODAS as pessoas e "
-    "documentos localizados e mapear na ferramenta estruturada. "
-    "Atenção: Você encontrará documentos de pessoas distintas (ex: MARÍA GARCÍA e JOHN STILES). "
-    "Você NÃO PODE omitir nenhum indivíduo. Popule o array 'achados_documentais' com todos os achados."
+    "Você é um agente analítico especialista em extração de dados para crédito imobiliário. "
+    "Sua única tarefa é analisar o texto bruto extraído de UM ÚNICO documento e mapear seus dados "
+    "na ferramenta estruturada fornecida. Identifique com precisão o nome do titular e valores financeiros."
 )
 
 def limpar_ruido_recursivo(dados: any) -> any:
-    """
-    Filtro Recursivo Profundo: Varre toda a árvore do JSON eliminando dados geométricos pesados,
-    reduzindo o tamanho do payload e preservando chaves úteis de formulários e identidades do BDA.
-    """
     CHAVES_INUTEIS = {
         "boundingBox", "polygon", "geometry", "coordinates", "location", 
         "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight",
         "geometryData", "xy", "box"
     }
-    
     if isinstance(dados, dict):
-        return {
-            k: limpar_ruido_recursivo(v) 
-            for k, v in dados.items() 
-            if k not in CHAVES_INUTEIS
-        }
+        return {k: limpar_ruido_recursivo(v) for k, v in dados.items() if k not in CHAVES_INUTEIS}
     elif isinstance(dados, list):
         return [limpar_ruido_recursivo(item) for item in dados]
-        
     return dados
 
 def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
-    """
-    Motor de Scoring Bancário Realista (Modelo FICO / DTI Framework):
-    Distribui 100 pontos objetivos entre Rigor Cadastral, Renda e Reserva Líquida.
-    """
     pontuacao = 0
     justificativas = []
     
     if len(tabela_clientes) > 1:
-        justificativas.append("Análise consolidada para múltiplos proponentes identificados no dossiê.")
+        justificativas.append("Análise consolidada multi-proponente detectada no dossiê.")
 
     for nome, dados in tabela_clientes.items():
         score_individuo = 0
         justificativas_individuo = []
-        docs_detectados = [d["tipo_documento"] for d in dados["documentos_vinculados"]]
         
-        # 🛡️ PILAR 1: Rigor Cadastral & KYC (Max: 30 pontos)
         doc_id = dados["cadastro"].get("documento_identificacao", "")
         if doc_id and "não localizado" not in doc_id.lower():
             score_individuo += 30
-            justificativas_individuo.append("Homologação cadastral e KYC validados (30/30 pts).")
+            justificativas_individuo.append("KYC homologado (30/30 pts).")
         else:
-            justificativas_individuo.append("Inconsistência cadastral severa. Documento oficial ausente (0/30 pts).")
+            justificativas_individuo.append("Inconsistência cadastral (0/30 pts).")
 
-        # 💼 PILAR 2: Renda e Estabilidade Financeira (Max: 40 pontos)
         renda_maxima = 0.0
         for doc in dados["documentos_vinculados"]:
             if doc["tipo_documento"] in ["PAY_STUB", "TAX_DOCUMENT"]:
@@ -75,14 +55,13 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
                     
         if renda_maxima >= 4000.0:
             score_individuo += 40
-            justificativas_individuo.append(f"Renda comprovada de ${renda_maxima:.2f} em range excelente (40/40 pts).")
+            justificativas_individuo.append(f"Renda ${renda_maxima:.2f} excelente (40/40 pts).")
         elif 2000.0 <= renda_maxima < 4000.0:
             score_individuo += 25
-            justificativas_individuo.append(f"Renda comprovada de ${renda_maxima:.2f} em range moderado (25/40 pts).")
+            justificativas_individuo.append(f"Renda ${renda_maxima:.2f} moderada (25/40 pts).")
         else:
-            justificativas_individuo.append("Renda ausente ou abaixo do range mínimo de segurança de crédito (0/40 pts).")
+            justificativas_individuo.append("Renda insuficiente ou não localizada (0/40 pts).")
 
-        # 🏦 PILAR 3: Liquidez e Reserva de Amortização (Max: 30 pontos)
         saldo_maximo = 0.0
         for doc in dados["documentos_vinculados"]:
             if doc["tipo_documento"] == "BANK_STATEMENT":
@@ -92,12 +71,12 @@ def calcular_matriz_score_mercado(tabela_clientes: dict) -> dict:
                     
         if saldo_maximo >= 10000.0:
             score_individuo += 30
-            justificativas_individuo.append(f"Reserva de liquidez de ${saldo_maximo:.2f} robusta (30/30 pts).")
+            justificativas_individuo.append(f"Liquidez ${saldo_maximo:.2f} robusta (30/30 pts).")
         elif 1500.0 <= saldo_maximo < 10000.0:
             score_individuo += 15
-            justificativas_individuo.append(f"Reserva de liquidez de ${saldo_maximo:.2f} em range de atenção (15/30 pts).")
+            justificativas_individuo.append(f"Liquidez ${saldo_maximo:.2f} em atenção (15/30 pts).")
         else:
-            justificativas_individuo.append("Ausência de colchão financeiro ou extrato com saldo zerado (0/30 pts).")
+            justificativas_individuo.append("Sem colchão de liquidez (0/30 pts).")
 
         pontuacao += score_individuo
         justificativas.append(f"[{nome}]: " + " ".join(justificativas_individuo))
@@ -118,63 +97,84 @@ def handler(event, context):
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
 
-        logger.info(f"Iniciando consolidação com deep sifting para o pacote {package_id}")
+        logger.info(f"Iniciando processamento isolado por documento para o pacote {package_id}")
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum artefato do BDA localizado no prefixo {prefix_busca}")
 
-        conteudos_brutos = []
-        for obj in s3_objects["Contents"]:
-            if obj["Key"].endswith(".json") and "manifest" not in obj["Key"].lower():
-                s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
-                json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
-                
-                # 🚀 DEEP SIFTING: Varre recursivamente limpando apenas o lixo geométrico
-                json_higienizado = limpar_ruido_recursivo(json_bruto)
-                conteudos_brutos.append(json_higienizado)
-
-        tool_config = {
-            "tools": [obter_especificacao_ferramenta_loan()],
-            "toolChoice": {"tool": {"name": "estruturar_dados_solicitacao_credito"}}
-        }
-        
-        messages = [{
-            "role": "user",
-            "content": [{"text": f"Processe a seguinte lista de payloads extraídos do BDA: {json.dumps(conteudos_brutos)}"}]
-        }]
-
-        logger.info("Invocando o Amazon Nova Pro via API Converse...")
-        response = bedrock_runtime.converse(
-            modelId="amazon.nova-pro-v1:0",
-            messages=messages,
-            system=[{"text": PROMPT_SISTEMA}],
-            toolConfig=tool_config
-        )
-
-        usage = response.get("usage", {})
-        input_tokens = usage.get("inputTokens", 0)
-        output_tokens = usage.get("outputTokens", 0)
-        custo_calculado_usd = ((input_tokens / 1000) * 0.0008) + ((output_tokens / 1000) * 0.0032)
-        
-        logger.info(f"Consumo de Tokens - Input: {input_tokens} | Output: {output_tokens} | Custo USD: ${custo_calculado_usd:.6f}")
-
-        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
-        tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
-        
-        if not tool_use_block:
-            raise ValueError("O Amazon Nova falhou ao popular o esquema estruturado de ferramentas.")
-
-        dados_ia = tool_use_block.get("input", {})
-        if isinstance(dados_ia, str):
-            dados_ia = json.loads(dados_ia)
-        
+        # Dicionário temporário para agrupar as extrações por pessoa na fase final
         tabela_clientes_final = {}
         confiancas_acumuladas = []
+        
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_custo_usd = 0.0
+        idx = 0
 
-        for achado in dados_ia.get("achados_documentais", []):
-            nome = achado["nome_titular"].strip().upper()
-            if not nome:
+        # 🚀 PASSO 1: Iteração isolada por arquivo gerado pelo BDA
+        for obj in s3_objects["Contents"]:
+            if not obj["Key"].endswith(".json") or "manifest" not in obj["Key"].lower():
+                continue
+                
+            idx += 1
+            nome_arquivo_bda = obj["Key"].split("/")[-1]
+            logger.info(f"Processando documento individual [{idx}]: {nome_arquivo_bda}")
+            
+            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj["Key"])
+            json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
+            json_higienizado = limpar_ruido_recursivo(json_bruto)
+
+            tool_config = {
+                "tools": [obter_especificacao_ferramenta_loan()],
+                "toolChoice": {"tool": {"name": "estruturar_dados_documento_individual"}}
+            }
+            
+            messages = [{
+                "role": "user",
+                "content": [{"text": f"Extraia os dados deste documento: {json.dumps(json_higienizado)}"}]
+            }]
+
+            # Invocação dedicada do Nova Pro para ESTE arquivo específico
+            response = bedrock_runtime.converse(
+                modelId="amazon.nova-pro-v1:0",
+                messages=messages,
+                system=[{"text": PROMPT_SISTEMA}],
+                toolConfig=tool_config
+            )
+
+            # Acumula métricas financeiras de observabilidade
+            usage = response.get("usage", {})
+            in_t = usage.get("inputTokens", 0)
+            out_t = usage.get("outputTokens", 0)
+            total_input_tokens += in_t
+            total_output_tokens += out_t
+            total_custo_usd += ((in_t / 1000) * 0.0008) + ((out_t / 1000) * 0.0032)
+
+            content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+            tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
+            
+            if not tool_use_block:
+                logger.warning(f"O Amazon Nova falhou ao estruturar o arquivo {nome_arquivo_bda}. Ignorando.")
+                continue
+
+            achado = tool_use_block.get("input", {})
+            if isinstance(achado, str):
+                achado = json.loads(achado)
+
+            # 🚀 PASSO 2: Salva o JSON estruturado individual deste arquivo no bucket de resultados
+            s3_key_intermediaria = f"results/{package_id}/intermediates/{nome_arquivo_bda}_structured.json"
+            logger.info(f"Salvando artefato individual no S3: {s3_key_intermediaria}")
+            s3_client.put_object(
+                Bucket=bucket_saida,
+                Key=s3_key_intermediaria,
+                Body=json.dumps(achado, ensure_ascii=False),
+                ContentType="application/json"
+            )
+
+            # 🚀 PASSO 3: Agrupamento em memória para Consolidação Determinística
+            nome = achado.get("nome_titular", "").strip().upper()
+            if not nome or "UNKNOWN" in nome or len(nome) < 3:
                 continue
 
             score_doc = float(achado.get("confianca_extracao", 0.95))
@@ -184,12 +184,16 @@ def handler(event, context):
                 tabela_clientes_final[nome] = {
                     "cadastro": {
                         "nome": nome,
-                        "documento_identificacao": achado.get("numero_identificacao", "Não Localizado"),
+                        "documento_identificacao": achado.get("numero_identificacao") or "Não Localizado",
                         "data_nascimento": achado.get("data_nascimento") if achado.get("data_nascimento") else None
                     },
                     "documentos_vinculados": []
                 }
             
+            # Se localizou o ID em um documento posterior, complementa o cadastro mestre
+            if tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] == "Não Localizado" and achado.get("numero_identificacao"):
+                tabela_clientes_final[nome]["cadastro"]["documento_identificacao"] = achado.get("numero_identificacao")
+
             tabela_clientes_final[nome]["documentos_vinculados"].append({
                 "tipo_documento": achado["tipo_documento"],
                 "confianca": score_doc,
@@ -198,6 +202,10 @@ def handler(event, context):
                     "saldo_bancario_fechamento": float(achado.get("saldo_bancario_fechamento", 0.0) or 0.0)
                 }
             })
+
+        # 🚀 PASSO 4: Consolidação Final e Geração de Scores de Risco de Mercado
+        if not tabela_clientes_final:
+            raise ValueError("Nenhum cliente válido pôde ser extraído de nenhum dos arquivos do lote.")
 
         confianca_global = sum(confiancas_acumuladas) / max(1, len(confiancas_acumuladas))
         scoring = calcular_matriz_score_mercado(tabela_clientes_final)
@@ -210,11 +218,12 @@ def handler(event, context):
         }
 
         metricas_auditoria = {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "custo_estimado_usd": round(custo_calculado_usd, 6)
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "custo_estimado_usd": round(total_custo_usd, 6)
         }
 
+        logger.info(f"Fim da esteira. Custos acumulados: ${total_custo_usd:.6f} | Clientes localizados: {list(tabela_clientes_final.keys())}")
         LoanPackageOutput(**json_estruturado_final)
 
         return {
@@ -228,5 +237,5 @@ def handler(event, context):
         }
 
     except Exception as e:
-        logger.error(f"Falha crítica no motor estruturador Nova: {str(e)}")
+        logger.error(f"Falha crítica no motor isolado por documento: {str(e)}")
         raise e
