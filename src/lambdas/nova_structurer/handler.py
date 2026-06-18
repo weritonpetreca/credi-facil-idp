@@ -67,7 +67,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
     renda_acumulada = 0.0
     saldo_acumulado = 0.0
 
-    # 🚀 FILTRO DEFENSIVO DE PLACEHOLDERS
     PLACEHOLDERS = {"N/A", "—", "-", "NONE", "NULL", "NOT FOUND", "NÃO INFORMADO", "NÃO INFORMADA", "NÃO IDENTIFICADO", ""}
 
     for doc in intermediarios:
@@ -121,7 +120,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             "observacoes": doc.get("alertas_inconsistencias", [])
         })
 
-    # 🚀 ENGENHARIA DE VALIDAÇÃO LIMPA: Se o set estiver vazio após o filtro, retorna None (null no JSON)
     nome_consistente = True if len(nomes_coletados) == 1 else (False if len(nomes_coletados) > 1 else None)
     dt_nascimento_consistente = True if len(datas_nascimento_coletadas) == 1 else (False if len(datas_nascimento_coletadas) > 1 else None)
 
@@ -153,13 +151,12 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         categoria_risco = "alto"
         resumo = "Solicitação recusada devido à ausência severa de comprovações de renda ou KYC inválido."
 
-    # 🚀 DINAMISMO DO NOME DO MODELO
     nome_modelo_final = "Amazon Nova Pro" if "pro" in MODEL_ID.lower() else ("Amazon Nova Lite" if "lite" in MODEL_ID.lower() else "Amazon Nova")
 
     return {
         "cliente": {
             "nome": nome_final or "Não Identificado",
-            "data_nascimento": data_nascimento_final, # Retornará null de forma limpa se não localizado
+            "data_nascimento": data_nascimento_final,
             "score_credito": {
                 "valor": score_calculado,
                 "fonte": "documentos",
@@ -180,7 +177,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             },
             "processamento": {
                 "status": "processado_com_alertas" if len(principais_alertas) > 0 else "processado",
-                "modelo_utilizado": nome_modelo_final,
+                "modelo_utilizado": name_modelo_final,
                 "bda_project_arn": os.environ.get("BDA_PROJECT_ARN"),
                 "quantidade_tokens": {
                     "input_tokens": metricas_tokens["input"],
@@ -194,7 +191,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         "documentos_analisados": documentos_analisados,
         "validacao": {
             "nome_consistente_entre_documentos": nome_consistente,
-            "data_nascimento_consistente": dt_nascimento_consistente, # Responderá null (None) com sucesso!
+            "data_nascimento_consistente": dt_nascimento_consistente,
             "documento_identificacao_presente": presenca["identificacao"],
             "comprovante_renda_presente": presenca["renda"],
             "extrato_bancario_presente": presenca["extrato"],
@@ -309,8 +306,17 @@ def handler(event, context):
 
             intermediarios_coletados.append(achado)
 
+        # Geração consolidada da estrutura final
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
+
+        # 🚀 A LINHA VENCEDORA REINSERIDA: Salva o output.json consolidado na raiz do pacote no S3
+        s3_client.put_object(
+            Bucket=bucket_saida,
+            Key=f"results/{package_id}/output.json",
+            Body=json.dumps(json_final_consolidado, ensure_ascii=False),
+            ContentType="application/json"
+        )
 
         return {
             "package_id": package_id,
