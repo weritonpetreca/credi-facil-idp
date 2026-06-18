@@ -118,6 +118,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
       Events:
         ApiGatewayTrigger:
           Type: Api
