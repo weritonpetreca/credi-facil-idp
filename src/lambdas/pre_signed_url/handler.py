@@ -32,7 +32,7 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
     if len(lista_documentos) > 8:
         raise ValueError("O limite máximo permitido é de 8 documentos por pacote.")
         
-    urls_generadas = {}
+    urls_geradas = {}
     for doc_name in lista_documentos:
         # 🚀 DINAMISMO: Captura o Content-Type correto ao invés de forçar application/pdf
         content_type_dinamico = mapear_content_type(doc_name)
@@ -49,15 +49,15 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
                 },
                 ExpiresIn=900
             )
-            urls_generadas[doc_name] = {
-                "s3_key": s3_key,
-                "upload_url": url
+            urls_geradas[doc_name] = {
+                "s3Key": s3_key,
+                "uploadUrl": url
             }
         except ClientError as e:
             logger.error(f"Erro do SDK S3 ao gerar URL pré-assinada para {doc_name}: {str(e)}")
             raise e
             
-    return urls_generadas
+    return urls_geradas
 
 def handler(event, context):
     try:
