@@ -6,16 +6,15 @@ from aws_lambda_powertools import Logger
 
 logger = Logger(service="query-handler")
 
-# Inicialização dos clientes SDK fora do handler para reaproveitamento de conexões
-db_client = boto3.client("dynamodb")
-s3_client = boto3.client("s3")
+# 🚀 CORREÇÃO CIRÚRGICA: Força a região us-east-1 para garantir o alinhamento com o ecossistema do lote
+db_client = boto3.client("dynamodb", region_name="us-east-1")
+s3_client = boto3.client("s3", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 BUCKET_SAIDA = os.environ.get("BUCKET_SAIDA", "credifacil-docs-saida-dev")
 
 def handler(event, context):
     try:
-        # Captura o packageId enviado como Path Parameter na URL da API Gateway
         path_parameters = event.get("pathParameters") or {}
         package_id = path_parameters.get("packageId")
         
@@ -25,9 +24,8 @@ def handler(event, context):
                 "body": json.dumps({"erro": "O parâmetro packageId na URL é obrigatório."})
             }
 
-        logger.info(f"Buscando metadados do pacote {package_id} no DynamoDB.")
+        logger.info(f"Buscando metadados do pacote {package_id} no DynamoDB regional.")
 
-        # 1. CONSULTA AO DYNAMODB (Single-Table Design Key Match)
         db_response = db_client.get_item(
             TableName=TABLE_NAME,
             Key={
@@ -43,7 +41,6 @@ def handler(event, context):
                 "body": json.dumps({"erro": f"Solicitação de pacote {package_id} não localizada."})
             }
 
-        # Desembrulha os tipos do DynamoDB para um dicionário Python limpo
         status = item.get("status", {}).get("S", "UNKNOWN")
         uploaded_by = item.get("uploadedBy", {}).get("S", "sistema")
         uploaded_at = item.get("uploadedAt", {}).get("S", "")
@@ -58,7 +55,6 @@ def handler(event, context):
             "tokens_consumidos": item.get("tokens_consumidos", {}).get("S", "Não computado")
         }
 
-        # 2. SE CONCLUÍDO, BUSCA PAYLOAD COMPLETO NO S3
         if status == "COMPLETED" and "resultS3Key" in item:
             s3_key = item["resultS3Key"]["S"]
             logger.info(f"Pacote concluído. Buscando payload estruturado no S3: {s3_key}")
@@ -66,7 +62,6 @@ def handler(event, context):
             try:
                 s3_response = s3_client.get_object(Bucket=BUCKET_SAIDA, Key=s3_key)
                 json_completo_content = s3_response["Body"].read().decode("utf-8")
-                # Acopla os dados de negócio extraídos à resposta da API
                 resposta_base["dados_extraidos"] = json.loads(json_completo_content)
             except ClientError as s3_err:
                 logger.error(f"Falha de consistência: registro concluído no Dynamo mas ausente no S3: {str(s3_err)}")
@@ -80,7 +75,10 @@ def handler(event, context):
 
         return {
             "statusCode": 200,
-            "headers": {"Content-Type": "application/json"},
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+            },
             "body": json.dumps(resposta_base, ensure_ascii=False)
         }
 
