@@ -6,22 +6,37 @@ from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 
-# Inicialização do Logger oficial para expor a stack trace real no CloudWatch
 logger = Logger(service="pre-signed-url")
 
 s3_client = boto3.client("s3", region_name="us-east-1")
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
+# 🚀 ENGENHARIA DE CONTRATO: Mapeamento dinâmico de Content-Type suportado pelo Bedrock BDA
+def mapear_content_type(doc_name: str) -> str:
+    extensoes_suportadas = {
+        "pdf": "application/pdf",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp"
+    }
+    
+    ext = doc_name.lower().split('.')[-1]
+    if ext not in extensoes_suportadas:
+        raise ValueError(f"Extensão .{ext} inválida para o arquivo {doc_name}. Permitidos: PDF, PNG, JPG, JPEG e WEBP.")
+        
+    return extensoes_suportadas[ext]
+
 def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
     if len(lista_documentos) > 8:
         raise ValueError("O limite máximo permitido é de 8 documentos por pacote.")
         
-    urls_geradas = {}
+    urls_generadas = {}
     for doc_name in lista_documentos:
-        if not doc_name.lower().endswith('.pdf'):
-            raise ValueError(f"Extensão inválida para o arquivo {doc_name}. Apenas PDFs são permitidos.")
-            
+        # 🚀 DINAMISMO: Captura o Content-Type correto ao invés de forçar application/pdf
+        content_type_dinamico = mapear_content_type(doc_name)
+        
         s3_key = f"packages/{package_id}/{uuid.uuid4()}-{doc_name}"
         
         try:
@@ -30,11 +45,11 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
                 Params={
                     "Bucket": os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev"),
                     "Key": s3_key,
-                    "ContentType": "application/pdf"
+                    "ContentType": content_type_dinamico # Injetado de forma dinâmica e segura
                 },
                 ExpiresIn=900
             )
-            urls_geradas[doc_name] = {
+            urls_generadas[doc_name] = {
                 "s3_key": s3_key,
                 "upload_url": url
             }
@@ -42,13 +57,12 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
             logger.error(f"Erro do SDK S3 ao gerar URL pré-assinada para {doc_name}: {str(e)}")
             raise e
             
-    return urls_geradas
+    return urls_generadas
 
 def handler(event, context):
     try:
         logger.info(f"Evento recebido na pre_signed_url: {json.dumps(event)}")
         
-        # 🚀 CORREÇÃO 1 (DEFESA DE PAYLOAD): Higieniza o corpo se vier como string, dict ou nulo
         body_raw = event.get("body")
         if not body_raw:
             body = {}
@@ -71,9 +85,8 @@ def handler(event, context):
         package_id = str(uuid.uuid4())
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         
-        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} no DynamoDB Table: {TABLE_NAME}")
+        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} no DynamoDB")
         
-        # Escrita inicial da expectativa do lote
         db_client.put_item(
             TableName=TABLE_NAME,
             Item={
@@ -88,7 +101,6 @@ def handler(event, context):
             }
         )
         
-        # Geração dinâmica das URLs exclusivas de upload
         links = gerar_urls_upload(documentos, package_id)
         
         return {
@@ -111,7 +123,6 @@ def handler(event, context):
             "body": json.dumps({"erro": str(val_err)})
         }
     except Exception as e:
-        # 🚀 CORREÇÃO 2 (RASTREAMENTO): Captura e cospe o erro real e a linha exata da falha no CloudWatch
         logger.exception(f"Falha não tratada na geração de URLs pré-assinadas: {str(e)}")
         return {
             "statusCode": 500,
