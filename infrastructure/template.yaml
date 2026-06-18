@@ -35,7 +35,7 @@ Globals:
 
 Resources:
   # ==========================================================================
-  # 🔑 DEPENDECIAS & COMPONENTES BASE
+  # 🔑 DEPENDÊNCIAS & COMPONENTES BASE
   # ==========================================================================
   CrediFacilDependenciesLayer:
     Type: AWS::Serverless::LayerVersion
@@ -53,17 +53,17 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-entrada-${Environment}"
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   BucketSaida:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-saida-${Environment}"
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   # ==========================================================================
   # 🗄️ CAMADA DE ARMAZENAMENTO (Tabelas Isoladas de Domínio)
@@ -83,9 +83,9 @@ Resources:
           KeyType: HASH
         - AttributeName: SK
           KeyType: RANGE
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   CrediFacilClientesTable:
     Type: AWS::DynamoDB::Table
@@ -98,9 +98,9 @@ Resources:
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   # ==========================================================================
   # 📢 ECOSSISTEMA DE MENSAGERIA (Amazon SNS)
@@ -109,20 +109,20 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "credifacil-conclusao-${Environment}"
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   SnsTopicoErros:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "credifacil-erros-${Environment}"
-    Tags:
-      - Key: Criador
-        Value: Grupo12
+      Tags:
+        - Key: Criador
+          Value: Grupo12
 
   # ==========================================================================
-  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (A Peça que Estava Faltando!)
+  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST
   # ==========================================================================
   CrediFacilRestApi:
     Type: AWS::Serverless::Api
@@ -316,6 +316,10 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
+          # 🚀 CORREÇÃO: Tags movidas para dentro de Properties
+      Tags:
+        - Key: Criador
+          Value: Grupo12
       Policies:
         - PolicyName: CrediFacilStateMachinePolicy
           PolicyDocument:
@@ -330,9 +334,6 @@ Resources:
                   - !GetAtt NovaStructurerFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
-    Tags:
-      - Key: Criador
-        Value: Grupo12
 
 Outputs:
   ApiEndpoint:
