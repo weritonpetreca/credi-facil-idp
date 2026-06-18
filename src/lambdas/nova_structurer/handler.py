@@ -41,19 +41,13 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
-    """
-    Executa a validação cruzada (Cross-Validation) dos arquivos intermediários
-    e monta o JSON final estruturado exatamente no contrato acordado com o grupo.
-    """
     timestamp_atual = datetime.utcnow().isoformat() + "Z"
     
-    # Inicialização das chaves estruturadas do contrato
     nome_final = None
     data_nascimento_final = None
     documentos_identificacao = []
     documentos_analisados = []
     
-    # Flags de presença para a camada de validação
     presenca = {
         "identificacao": False,
         "renda": False,
@@ -68,13 +62,10 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
     
     renda_acumulada = 0.0
     saldo_acumulado = 0.0
-    confiancas = []
 
-    # Passo 1: Varre as extrações isoladas para acumular inteligência cadastral
     for doc in intermediarios:
         tipo = doc.get("tipo_classificado", "UNKNOWN")
         nome_doc = doc.get("nome_titular", "").strip().upper()
-        confiancas.append(doc.get("confianca_extracao", 1.0))
         
         if nome_doc and "UNKNOWN" not in nome_doc:
             nomes_coletados.add(nome_doc)
@@ -86,11 +77,9 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             if not data_nascimento_final:
                 data_nascimento_final = doc.get("data_nascimento")
 
-        # Agrupa os alertas individuais de cada arquivo
         if doc.get("alertas_inconsistencias"):
             principais_alertas.extend(doc["alertas_inconsistencias"])
 
-        # Mapeamento e consolidação de tipos para a regra de presença
         if tipo == "IDENTITY_DOCUMENT":
             presenca["identificacao"] = True
             detalhes = doc.get("detalhes_cadastrais", {})
@@ -113,7 +102,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         elif tipo == "PROPERTY_DOCUMENT":
             presenca["imovel"] = True
 
-        # Alinha a estrutura de documentos analisados com o esquema final do front
         documentos_analisados.append({
             "tipo_documento": tipo,
             "arquivo_original": doc.get("arquivo_original", "desconhecido.pdf"),
@@ -125,11 +113,9 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             "observacoes": doc.get("alertas_inconsistencias", [])
         })
 
-    # Passo 2: Camada de Validação Cruzada Determinística (Cross-Validation)
     nome_consistente = True if len(nomes_coletados) <= 1 else False
     dt_nascimento_consistente = True if len(datas_nascimento_coletadas) <= 1 else False
 
-    # Geração automática de pendências regulatórias
     if not presenca["identificacao"]:
         pendencias.append("Falta Documento de Identificação Oficial (RG/CNH/Passaporte).")
     if not presenca["renda"]:
@@ -140,7 +126,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
     if not nome_consistente:
         principais_alertas.append(f"Divergência nominal detectada entre os arquivos: {list(nomes_coletados)}")
 
-    # Passo 3: Matriz de Risco Financeiro e Decisão Sugerida
     score_calculado = 0
     if presenca["identificacao"] and nome_consistente: score_calculado += 30
     if renda_acumulada > 0: score_calculado += 40
@@ -159,9 +144,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         categoria_risco = "alto"
         resumo = "Solicitação recusada devido à ausência severa de comprovações de renda ou KYC inválido."
 
-    confianca_final_media = sum(confiancas) / max(1, len(confiancas))
-
-    # Construção exata do contrato JSON solicitado pelo grupo
     return {
         "cliente": {
             "nome": nome_final or "Não Identificado",
@@ -220,13 +202,12 @@ def handler(event, context):
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
 
-        logger.info(f"Iniciando esteira de cliente único para o pacote {package_id}")
-
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
             raise FileNotFoundError(f"Nenhum arquivo BDA localizado sob o prefixo {prefix_busca}")
 
         intermediarios_coletados = []
+        confiancas_físicas = []
         total_input_tokens = 0
         total_output_tokens = 0
 
@@ -275,12 +256,12 @@ def handler(event, context):
             if isinstance(achado, str):
                 achado = json.loads(achado)
 
-            # Injeta chaves de linhagem física no intermediário
             achado["arquivo_original"] = nome_pdf_original
             achado["s3_key_origem"] = f"packages/{package_id}/{nome_pdf_original}"
             achado["s3_key_resultado_bda"] = obj["Key"]
+            
+            confiancas_físicas.append(float(achado.get("confianca_extracao", 1.0)))
 
-            # 🚀 SALVANDO INTERMEDIÁRIO NO BUCKET DE SAÍDA (Pasta intermediates)
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=f"results/{package_id}/intermediates/{nome_arquivo_unico}_structured.json",
@@ -288,16 +269,11 @@ def handler(event, context):
                 ContentType="application/json"
             )
 
-            # Se o documento explicitamente pertencer a terceiros (ex: Arnav Desai no seu W-2), 
-            # nós o catalogamos no relatório de análise, mas não poluímos o cadastro mestre do John.
-            # No caso do grupo dropar o W-2 do script de upload, esse IF garante a resiliência futura.
             intermediarios_coletados.append(achado)
 
-        # Geração consolidada da estrutura final exigida pelo grupo
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
 
-        # 🚀 SALVANDO O JSON FINAL CONSOLIDADO NO BUCKET DE SAÍDA
         s3_client.put_object(
             Bucket=bucket_saida,
             Key=f"results/{package_id}/output.json",
@@ -305,11 +281,14 @@ def handler(event, context):
             ContentType="application/json"
         )
 
+        confianca_global_media = sum(confiancas_físicas) / max(1, len(confiancas_físicas))
+
         return {
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
             "bda_output_bucket": bucket_saida,
-            "confianca_geral": json_final_consolidado["resultado_final"]["decisao_sugerida"],
+            "confianca_geral": round(confianca_global_media, 2), # 🚀 CORRIGIDO: Agora sempre retorna um número (Ex: 0.95)
+            "decisao_sugerida": json_final_consolidado["resultado_final"]["decisao_sugerida"], # Novo campo limpo de texto
             "revisao_humana": True if json_final_consolidado["cliente"]["classificacao_risco"]["categoria"] == "medio" else False,
             "json_estruturado": json_final_consolidado
         }

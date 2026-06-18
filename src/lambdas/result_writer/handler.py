@@ -16,77 +16,82 @@ def handler(event, context):
         
         package_id = event.get("package_id")
         json_estruturado = event.get("json_estruturado", {})
-        score_global = json_estruturado.get("score_global", {})
-        tabela_clientes = json_estruturado.get("tabela_clientes", {})
         
         timestamp_atual = datetime.utcnow().isoformat() + "Z"
         s3_key_final = f"results/{package_id}/output.json"
-        confianca_lote = str(event.get("confianca_geral", 0.0))
+        
+        # 🚀 CORREÇÃO CIRÚRGICA: Conversão float segura para garantir que o DynamoDB receba um número válido
+        try:
+            confianca_lote = str(float(event.get("confianca_geral", 1.0)))
+        except (ValueError, TypeError):
+            confianca_lote = "1.0"
+            
+        decisao_lote = str(event.get("decisao_sugerida") or "revisar")
         tokens_uso = str(event.get("metricas_consumo", {}).get("input_tokens", 0) + event.get("metricas_consumo", {}).get("output_tokens", 0))
         
-        # 1. Atualização do log transacional do Pacote
-        # 🚀 CORREÇÃO CIRÚRGICA: Devolvido "SK": "METADATA" para casar com o schema composto do template.yaml
+        # 1. Atualização mestre da tabela de Pacotes
         db_client.update_item(
             TableName=TABLE_PACOTES,
             Key={
                 "PK": {"S": package_id},
                 "SK": {"S": "METADATA"}
             },
-            UpdateExpression="SET #st = :comp, processedAt = :ts, resultS3Key = :s3k, confidenceScore = :cs, tokens_consumidos = :tk",
+            UpdateExpression="SET #st = :comp, processedAt = :ts, resultS3Key = :s3k, confidenceScore = :cs, tokens_consumidos = :tk, decisaoSugerida = :ds",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":comp": {"S": "COMPLETED"},
                 ":ts": {"S": timestamp_atual},
                 ":s3k": {"S": s3_key_final},
-                ":cs": {"N": confianca_lote},
-                ":tk": {"S": f"{tokens_uso} tokens"}
+                ":cs": {"N": confianca_lote}, # Gravado de forma segura como número
+                ":tk": {"S": f"{tokens_uso} tokens"},
+                ":ds": {"S": decisao_lote} # Nova string gravada com segurança
             }
         )
         
-        # 2. Persistência Isolada por Proponente (Multi-entity Architecture)
-        logger.info(f"Iniciando gravação de {len(tabela_clientes)} proponentes de forma segregada.")
+        # 2. Persistência Alinhada ao Novo Schema de Cliente Único (Single-Client Strategy)
+        cliente_data = json_estruturado.get("cliente", {})
+        sistema_data = json_estruturado.get("sistema", {})
         
-        for nome_cliente, dados in tabela_clientes.items():
-            cadastro = dados.get("cadastro", {})
-            doc_id = str(cadastro.get("documento_identificacao", "")).strip()
+        nome_cliente = cliente_data.get("nome", "Não Identificado")
+        pk_cliente = sistema_data.get("chave_cliente")
+        
+        if not pk_cliente or "UNKNOWN" in pk_cliente:
+            pk_cliente = f"CLIENT#{nome_cliente.replace(' ', '_')}"
             
-            # Fallback de PK dinâmica para garantir a criação da linha mesmo sem ID
-            if not doc_id or "não localizado" in doc_id.lower():
-                pk_cliente = f"CLIENT#{nome_cliente.replace(' ', '_')}"
-                doc_id_salvar = "Não Informado"
-            else:
-                pk_cliente = f"CLIENT#{doc_id}"
-                doc_id_salvar = doc_id
+        doc_id_salvar = "Não Informado"
+        docs_id_list = cliente_data.get("documentos_identificacao", [])
+        if docs_id_list and isinstance(docs_id_list, list):
+            doc_id_salvar = docs_id_list[0].get("numero_documento") or "Não Informado"
 
-            # Mapeamento dinâmico de scores isolados gerados pelo estruturador
-            score_individuo = dados.get("score_atribuido", score_global.get("pontuacao", 0))
-            justificativa_individuo = dados.get("justificativa_individual", score_global.get("justificativa", ""))
-            risco_individuo = "LOW_RISK" if score_individuo >= 80 else ("MEDIUM_RISK" if score_individuo >= 50 else "HIGH_RISK")
-
-            logger.info(f"Gravando proponente mestre: {nome_cliente} com a PK: {pk_cliente}")
-            
-            db_client.put_item(
-                TableName=TABLE_CLIENTES,
-                Item={
-                    "PK": {"S": pk_cliente}, # Tabela de clientes usa chave simples PK apenas
-                    "nome_completo": {"S": nome_cliente},
-                    "documento_identificacao": {"S": doc_id_salvar},
-                    "data_nascimento": {"S": cadastro.get("data_nascimento") or "Não Informada"},
-                    "score_atribuido": {"N": str(score_individuo)},
-                    "classificacao_risco": {"S": risco_individuo},
-                    "justificativa_analise": {"S": justificativa_individuo},
-                    "documentos_historico_json": {"S": json.dumps(dados.get("documentos_vinculados", []), default=str)},
-                    "ultimo_package_vinculado": {"S": package_id},
-                    "data_ultima_atualizacao": {"S": timestamp_atual}
-                }
-            )
+        score_individuo = cliente_data.get("score_credito", {}).get("valor", 0)
+        risco_data = cliente_data.get("classificacao_risco", {})
+        risco_individuo = risco_data.get("categoria", "inconclusivo")
+        justificativa_individuo = risco_data.get("justificativa", "Sem justificativa cadastrada.")
+        
+        logger.info(f"Gravando cliente único no banco: {nome_cliente} com a PK: {pk_cliente}")
+        
+        db_client.put_item(
+            TableName=TABLE_CLIENTES,
+            Item={
+                "PK": {"S": pk_cliente},
+                "nome_completo": {"S": nome_cliente},
+                "documento_identificacao": {"S": str(doc_id_salvar)},
+                "data_nascimento": {"S": cliente_data.get("data_nascimento") or "Não Informada"},
+                "score_atribuido": {"N": str(score_individuo)},
+                "classificacao_risco": {"S": str(risco_individuo).upper() + "_RISK" if risco_individuo in ["baixo", "medio", "alto"] else "UNKNOWN_RISK"},
+                "justificativa_analise": {"S": justificativa_individuo},
+                "documentos_historico_json": {"S": json.dumps(json_estruturado.get("documentos_analisados", []), default=str)},
+                "ultimo_package_vinculado": {"S": package_id},
+                "data_ultima_atualizacao": {"S": timestamp_atual}
+            }
+        )
             
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "package_id": package_id,
                 "status": "COMPLETED",
-                "total_proponentes": len(tabela_clientes)
+                "total_proponentes": 1
             })
         }
         
