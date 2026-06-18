@@ -1,33 +1,50 @@
 import json
 import os
 import boto3
+import urllib.parse
 from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="s3-upload-tracker")
 
-db_client = boto3.client("dynamodb")
-sf_client = boto3.client("stepfunctions")
+db_client = boto3.client("dynamodb", region_name="us-east-1")
+sf_client = boto3.client("states", region_name="us-east-1")
 
-TABLE_NAME = os.environ.get("DYNAMODB_TABLE")
+TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN")
 
 def handler(event, context):
     try:
-        # Extrai o caminho (Key) do objeto criado direto da estrutura do EventBridge
-        s3_key = event.get("detail", {}).get("object", {}).get("key", "")
+        logger.info(f"Evento bruto do S3 recebido no Tracker: {json.dumps(event)}")
         
-        if not s3_key or not s3_key.startswith("packages/"):
-            logger.info("Chave do S3 irrelevante para o escopo de rastreamento do pacote.")
+        records = event.get("Records", [])
+        if not records:
+            logger.warning("Nenhum registro localizado no payload do evento.")
+            return {"status": "SKIPPED"}
+            
+        # 🚀 PROTEÇÃO 1: Captura e decodifica caracteres especiais e espaços da URL do S3
+        raw_key = records[0].get("s3", {}).get("object", {}).get("key", "")
+        s3_key = urllib.parse.unquote_plus(raw_key)
+        
+        # 🚀 PROTEÇÃO 2: Limpa barras iniciais e espaços que quebram validações de string
+        s3_key = s3_key.lstrip("/")
+        logger.info(f"Chave S3 higienizada para análise: '{s3_key}'")
+        
+        # Validação flexível e robusta de escopo
+        if not s3_key or "packages/" not in s3_key:
+            logger.warning(f"Chave do S3 irrelevante para o escopo de rastreamento do pacote: {s3_key}")
             return {"status": "SKIPPED"}
 
-        # Captura o package_id contido no padrão 'packages/{package_id}/{uuid}-filename.pdf'
-        partes_caminho = s3_key.split("/")
+        # Separa o caminho com segurança: packages/{package_id}/{nome_arquivo}
+        partes_caminho = [p for p in s3_key.split("/") if p]
+        if len(partes_caminho) < 3:
+            logger.warning(f"Estrutura de chave fora do padrão esperado: {s3_key}")
+            return {"status": "SKIPPED"}
+            
         package_id = partes_caminho[1]
+        logger.info(f"Identificado processamento para o lote: {package_id}. Incrementando progresso atômico...")
 
-        logger.info(f"Arquivo recebido no S3. Incrementando progresso do lote {package_id}")
-
-        # 🚀 ATUALIZAÇÃO ATÔMICA: Incrementa o contador e retorna os novos valores em uma única transação
+        # Incremento matemático atômico no DynamoDB
         response = db_client.update_item(
             TableName=TABLE_NAME,
             Key={
@@ -47,15 +64,12 @@ def handler(event, context):
         expected = int(atributos.get("documentCount", {}).get("N", "0"))
         status_atual = atributos.get("status", {}).get("S", "")
 
-        logger.info(f"Progresso do pacote {package_id}: {uploaded}/{expected} (Status Atual: {status_atual})")
+        logger.info(f"Contador do pacote {package_id}: {uploaded}/{expected} | Estado atual: {status_atual}")
 
-        # 🏁 SE TODOS OS ARQUIVOS CHEGARAM, APLICA O LOCK OPTIMISTA
+        # 🚀 DISPARO AUTOMÁTICO REATIVO: Ativa quando o último arquivo bate no storage
         if uploaded == expected and status_atual == "AWAITING_UPLOAD":
             try:
-                logger.info(f"Dossiê completo para o pacote {package_id}. Aplicando trava atômica de processamento...")
-                
-                # Executa uma alteração condicional. Se duas chamadas baterem aqui juntas,
-                # apenas uma conseguirá rodar sem estourar ConditionalCheckFailedException
+                # Altera o estado para evitar execuções concorrentes duplicadas
                 db_client.update_item(
                     TableName=TABLE_NAME,
                     Key={
@@ -71,31 +85,28 @@ def handler(event, context):
                     }
                 )
                 
-                # 🚀 DISPARO AUTOMÁTICO: Inicia a máquina de estados reativamente sem intervenção humana!
                 payload_input_step = {
                     "package_id": package_id,
-                    "user_id": atributos.get("uploadedBy", {}).get("S", "evento-automatico"),
-                    "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}",
-                    "bda_output_key": f"bda-output/{package_id}/result.json"
+                    "user_id": atributos.get("uploadedBy", {}).get("S", "analista-weriton"),
+                    "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}"
                 }
                 
-                logger.info(f"Disparando Step Functions reativamente para o pacote {package_id}...")
+                logger.info(f"Lote completo! Disparando Step Functions de forma 100% automatizada para {package_id}")
                 sf_client.start_execution(
                     stateMachineArn=STATE_MACHINE_ARN,
                     name=f"AutoExecution-{package_id}",
                     input=json.dumps(payload_input_step)
                 )
-                
                 return {"status": "TRIGGERED", "package_id": package_id}
 
             except ClientError as ce:
                 if ce.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                    logger.warning(f"Trava de concorrência ativada. O pipeline para o pacote {package_id} já foi startado por outra thread.")
+                    logger.warning("Trava de idempotência ativa. O Step Functions já foi startado por outra thread.")
                     return {"status": "CONCURRENCY_LOCKED", "package_id": package_id}
                 raise ce
                 
-        return {"status": "WAITING_MORE_FILES", "current_progress": f"{uploaded}/{expected}"}
+        return {"status": "WAITING_MORE_FILES", "progress": f"{uploaded}/{expected}"}
 
     except Exception as e:
-        logger.error(f"Erro catastrófico no rastreador de uploads S3: {str(e)}")
+        logger.error(f"Falha crítica no rastreador de uploads S3: {str(e)}")
         raise e
