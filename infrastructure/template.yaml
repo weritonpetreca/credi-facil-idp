@@ -28,8 +28,6 @@ Globals:
         ENV: !Ref Environment
         DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
         CLIENTS_DYNAMODB_TABLE: !Ref CrediFacilClientesTable
-        BUCKET_ENTRADA: !Ref BucketEntrada
-        BUCKET_SAIDA: !Ref BucketSaida
         SNS_COMPLETION_TOPIC_ARN: !Ref SnsTopicoConclusao
         SNS_ERROR_TOPIC_ARN: !Ref SnsTopicoErros
 
@@ -133,13 +131,17 @@ Resources:
       Criador: Grupo12
 
   # ==========================================================================
-  # 🚀 GATILHOS E COMPONENTES DE ENTRADA (Mapeamento de CodeUri Saneado)
+  # 🚀 FUNÇÕES LAMBDA CORE (Injeções Isoladas de Escopo S3)
   # ==========================================================================
   PreSignedUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../
       Handler: src.lambdas.pre_signed_url.handler.handler
+      Environment:
+        Variables:
+          # 🚀 INJEÇÃO LOCAL: Apenas quem assina URLs precisa saber o nome do bucket de entrada
+          BUCKET_ENTRADA: !Ref BucketEntrada
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -181,7 +183,6 @@ Resources:
     Tags:
       Criador: Grupo12
 
-  # 🚀 RESTAURADO: Rastreador atômico nativo do S3 para disparar reativamente
   S3UploadTrackerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -192,6 +193,7 @@ Resources:
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+          # 🚀 DE DESAFIADO A MESTRE: Sem variáveis do S3 aqui, o CloudFormation quebra o ciclo vicioso!
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -213,9 +215,6 @@ Resources:
     Tags:
       Criador: Grupo12
 
-  # ==========================================================================
-  # ⚙️ MÁQUINA DE ESTADOS E STEPS INTERNOS
-  # ==========================================================================
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -225,6 +224,8 @@ Resources:
       Environment:
         Variables:
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
+          BUCKET_ENTRADA: !Ref BucketEntrada
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${Environment}"
@@ -261,6 +262,9 @@ Resources:
       Handler: src.lambdas.nova_structurer.handler.handler
       MemorySize: 1024
       Timeout: 120
+      Environment:
+        Variables:
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -277,6 +281,9 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: src.lambdas.result_writer.handler.handler
+      Environment:
+        Variables:
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -292,6 +299,9 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: src.lambdas.query_handler.handler.handler
+      Environment:
+        Variables:
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
@@ -322,6 +332,9 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  # ==========================================================================
+  # ⚙️ ORQUESTRADOR SERVERLESS (AWS Step Functions)
+  # ==========================================================================
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
