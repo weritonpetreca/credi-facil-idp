@@ -6,10 +6,10 @@ from aws_lambda_powertools import Logger
 from src.shared.tools import obter_especificacao_ferramenta_loan
 
 logger = Logger(service="nova-structurer")
-s3_client = boto3.client("s3")
+s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-# 🚀 DINAMISMO: Centraliza o ID do modelo em uma constante reaproveitável
+# 🚀 MODEL ID CENTRALIZADO
 MODEL_ID = "amazon.nova-pro-v1:0"
 
 PROMPT_SISTEMA = (
@@ -18,7 +18,8 @@ PROMPT_SISTEMA = (
     "DIRETRIZES CRÍTICAS:\n"
     "1. Identifique quem é a pessoa principal do documento (o dono da conta, o empregado do holerite, o beneficiário do cheque).\n"
     "2. Mapeie os dados na ferramenta fornecida. No campo 'campos_extraidos_brutos', monte um dicionário limpo contendo chaves e valores cruciais localizados no texto.\n"
-    "3. Se você detectar que o documento pertence inteiramente a outra pessoa que não seja o solicitante mestre (ex: um formulário W-2 onde o Employee é um terceiro), preencha o tipo_classificado correspondente, mas adicione um alerta explícito no campo 'alertas_inconsistencias'."
+    "3. Se você detectar que o documento pertence inteiramente a outra pessoa que não seja o solicitante mestre, preencha o tipo_classificado correspondente, mas adicione um alerta explícito no campo 'alertas_inconsistencias'.\n"
+    "4. Caso um campo não exista de forma alguma no documento (como data de nascimento em holerites), retorne null ou deixe em branco. Não invente datas."
 )
 
 def extrair_texto_linear(dados: any) -> list:
@@ -66,17 +67,21 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
     renda_acumulada = 0.0
     saldo_acumulado = 0.0
 
+    # 🚀 FILTRO DEFENSIVO DE PLACEHOLDERS
+    PLACEHOLDERS = {"N/A", "—", "-", "NONE", "NULL", "NOT FOUND", "NÃO INFORMADO", "NÃO INFORMADA", "NÃO IDENTIFICADO", ""}
+
     for doc in intermediarios:
         tipo = doc.get("tipo_classificado", "UNKNOWN")
-        nome_doc = doc.get("nome_titular", "").strip().upper()
+        nome_doc = str(doc.get("nome_titular", "")).strip().upper()
+        dt_nasc_doc = str(doc.get("data_nascimento", "")).strip().upper()
         
-        if nome_doc and "UNKNOWN" not in nome_doc:
+        if nome_doc and nome_doc not in PLACEHOLDERS and "UNKNOWN" not in nome_doc:
             nomes_coletados.add(nome_doc)
             if not nome_final:
                 nome_final = nome_doc
                 
-        if doc.get("data_nascimento"):
-            datas_nascimento_coletadas.add(doc.get("data_nascimento"))
+        if dt_nasc_doc and dt_nasc_doc not in PLACEHOLDERS:
+            datas_nascimento_coletadas.add(dt_nasc_doc)
             if not data_nascimento_final:
                 data_nascimento_final = doc.get("data_nascimento")
 
@@ -116,7 +121,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             "observacoes": doc.get("alertas_inconsistencias", [])
         })
 
-    # 🚀 CORREÇÃO CIRÚRGICA DE VALIDAÇÃO: Garante o retorno de 'null' (None) quando o set estiver vazio
+    # 🚀 ENGENHARIA DE VALIDAÇÃO LIMPA: Se o set estiver vazio após o filtro, retorna None (null no JSON)
     nome_consistente = True if len(nomes_coletados) == 1 else (False if len(nomes_coletados) > 1 else None)
     dt_nascimento_consistente = True if len(datas_nascimento_coletadas) == 1 else (False if len(datas_nascimento_coletadas) > 1 else None)
 
@@ -148,13 +153,13 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         categoria_risco = "alto"
         resumo = "Solicitação recusada devido à ausência severa de comprovações de renda ou KYC inválido."
 
-    # Mapeamento do nome amigável limpo com base no ID do modelo ativo
-    nome_modelo_amigavel = "Amazon Nova Pro" if "pro" in MODEL_ID else "Amazon Nova"
+    # 🚀 DINAMISMO DO NOME DO MODELO
+    nome_modelo_final = "Amazon Nova Pro" if "pro" in MODEL_ID.lower() else ("Amazon Nova Lite" if "lite" in MODEL_ID.lower() else "Amazon Nova")
 
     return {
         "cliente": {
             "nome": nome_final or "Não Identificado",
-            "data_nascimento": data_nascimento_final,
+            "data_nascimento": data_nascimento_final, # Retornará null de forma limpa se não localizado
             "score_credito": {
                 "valor": score_calculado,
                 "fonte": "documentos",
@@ -175,7 +180,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
             },
             "processamento": {
                 "status": "processado_com_alertas" if len(principais_alertas) > 0 else "processado",
-                "modelo_utilizado": nome_modelo_amigavel, # 🚀 CORREÇÃO CIRÚRGICA: Modelo dinâmico herdado da constante
+                "modelo_utilizado": nome_modelo_final,
                 "bda_project_arn": os.environ.get("BDA_PROJECT_ARN"),
                 "quantidade_tokens": {
                     "input_tokens": metricas_tokens["input"],
@@ -189,7 +194,7 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         "documentos_analisados": documentos_analisados,
         "validacao": {
             "nome_consistente_entre_documentos": nome_consistente,
-            "data_nascimento_consistente": dt_nascimento_consistente,
+            "data_nascimento_consistente": dt_nascimento_consistente, # Responderá null (None) com sucesso!
             "documento_identificacao_presente": presenca["identificacao"],
             "comprovante_renda_presente": presenca["renda"],
             "extrato_bancario_presente": presenca["extrato"],
@@ -270,7 +275,6 @@ def handler(event, context):
                 f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
             )
 
-            # 🚀 CORREÇÃO CIRÚRGICA: Passando a constante dinâmica para a API do Bedrock
             response = bedrock_runtime.converse(
                 modelId=MODEL_ID,
                 messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
@@ -305,7 +309,6 @@ def handler(event, context):
 
             intermediarios_coletados.append(achado)
 
-        # Geração consolidada da estrutura final
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
 
