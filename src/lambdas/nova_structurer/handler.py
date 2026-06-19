@@ -11,21 +11,76 @@ bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-pro-v1:0"
 
-PROMPT_SISTEMA = (
-    "Você é um agente IDP especialista em extração e mapeamento de documentos corporativos.\n"
-    "Sua missão é extrair os dados do documento fornecido e estruturá-los rigorosamente de acordo com os schemas oficiais.\n\n"
-    "DIRETRIZES CRÍTICAS DE EXTRAÇÃO:\n"
-    "1. Classifique o documento em um dos seguintes pares de TIPO e SUBTIPO:\n"
-    "   - tipo_documento: 'comprovante_renda', subtipo_documento: 'pay_stub'\n"
-    "   - tipo_documento: 'comprovante_renda', subtipo_documento: 'w2_tax_form'\n"
-    "   - tipo_documento: 'documento_imovel', subtipo_documento: 'homeowners_insurance_application'\n"
-    "   - tipo_documento: 'documento_identificacao', subtipo_documento: 'driver_license'\n"
-    "   - tipo_documento: 'extrato_bancario', subtipo_documento: 'account_statement'\n"
-    "   - tipo_documento: 'comprovante_complementar', subtipo_documento: 'payroll_check'\n\n"
-    "2. Mapeie os dados extraídos fielmente dentro do campo 'campos_extraidos_brutos'.\n"
-    "3. Identifique o nome completo do titular principal no campo 'nome_titular' em CAIXA ALTA.\n"
-    "4. Defina o 'confianca_extracao' de forma realista entre 0.0 e 1.0 baseando-se na legibilidade do texto."
-)
+TEMPLATE_PAYROLL_CHECK = {
+    "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
+    "payroll_check_number": None, "pay_date": None, "social_security_number": None,
+    "payee_name": None, "amount_words": None, "amount_numeric": None, "bank_name": None,
+    "bank_address": None, "sample_indicator": None, "non_negotiable_indicator": None,
+    "void_indicator": None, "authorized_signature_present": None, "void_after_text": None,
+    "micr_check_number": None, "micr_routing_number": None, "micr_account_number": None,
+    "security_notice_bottom": None
+}
+
+TEMPLATE_DRIVER_LICENSE = {
+    "tipo_documento_identificacao": None, "numero_documento": None, "nome": None,
+    "data_nascimento": None, "data_emissao": None, "data_validade": None,
+    "orgao_emissor": None, "estado_emissor": None, "pais_emissor": None,
+    "endereco": None, "classe": None, "restricoes": None, "endorsements": None,
+    "sexo": None, "altura": None, "olhos": None
+}
+
+TEMPLATE_W2_FORM = {
+    "form_type": None, "employee_social_security_number": None, "OMB_No.": None,
+    "employer_identification_number": None, "employer_name": None, "employer_address": None,
+    "control_number": None, "employee_first_name_and_initial": None, "employee_last_name": None,
+    "employee_address": None, "wages_tips_other_compensation": None, "federal_income_tax_withheld": None,
+    "social_security_wages": None, "social_security_tax_withheld": None, "medicare_wages_and_tips": None,
+    "medicare_tax_withheld": None, "social_security_tips": None, "allocated_tips": None,
+    "dependent_care_benefits": None, "nonqualified_plans": None, "staturoty employee": None,
+    "retirement plan": None, "third-party_sick_pay": None, "other": None, "state": None,
+    "employer's_state_id_number": None, "state_wages_tips_etc": None, "state_income_tax": None,
+    "local_wages_tips_etc": None, "local_income_tax": None, "locality_name": None, "tax_year": None
+}
+
+TEMPLATE_PAY_STUB = {
+    "document_title": None, "pay_period_ending": None, "pay_date": None, "co.": None,
+    "file": None, "dept": None, "clock": None, "number": None, "employer_name": None,
+    "employer_address": None, "social_security_number": None, "taxable_marital_status": None,
+    "employee_name": None, "employee_address": None, "gross_pay_this_period": None,
+    "gross_pay_ytd": None, "net_pay_this_period": None
+}
+
+TEMPLATE_ACCOUNT_STATEMENT = {
+    "account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None,
+    "statement_period": None, "account_number": None, "account_name": None, "email_address": None,
+    "opening_balance": None, "closing_balance": None
+}
+
+TEMPLATE_HOMEOWNERS_INSURANCE = {
+    "named_insured": None, "mailing_address": None, "primary_email": None, "primary_phone": None,
+    "insurance_company": None, "insurance_company_address": None, "insured_property_address": None,
+    "policy_number": None, "effective_date": None, "expiration_date": None
+}
+
+PROMPT_SISTEMA = f"""
+Você é um agente analítico de IDP focado em extração de dados sob conformidade estrita de schemas.
+Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo regras rígidas de mapeamento.
+
+DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
+1. Classifique o documento em um dos pares de tipo/subtipo aceitos.
+2. No campo 'campos_extraidos_brutos', você DEVE retornar um objeto JSON que possua EXATAMENTE as mesmas chaves do gabarito correspondente abaixo.
+3. NÃO altere o nome das chaves, NÃO remova chaves e NÃO adicione chaves novas. Se um campo do gabarito não for localizado no texto, defina o seu valor estritamente como "str" ou string vazia, mas mantenha a chave presente.
+
+GABARITOS DE CHAVES POR SUBTIPO DE DOCUMENTO:
+- Se subtipo for 'payroll_check', use exatamente esta estrutura: {json.dumps(TEMPLATE_PAYROLL_CHECK)}
+- Se subtipo for 'driver_license', use exatamente esta estrutura: {json.dumps(TEMPLATE_DRIVER_LICENSE)}
+- Se subtipo for 'w2_tax_form', use exatamente esta estrutura: {json.dumps(TEMPLATE_W2_FORM)}
+- Se subtipo for 'pay_stub', use exactly esta estrutura: {json.dumps(TEMPLATE_PAY_STUB)}
+- Se subtipo for 'account_statement', use exatamente esta estrutura: {json.dumps(TEMPLATE_ACCOUNT_STATEMENT)}
+- Se subtipo for 'homeowners_insurance_application', use exatamente esta estrutura: {json.dumps(TEMPLATE_HOMEOWNERS_INSURANCE)}
+
+Mapeie o nome completo localizado no campo 'nome_titular' em CAIXA ALTA.
+"""
 
 def extrair_texto_linear(dados: any) -> list:
     textos = []
