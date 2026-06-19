@@ -496,6 +496,7 @@ Resources:
                 Resource:
                   - !GetAtt BdaInvokerFunction.Arn
                   - !GetAtt BdaStatusPollerFunction.Arn
+                  - !GetAtt ConfidenceCheckerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
