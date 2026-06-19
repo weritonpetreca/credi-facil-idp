@@ -170,6 +170,47 @@ Resources:
           Value: Grupo12
 
   # ==========================================================================
+  # 🌐 INFRAESTRUTURA ORIENTADA A EVENTOS (EVENTBRIDGE & SQS)
+  # ==========================================================================
+  CrediFacilEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "credifacil-idp-bus-${Environment}"
+
+  CrediFacilReviewQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "credifacil-human-review-queue-${Environment}"
+
+  LowConfidenceRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "credifacil-low-confidence-rule-${Environment}"
+      EventBusName: !Ref CrediFacilEventBus
+      EventPattern:
+        source:
+          - "credifacil.idp"
+        detail-type:
+          - "LowConfidenceFieldsDetected"
+      Targets:
+        - Arn: !GetAtt CrediFacilReviewQueue.Arn
+          Id: "ReviewQueueTarget"
+
+  QueuePolicyForEventBridge:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref CrediFacilReviewQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt CrediFacilReviewQueue.Arn
+
+  # ==========================================================================
   # 🌐 CAMADA DE EXPOSIÇÃO DA API REST
   # ==========================================================================
   CrediFacilRestApi:
@@ -324,6 +365,9 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: src.lambdas.confidence_checker.handler.handler
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref CrediFacilEventBus
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -332,7 +376,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action: "events:PutEvents"
-              Resource: "*"
+              Resource: !GetAtt CrediFacilEventBus.Arn
     Tags:
       Criador: Grupo12
 

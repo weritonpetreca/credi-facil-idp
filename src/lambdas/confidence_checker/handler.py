@@ -1,7 +1,7 @@
 import json
 import os
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="confidence-checker")
@@ -81,12 +81,15 @@ def handler(event, context):
         if needs_human_review:
             logger.warning(f"Lote {package_id} possui {len(campos_com_falha_geral)} violações de acurácia crítica.")
             
+            # Padronização ISO sem warnings para Python 3.12
+            timestamp_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
             detail_payload = {
                 "package_id": package_id,
                 "status_esteira": "NEEDS_REVISION",
                 "total_failed_fields": len(campos_com_falha_geral),
                 "failed_fields_metadata": campos_com_falha_geral,
-                "timestamp_auditoria": datetime.utcnow().isoformat() + "Z"
+                "timestamp_auditoria": timestamp_iso
             }
 
             # 🚀 DISPARO PARA O EVENTBRIDGE CUSTOM BUS
@@ -101,12 +104,16 @@ def handler(event, context):
                 ]
             )
 
-            # Atualiza a flag na tabela Mestre de Pacotes do DynamoDB para o Front-End espelhar
+            # 🎯 CORREÇÃO CRÍTICA: Atualiza a coluna 'status' correta mapeada por Alias (#st)
             db_client.update_item(
                 TableName=TABLE_NAME,
                 Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
-                UpdateExpression="SET humanReviewRequired = :h, status_revisao = :s",
-                ExpressionAttributeValues={":h": {"BOOL": True}, ":s": {"S": "NEEDS_REVISION"}}
+                UpdateExpression="SET #st = :s, humanReviewRequired = :h",
+                ExpressionAttributeNames={"#st": "status"},
+                ExpressionAttributeValues={
+                    ":h": {"BOOL": True},
+                    ":s": {"S": "NEEDS_REVISION"}
+                }
             )
 
         return {
