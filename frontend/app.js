@@ -8,7 +8,7 @@ const submitButton = document.getElementById("submitButton");
 const API_URL = "https://zrky80ks0l.execute-api.us-east-1.amazonaws.com/dev/";
 const MIN_FILES = 1;
 const MAX_FILES = 8;
-let pollingInterval = null; // ✅ CORREÇÃO: Declarado explicitamente no escopo global
+let pollingInterval = null; 
 
 documentsInput.addEventListener("change", () => {
   const files = Array.from(documentsInput.files);
@@ -57,7 +57,6 @@ uploadForm.addEventListener("submit", async (event) => {
     uploadForm.reset();
     renderFileList([]);
 
-    // Dispara o monitoramento ativo usando o ID gerado pela AWS
     iniciarMonitoramentoLote(uploadInstructions.package_id);
 
   } catch (error) {
@@ -78,7 +77,7 @@ function renderFileList(files) {
 
   const summary = document.createElement("div");
   summary.className = "file-summary";
-  summary.textContent = `${files.length} arquivo(s) selecionado(s). Permitido: 1 a 8 arquivos.`;
+  summary.textContent = `${files.length} arquivo(s) seleccionado(s). Permitido: 1 a 8 arquivos.`;
   fileList.appendChild(summary);
 
   files.forEach((file, index) => {
@@ -119,9 +118,10 @@ async function uploadFilesToS3(files, uploadInstructions) {
       throw new Error(`Instrução de upload não encontrada para o arquivo: ${file.name}`);
     }
 
+    // 🚀 CORREÇÃO CRÍTICA: Envia o tipo real do arquivo (ex: image/png) para casar com a assinatura da AWS
     const uploadResponse = await fetch(instruction.uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": "application/pdf" },
+      headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file
     });
 
@@ -165,7 +165,6 @@ function iniciarMonitoramentoLote(packageId) {
 
   pollingInterval = setInterval(async () => {
     try {
-      // ✅ CORREÇÃO: Alterado de API_BASE_URL para API_URL para manter a consistência mestre
       const response = await fetch(`${API_URL}v1/packages/${packageId}`);
       if (!response.ok) return;
 
@@ -207,7 +206,6 @@ function fecharModalEVerResultado() {
   document.getElementById("analyticsDashboard").scrollIntoView({ behavior: "smooth" });
 }
 
-// ✅ ADICIONADO: Camada de renderização visual completa que estava ausente no arquivo anterior
 function plotarDashboardAnalitico(dados) {
   if (!dados) return;
 
