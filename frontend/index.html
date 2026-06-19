@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CrediFácil | Painel IDP de Análise de Crédito</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <div class="brand">
+        <div class="logo">CF</div>
+        <div>
+          <h1>CrediFácil</h1>
+          <p>Crédito com garantia imobiliária • IDP Engine</p>
+        </div>
+      </div>
+      <span class="header-badge">Portal do Analista</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="content-grid" id="uploadSection">
+      <section class="card">
+        <h3>Nova Análise de Lote</h3>
+        <p class="card-description">
+          Selecione os documentos do dossiê do proponente para iniciar a validação cruzada automática.
+        </p>
+
+        <form id="uploadForm">
+          <div class="form-group">
+            <label for="documents">Documentos do Cliente</label>
+            <input
+              type="file"
+              id="documents"
+              accept=".pdf,.png,.jpg,.jpeg,.webp"
+              multiple
+              required
+            />
+            <small>Formatos aceitos: PDF, PNG, JPG, JPEG e WEBP (Máximo 8 arquivos).</small>
+          </div>
+
+          <div id="fileList" class="file-list">
+            Nenhum arquivo selecionado.
+          </div>
+
+          <button type="submit" id="submitButton">
+            Iniciar Processamento Inteligente
+          </button>
+        </form>
+      </section>
+
+      <aside class="card info-card">
+        <h3>Mecanismo Cross-Validation</h3>
+        <p>A esteira processará os arquivos em background e cruzará os seguintes indicadores de mercado:</p>
+        <ul>
+          <li>Consistência Nominal e KYC</li>
+          <li>Saúde Financeira e Renda Bruta</li>
+          <li>Liquidez e Colchão de Amortização</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="card">
+      <h3>Status do Processamento</h3>
+      <div id="statusBox" class="status-box">
+        Aguardando envio dos documentos.
+      </div>
+    </section>
+
+    <section id="analyticsDashboard" class="card" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;">
+        <h3>📊 Relatório Consolidado de Crédito</h3>
+        <span id="badgeModelo" class="header-badge" style="background: #0f172a; color: #fff;">-</span>
+      </div>
+
+      <div class="content-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
+        <div>
+          <p><strong>Proponente Mestre:</strong> <span id="resNome">-</span></p>
+          <p><strong>Documento Identificação:</strong> <span id="resDoc">-</span></p>
+          <p><strong>Renda Bruta Estimada:</strong> <span id="resRenda">-</span></p>
+          <p><strong>Saldo Bancário Fechamento:</strong> <span id="resSaldo">-</span></p>
+        </div>
+        <div style="text-align: center; background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0;">
+          <h4 style="margin: 0 0 8px 0; color: #475569;">Score de Crédito Atribuído</h4>
+          <div id="resScoreValue" style="font-size: 48px; font-weight: bold; color: #2563eb;">0</div>
+          <span id="resRiscoCategoria" style="padding: 6px 16px; border-radius: 999px; font-weight: bold; font-size: 14px;">-</span>
+        </div>
+      </div>
+
+      <div class="status-box" id="resJustificativaBox" style="margin-bottom: 20px; font-weight: 500;">
+        -
+      </div>
+
+      <div class="card" style="background: #f8fafc; box-shadow: none;">
+        <h4>🔍 Checklist de Consistência e Regras de Negócio</h4>
+        <ul style="list-style: none; padding-left: 0; line-height: 2;">
+          <li id="chkNome">⚪ Nome consistente entre todos os documentos</li>
+          <li id="chkNasc">⚪ Data de nascimento consistente</li>
+          <li id="chkId">⚪ Documento de identidade presente</li>
+          <li id="chkRenda">⚪ Comprovante de renda anexado</li>
+          <li id="chkExtrato">⚪ Extrato bancário de liquidez presente</li>
+        </ul>
+      </div>
+
+      <h4>📂 Linhagem Física e Metadados dos Arquivos</h4>
+      <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;">
+          <thead>
+            <tr style="background: #efecf9; color: #334155;">
+              <th style="padding: 10px; border: 1px solid #cbd5e1;">Tipo Arquivo</th>
+              <th style="padding: 10px; border: 1px solid #cbd5e1;">Nome Original</th>
+              <th style="padding: 10px; border: 1px solid #cbd5e1;">Status OCR</th>
+              <th style="padding: 10px; border: 1px solid #cbd5e1;">Confiança</th>
+            </tr>
+          </thead>
+          <tbody id="tableDocsBody">
+            </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>CrediFácil • Análise inteligente de documentos</p>
+  </footer>
+  <div id="successModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-icon">🎉</div>
+      <h3>Análise Concluída com Sucesso!</h3>
+      <p>O dossiê do proponente foi processado pelo motor analítico do Amazon Nova Pro.</p>
+      <div class="modal-meta">
+        <strong>Score Calculado:</strong> <span id="modalScore">-</span>
+      </div>
+      <button onclick="fecharModalEVerResultado()" class="modal-btn">Visualizar Relatório Completo</button>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

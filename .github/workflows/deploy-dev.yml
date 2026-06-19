@@ -55,7 +55,6 @@ jobs:
         env:
           BDA_ID: ${{ secrets.BDA_PROJECT_ID }}
         run: |
-          # 🧠 Prática DevSecOps: Fallbacks automáticos para permitir o primeiro deploy de bootstrap
           BDA_VAL="${BDA_ID:-abee94d532bd}"
 
           sam deploy \
@@ -67,3 +66,10 @@ jobs:
               Environment=dev \
               BdaProjectId="$BDA_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+
+      # 🚀 PASSO DEVSECOPS: Sincronização atômica do Front-End direto para o novo S3 Bucket isolado
+      - name: Sync Front-End Assets to S3 Website
+        run: |
+          echo "Iniciando publicação automática dos arquivos estáticos..."
+          aws s3 sync frontend/ s3://credifacil-idp-grupo12-novo-frontend-dev --delete
+          echo "✅ Front-End atualizado com sucesso no novo endereço estático!"

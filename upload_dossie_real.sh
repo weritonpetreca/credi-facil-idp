@@ -6,11 +6,10 @@
 # 🔑 URL do seu API Gateway
 API_URL="https://zrky80ks0l.execute-api.us-east-1.amazonaws.com/dev/" 
 
-# Lista exata com os 3 arquivos do dossiê real que estão na sua raiz
+# Lista exata com os 2 arquivos do dossiê real que estão na sua raiz
 DOCUMENTOS=(
     "lending_package_check.pdf"
     "lending_package_pay_stub.pdf"
-    "lending_package_w2.pdf"
 )
 
 echo "🔍 [1/4] Verificando integridade dos arquivos locais..."
@@ -20,7 +19,7 @@ for doc in "${DOCUMENTOS[@]}"; do
     fi
 done
 
-echo "📦 [2/4] Solicitando links de upload para o lote de 3 documentos..."
+echo "📦 [2/4] Solicitando links de upload para o lote de 2 documentos..."
 JSON_PAYLOAD=$(printf '%s\n' "${DOCUMENTOS[@]}" | jq -R . | jq -s '{documentos: .}')
 
 RESPONSE=$(curl -s -X POST "${API_URL}v1/packages/upload-urls" \

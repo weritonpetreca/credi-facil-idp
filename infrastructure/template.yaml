@@ -51,6 +51,17 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - "PUT"
+              - "POST"
+              - "GET"
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
       Tags:
         - Key: Criador
           Value: Grupo12
@@ -59,9 +70,48 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "credifacil-docs-saida-${Environment}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - "GET"
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
       Tags:
         - Key: Criador
           Value: Grupo12
+
+  # 🌐 NOVO BUCKET EXCLUSIVO PARA HOSPEDAGEM ESTÁTICA DO SEU FRONT-END
+  CrediFacilFrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "credifacil-idp-grupo12-novo-frontend-${Environment}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      Tags:
+        - Key: Criador
+          Value: Grupo12
+
+  CrediFacilFrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CrediFacilFrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub "arn:aws:s3:::credifacil-idp-grupo12-novo-frontend-${Environment}/*"
 
   # ==========================================================================
   # 🗄️ CAMADA DE ARMAZENAMENTO (Tabelas Isoladas de Domínio)
@@ -126,7 +176,11 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
-      Cors: "'*'"
+      Cors:
+        AllowMethods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
     Tags:
       Criador: Grupo12
 
@@ -206,7 +260,6 @@ Resources:
           Properties:
             Bucket: !Ref BucketEntrada
             Events: s3:ObjectCreated:*
-            # 🚀 CORREÇÃO CRÍTICA: Sintaxe do filtro alinhada com o esquema nativo do SAM
             Filter:
               S3Key:
                 Rules:
@@ -216,7 +269,7 @@ Resources:
       Criador: Grupo12
 
   # ==========================================================================
-  # ⚙️ COMPONENTES INTERNOS DO WORKFLOW
+  # 💡 COMPONENTES INTERNOS DO WORKFLOW
   # ==========================================================================
   BdaInvokerFunction:
     Type: AWS::Serverless::Function
@@ -276,6 +329,7 @@ Resources:
       Environment:
         Variables:
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
+          BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
@@ -369,7 +423,6 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
-      # 🚀 CORREÇÃO CRÍTICA: Bloco de Policies e Tags indentados corretamente para dentro de Properties
       Policies:
         - PolicyName: CrediFacilStateMachinePolicy
           PolicyDocument:
@@ -392,3 +445,7 @@ Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
+
+  FrontendWebsiteUrl:
+    Description: URL Oficial do Novo Site Estatíco do Front-End (Isolado)
+    Value: !GetAtt CrediFacilFrontendBucket.WebsiteURL
