@@ -319,6 +319,23 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  ConfidenceCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.confidence_checker.handler.handler
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - Statement:
+            - Effect: Allow
+              Action: "events:PutEvents"
+              Resource: "*"
+    Tags:
+      Criador: Grupo12
+
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -406,6 +423,7 @@ Resources:
       DefinitionSubstitutions:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
+        ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn

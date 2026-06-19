@@ -33,6 +33,11 @@
       ],
       "Default": "WaitForBDA"
     },
+    "EvaluateConfidence": {
+      "Type": "Task",
+      "Resource": "${ConfidenceCheckerArn}",
+      "Next": "StructureWithNova"
+    },
     "StructureWithNova": {
       "Type": "Task",
       "Resource": "${NovaStructurerArn}",
