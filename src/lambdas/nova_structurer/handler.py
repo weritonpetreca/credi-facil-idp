@@ -11,6 +11,10 @@ bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-pro-v1:0"
 
+# ==========================================================================
+# 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS)
+# ==========================================================================
+
 TEMPLATE_PAYROLL_CHECK = {
     "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
     "payroll_check_number": None, "pay_date": None, "social_security_number": None,
@@ -36,50 +40,127 @@ TEMPLATE_W2_FORM = {
     "employee_address": None, "wages_tips_other_compensation": None, "federal_income_tax_withheld": None,
     "social_security_wages": None, "social_security_tax_withheld": None, "medicare_wages_and_tips": None,
     "medicare_tax_withheld": None, "social_security_tips": None, "allocated_tips": None,
-    "dependent_care_benefits": None, "nonqualified_plans": None, "staturoty employee": None,
-    "retirement plan": None, "third-party_sick_pay": None, "other": None, "state": None,
-    "employer's_state_id_number": None, "state_wages_tips_etc": None, "state_income_tax": None,
-    "local_wages_tips_etc": None, "local_income_tax": None, "locality_name": None, "tax_year": None
+    "dependent_care_benefits": None, "nonqualified_plans": None, 
+    "box12_items": [
+        {
+            "code_a": None, "amount_a": None, "code_b": None, "amount_b": None,
+            "code_c": None, "amount_c": None, "code_d": None, "amount_d": None
+        }
+    ],
+    "staturoty employee": None, "retirement plan": None, "third-party_sick_pay": None, 
+    "other": None, "state": None, "employer's_state_id_number": None, "state_wages_tips_etc": None, 
+    "state_income_tax": None, "local_wages_tips_etc": None, "local_income_tax": None, 
+    "locality_name": None, "tax_year": None
 }
 
 TEMPLATE_PAY_STUB = {
     "document_title": None, "pay_period_ending": None, "pay_date": None, "co.": None,
     "file": None, "dept": None, "clock": None, "number": None, "employer_name": None,
     "employer_address": None, "social_security_number": None, "taxable_marital_status": None,
-    "employee_name": None, "employee_address": None, "gross_pay_this_period": None,
-    "gross_pay_ytd": None, "net_pay_this_period": None
+    "exemptions_or_allowances": [{"federal": None, "state": None, "local": None}],
+    "employee_name": None, "employee_address": None,
+    "earnings": [
+        {"description": "regular", "rate": None, "hours": None, "this_period": None, "year_to_date": None},
+        {"description": "overtime", "rate": None, "hours": None, "this_period": None, "year_to_date": None},
+        {"description": "holiday", "rate": None, "hours": None, "this_period": None, "year_to_date": None},
+        {"description": "tuition", "rate": None, "hours": None, "this_period": None, "year_to_date": None},
+        {"gross_pay": {"this_period": None, "year_to_date": None}}
+    ],
+    "deductions": {
+        "statutory": [
+            {"description": "Federal Income tax", "this_period": None, "year_to_date": None},
+            {"description": "Social Security Tax", "this_period": None, "year_to_date": None},
+            {"description": "Medicare Tax", "this_period": None, "year_to_date": None},
+            {"description": "NY State Income tax", "this_period": None, "year_to_date": None},
+            {"description": "NYC Income tax", "this_period": None, "year_to_date": None},
+            {"description": "NY SUI/SDI tax", "this_period": None, "year_to_date": None}
+        ],
+        "other": [
+            {"description": "Bond", "this_period": None, "year_to_date": None},
+            {"description": "401(k)", "this_period": None, "year_to_date": None},
+            {"description": "Stock Plan", "this_period": None, "year_to_date": None},
+            {"description": "Life Insurance", "this_period": None, "year_to_date": None},
+            {"description": "Loan", "this_period": None, "year_to_date": None}
+        ],
+        "adjustments": [{"description": "Life Insurance", "this_period": None}]
+    },
+    "net_pay": {"this_period": None},
+    "taxable_wages": {
+        "excluded_from_federal_taxable_wages_note": None,
+        "your_federal_taxable_wages_this_period_are": None
+    },
+    "other_benefits_and_information": [
+        {"description": "Group Term life", "this_period": None, "total_to_date": None},
+        {"description": "Loan Amt Paid", "this_period": None, "total_to_date": None},
+        {"description": "Vac Hrs", "this_period": None, "total_to_date": None},
+        {"description": "Sick Hrs", "this_period": None, "total_to_date": None},
+        {"description": "Title", "this_period": "Operator", "total_to_date": None}
+    ],
+    "important_notes": [{"note_text": None}, {"note_text": None}]
 }
 
 TEMPLATE_ACCOUNT_STATEMENT = {
-    "account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None,
-    "statement_period": None, "account_number": None, "account_name": None, "email_address": None,
-    "opening_balance": None, "closing_balance": None
+    "your_details": {
+        "account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None,
+        "statement_period": None, "account_number": None, "account_name": None, "email_address": None
+    },
+    "your_account_balance": {"opening_balance": None, "closing_balance": None},
+    "your_account_valuation": [
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None}
+    ],
+    "account_value": {"value": None, "percentage": None},
+    "your_insurance_details": [
+        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None},
+        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None},
+        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None}
+    ]
 }
 
 TEMPLATE_HOMEOWNERS_INSURANCE = {
     "named_insured": None, "mailing_address": None, "primary_email": None, "primary_phone": None,
-    "insurance_company": None, "insurance_company_address": None, "insured_property_address": None,
-    "policy_number": None, "effective_date": None, "expiration_date": None
+    "alternate_phone": None, "insurance_company": None, "insurance_company_address": None,
+    "insured_property_address": None, "notice_of_insurance_information_practices": None,
+    "notice": None, "policy_number": None, "purchase_date_time": None, "effective_date": None, "expiration_date": None,
+    "primary_applicant": {
+        "name": None, "date_of_birth": None, "gender": None, "marital_status": None,
+        "education_level": None, "existing_policy": None, "drivers_license_number": None,
+        "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None,
+        "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None
+    },
+    "co_applicant": {
+        "name": None, "date_of_birth": None, "gender": None, "marital_status": None,
+        "education_level": None, "relationship_to_primary_applicant": None, "drivers_license_number": None,
+        "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None
+    },
+    "total_auto_claims_accidents_violations_all_applicants": {
+        "number_auto_accidents": {"at_fault": None, "not_at_fault": None},
+        "number_violations": {"major": None, "minor": None},
+        "number_comp_claims": None
+    }
 }
 
 PROMPT_SISTEMA = f"""
-Você é um agente analítico de IDP focado em extração de dados sob conformidade estrita de schemas.
-Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo regras rígidas de mapeamento.
+Você é um agente IDP especialista em extração de dados e conformidade estrita de schemas.
+Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
 
 DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
 1. Classifique o documento em um dos pares de tipo/subtipo aceitos.
-2. No campo 'campos_extraidos_brutos', você DEVE retornar um objeto JSON que possua EXATAMENTE as mesmas chaves do gabarito correspondente abaixo.
-3. NÃO altere o nome das chaves, NÃO remova chaves e NÃO adicione chaves novas. Se um campo do gabarito não for localizado no texto, defina o seu valor estritamente como "str" ou string vazia, mas mantenha a chave presente.
+2. No campo 'campos_extraidos_brutos', você DEVE retornar obrigatoriamente um objeto que possua EXATAMENTE as mesmas chaves e a mesma hierarquia estrutural (aninhamento) do gabarito correspondente abaixo.
+3. NÃO altere o nome das chaves, NÃO mude a hierarquia e NÃO remova chaves. Se um campo do gabarito não for localizado no texto, mantenha a chave preenchendo o valor como null (None).
 
-GABARITOS DE CHAVES POR SUBTIPO DE DOCUMENTO:
-- Se subtipo for 'payroll_check', use exatamente esta estrutura: {json.dumps(TEMPLATE_PAYROLL_CHECK)}
-- Se subtipo for 'driver_license', use exatamente esta estrutura: {json.dumps(TEMPLATE_DRIVER_LICENSE)}
-- Se subtipo for 'w2_tax_form', use exatamente esta estrutura: {json.dumps(TEMPLATE_W2_FORM)}
-- Se subtipo for 'pay_stub', use exactly esta estrutura: {json.dumps(TEMPLATE_PAY_STUB)}
-- Se subtipo for 'account_statement', use exatamente esta estrutura: {json.dumps(TEMPLATE_ACCOUNT_STATEMENT)}
-- Se subtipo for 'homeowners_insurance_application', use exatamente esta estrutura: {json.dumps(TEMPLATE_HOMEOWNERS_INSURANCE)}
+GABARITOS DE COMPLIANCE (Siga estritamente a hierarquia destes blocos):
+- Subtipo 'payroll_check': {json.dumps(TEMPLATE_PAYROLL_CHECK)}
+- Subtipo 'driver_license': {json.dumps(TEMPLATE_DRIVER_LICENSE)}
+- Subtipo 'w2_tax_form': {json.dumps(TEMPLATE_W2_FORM)}
+- Subtipo 'pay_stub': {json.dumps(TEMPLATE_PAY_STUB)}
+- Subtipo 'account_statement': {json.dumps(TEMPLATE_ACCOUNT_STATEMENT)}
+- Subtipo 'homeowners_insurance_application': {json.dumps(TEMPLATE_HOMEOWNERS_INSURANCE)}
 
-Mapeie o nome completo localizado no campo 'nome_titular' em CAIXA ALTA.
+Identifique o nome completo do titular principal no campo 'nome_titular' em CAIXA ALTA.
 """
 
 def extrair_texto_linear(dados: any) -> list:
@@ -105,12 +186,19 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
-    """Monta a estrutura JSON rígida de saída mapeando o padrão solicitado pelo seu grupo."""
-    return {
+    """Monta a estrutura JSON rica e garante o mapeamento posicional correto dos Blueprints."""
+    raw_fields = payload_ia.get("campos_extraidos_brutos", {})
+    
+    # 🚀 ENGENHARIA DE CONTRATO: Intercepta e joga na raiz o bloco paralelo do Homeowners Application
+    total_auto_claims = None
+    if subtipo == "homeowners_insurance_application" and "total_auto_claims_accidents_violations_all_applicants" in raw_fields:
+        total_auto_claims = raw_fields.pop("total_auto_claims_accidents_violations_all_applicants")
+
+    blueprint = {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
         "arquivo_original": arquivo,
-        "dados_extraidos_do_documento": payload_ia.get("campos_extraidos_brutos", {}),
+        "dados_extraidos_do_documento": raw_fields,
         "localizacao_documento_s3": {
             "bucket_origem": s3_inputs["bucket_entrada"],
             "s3_key_origem": s3_inputs["key_entrada"],
@@ -126,6 +214,11 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "observacoes": payload_ia.get("alertas_inconsistencias", [])
         }
     }
+
+    if total_auto_claims:
+        blueprint["total_auto_claims_accidents_violations_all_applicants"] = total_auto_claims
+
+    return blueprint
 
 def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
     timestamp_atual = datetime.utcnow().isoformat() + "Z"
@@ -146,7 +239,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         raw_ia = item["raw_ia"]
         
         tipo = bp["tipo_documento"]
-        subtipo = bp["subtipo_documento"]
         nome_doc = str(raw_ia.get("nome_titular", "")).strip().upper()
         
         if nome_doc and nome_doc not in PLACEHOLDERS:
@@ -272,7 +364,6 @@ def handler(event, context):
         total_input_tokens = 0
         total_output_tokens = 0
 
-        # Processamento atômico e roteamento de arquivos
         for nome_pdf_original, lista_objetos in mapa_documentos.items():
             obj_selecionado = next((o for o in lista_objetos if "custom_output" in o["Key"]), None)
             if not obj_selecionado:
@@ -296,13 +387,13 @@ def handler(event, context):
                 f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
             )
 
-            # Execução de inferência com temperatura travada em determinismo máximo (0.0)
+            # Invocação com temperatura forçada em 0.0 para aderência estrita ao gabarito
             response = bedrock_runtime.converse(
                 modelId=MODEL_ID,
                 messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
                 system=[{"text": PROMPT_SISTEMA}],
                 toolConfig=tool_config,
-                inferenceConfig={"temperature": 0.0, "maxTokens": 3000}
+                inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
             )
 
             usage = response.get("usage", {})
@@ -317,11 +408,10 @@ def handler(event, context):
             achado = tool_use_block.get("input", {})
             if isinstance(achado, str): achado = json.loads(achado)
 
-            # Extração de metadados dinâmicos para a herança estrutural
             tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
-            
-            # Normalização de sub-pastas para casar exatamente com os Blueprints solicitados
             subtipo_detectado = "pay_stub"
+            
+            # Normalização posicional de pastas combinadas com os Blueprints reais do lote
             if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
                 tipo_detectado = "comprovante_renda"
                 subtipo_detectado = "w2_tax_form"
@@ -345,13 +435,10 @@ def handler(event, context):
                 "key_bda": obj_selecionado["Key"]
             }
 
-            # 🚀 CONFORMIDADE COM O CASE A: Geração de arquivo rico padronizado pelo Blueprint do grupo
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-
-            # 🚀 DIRETÓRIOS ESPECÍFICOS POR CATEGORIA NO S3: results/{package_id}/{tipo_documento}/{subtipo_documento}/...
             s3_target_key = f"results/{package_id}/{tipo_detectado}/{subtipo_detectado}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
             
-            logger.info(f"Salvando JSON estruturado no diretório categórico: {s3_target_key}")
+            logger.info(f"Salvando JSON estruturado no diretório categórico estável: {s3_target_key}")
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=s3_target_key,
@@ -361,7 +448,6 @@ def handler(event, context):
 
             intermediarios_coletados.append({"blueprint": blueprint_json, "raw_ia": achado})
 
-        # Geração consolidada do dossiê geral para retrocompatibilidade do front-end
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
 
