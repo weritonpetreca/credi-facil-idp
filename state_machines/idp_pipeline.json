@@ -1,5 +1,5 @@
 {
-  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil",
+  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil com Auditoria Granular",
   "StartAt": "InvokeBDA",
   "States": {
     "InvokeBDA": {
@@ -23,7 +23,7 @@
         {
           "Variable": "$.status",
           "StringEquals": "SUCCESS",
-          "Next": "StructureWithNova"
+          "Next": "EvaluateConfidence"
         },
         {
           "Variable": "$.status",
