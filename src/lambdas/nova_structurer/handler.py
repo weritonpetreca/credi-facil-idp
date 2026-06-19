@@ -25,7 +25,6 @@ TEMPLATE_PAYROLL_CHECK = {
     "security_notice_bottom": None
 }
 
-# 🚀 CORREÇÃO CIRÚRGICA: Mapeamento em inglês idêntico ao seu modeloIDCardDriverLicense.json
 TEMPLATE_DRIVER_LICENSE = {
     "identification_document_type": None, "document_number": None, "full_name": None,
     "date_of_birth": None, "issue_date": None, "expiration_date": None,
@@ -187,13 +186,12 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
+    """Monta a estrutura JSON rica respeitando a integridade dos campos internos."""
     raw_fields = payload_ia.get("campos_extraidos_brutos", {})
     
-    total_auto_claims = None
-    if subtipo == "homeowners_insurance_application" and "total_auto_claims_accidents_violations_all_applicants" in raw_fields:
-        total_auto_claims = raw_fields.pop("total_auto_claims_accidents_violations_all_applicants")
-
-    blueprint = {
+    # 🚀 FIX CIRÚRGICO: Mantém 'total_auto_claims_accidents_violations_all_applicants' 
+    # intocado dentro de 'dados_extraidos_do_documento', evitando o vazamento para a raiz.
+    return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
         "arquivo_original": arquivo,
@@ -213,11 +211,6 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "observacoes": payload_ia.get("alertas_inconsistencias", [])
         }
     }
-
-    if total_auto_claims:
-        blueprint["total_auto_claims_accidents_violations_all_applicants"] = total_auto_claims
-
-    return blueprint
 
 def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
     timestamp_atual = datetime.utcnow().isoformat() + "Z"
@@ -248,7 +241,6 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         campos = bp["dados_extraidos_do_documento"]
         confianca_num = float(bp["confiabilidade_extracao"]["confianca_media"])
 
-        # 🚀 SINCRONISMO: Lê as chaves em inglês atualizadas para montar a herança do CRM
         if tipo == "documento_identificacao":
             presenca["identificacao"] = True
             documentos_identificacao.append({
@@ -434,11 +426,9 @@ def handler(event, context):
             }
 
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-            
-            # 🚀 AJUSTE MESTRE S3: Diretório agrupado globalmente por Tipo -> Subtipo -> ID da Solicitação
             s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
             
-            logger.info(f"Salvando JSON no novo caminho global agrupado: {s3_target_key}")
+            logger.info(f"Salvando JSON no caminho global agrupado estável: {s3_target_key}")
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=s3_target_key,
