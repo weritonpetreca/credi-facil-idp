@@ -12,7 +12,7 @@ bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 MODEL_ID = "amazon.nova-pro-v1:0"
 
 # ==========================================================================
-# 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS)
+# 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS EM INGLÊS)
 # ==========================================================================
 
 TEMPLATE_PAYROLL_CHECK = {
@@ -25,12 +25,13 @@ TEMPLATE_PAYROLL_CHECK = {
     "security_notice_bottom": None
 }
 
+# 🚀 CORREÇÃO CIRÚRGICA: Mapeamento em inglês idêntico ao seu modeloIDCardDriverLicense.json
 TEMPLATE_DRIVER_LICENSE = {
-    "tipo_documento_identificacao": None, "numero_documento": None, "nome": None,
-    "data_nascimento": None, "data_emissao": None, "data_validade": None,
-    "orgao_emissor": None, "estado_emissor": None, "pais_emissor": None,
-    "endereco": None, "classe": None, "restricoes": None, "endorsements": None,
-    "sexo": None, "altura": None, "olhos": None
+    "identification_document_type": None, "document_number": None, "full_name": None,
+    "date_of_birth": None, "issue_date": None, "expiration_date": None,
+    "issuing_authority": None, "issuing_state": None, "issuing_country": None,
+    "address": None, "license_class": None, "restrictions": None, "endorsements": None,
+    "sex": None, "height": None, "eye_color": None
 }
 
 TEMPLATE_W2_FORM = {
@@ -186,10 +187,8 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
-    """Monta a estrutura JSON rica e garante o mapeamento posicional correto dos Blueprints."""
     raw_fields = payload_ia.get("campos_extraidos_brutos", {})
     
-    # 🚀 ENGENHARIA DE CONTRATO: Intercepta e joga na raiz o bloco paralelo do Homeowners Application
     total_auto_claims = None
     if subtipo == "homeowners_insurance_application" and "total_auto_claims_accidents_violations_all_applicants" in raw_fields:
         total_auto_claims = raw_fields.pop("total_auto_claims_accidents_violations_all_applicants")
@@ -249,16 +248,17 @@ def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metri
         campos = bp["dados_extraidos_do_documento"]
         confianca_num = float(bp["confiabilidade_extracao"]["confianca_media"])
 
+        # 🚀 SINCRONISMO: Lê as chaves em inglês atualizadas para montar a herança do CRM
         if tipo == "documento_identificacao":
             presenca["identificacao"] = True
             documentos_identificacao.append({
-                "tipo_documento": campos.get("tipo_documento_identificacao") or "Outro",
-                "numero_documento": raw_ia.get("numero_documento_identificacao"),
-                "orgao_emissor": campos.get("orgao_emissor") or "Não Informado",
-                "estado_emissor": campos.get("estado_emissor") or "Não Informado",
-                "pais_emissor": campos.get("pais_emissor") or "Não Informado",
-                "data_emissao": campos.get("data_emissao"),
-                "data_validade": campos.get("data_validade"),
+                "tipo_documento": campos.get("identification_document_type") or "Outro",
+                "numero_documento": campos.get("document_number") or raw_ia.get("numero_documento_identificacao"),
+                "orgao_emissor": campos.get("issuing_authority") or "Não Informado",
+                "estado_emissor": campos.get("issuing_state") or "Não Informado",
+                "pais_emissor": campos.get("issuing_country") or "Não Informado",
+                "data_emissao": campos.get("issue_date"),
+                "data_validade": campos.get("expiration_date"),
                 "arquivo_origem": bp["arquivo_original"]
             })
         elif tipo == "comprovante_renda":
@@ -387,7 +387,6 @@ def handler(event, context):
                 f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
             )
 
-            # Invocação com temperatura forçada em 0.0 para aderência estrita ao gabarito
             response = bedrock_runtime.converse(
                 modelId=MODEL_ID,
                 messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
@@ -411,7 +410,6 @@ def handler(event, context):
             tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
             subtipo_detectado = "pay_stub"
             
-            # Normalização posicional de pastas combinadas com os Blueprints reais do lote
             if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
                 tipo_detectado = "comprovante_renda"
                 subtipo_detectado = "w2_tax_form"
@@ -436,9 +434,11 @@ def handler(event, context):
             }
 
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-            s3_target_key = f"results/{package_id}/{tipo_detectado}/{subtipo_detectado}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
             
-            logger.info(f"Salvando JSON estruturado no diretório categórico estável: {s3_target_key}")
+            # 🚀 AJUSTE MESTRE S3: Diretório agrupado globalmente por Tipo -> Subtipo -> ID da Solicitação
+            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
+            
+            logger.info(f"Salvando JSON no novo caminho global agrupado: {s3_target_key}")
             s3_client.put_object(
                 Bucket=bucket_saida,
                 Key=s3_target_key,
