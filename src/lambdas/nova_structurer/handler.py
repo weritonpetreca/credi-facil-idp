@@ -396,9 +396,9 @@ def handler(event, context):
         json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
 
         if not execute_score:
-            logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/{package_id}/output.json")
+            logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/packages/{package_id}/output.json")
             s3_client.put_object(
-                Bucket=bucket_saida, Key=f"results/{package_id}/output.json",
+                Bucket=bucket_saida, Key=f"results/packages/{package_id}/output.json",
                 Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
             )
         else:

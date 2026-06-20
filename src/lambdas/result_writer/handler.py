@@ -43,7 +43,7 @@ def handler(event, context):
         if execute_score:
             s3_key_final = f"results/clientes/{package_id}/customer_consolidated.json"
         else:
-            s3_key_final = f"results/{package_id}/output.json"
+            s3_key_final = f"results/packages/{package_id}/output.json"
         
         try:
             confianca_lote = str(float(event.get("confianca_geral", 1.0)))
@@ -156,7 +156,7 @@ def handler(event, context):
                     "classificacao_risco": {"S": str(risco_individuo).upper() + "_RISK" if risco_individuo in ["baixo", "medio", "alto"] else "UNKNOWN_RISK"},
                     "justificativa_analise": {"S": justificativa_individuo},
                     "renda_bruta_estimada": {"N": str(renda_maxima_promovida)},
-                    "saldo_bancario_fechamento": {"N": str(saldo_maxido_promovido)},
+                    "saldo_bancario_fechamento": {"N": str(saldo_maximo_promovido)},
                     "documentos_indexados_ledger": {"S": json.dumps(ledger_documentos_enxuto, ensure_ascii=False)},
                     "ultimo_package_vinculado": {"S": package_id},
                     "data_ultima_atualizacao": {"S": timestamp_atual}

@@ -21,7 +21,7 @@ def handler(event, context):
         # Fallback de segurança caso a memória venha limpa por concorrência externa
         if not json_base_lote:
             logger.warning("Linha de base não localizada em memória. Recorrendo ao S3...")
-            key_base = f"results/{package_id}/output.json"
+            key_base = f"results/packages/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
