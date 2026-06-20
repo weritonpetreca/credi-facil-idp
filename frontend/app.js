@@ -140,7 +140,13 @@ function fecharModalEVerResultado() {
 function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   if (!dados) return;
 
-  const scoreSection = document.getElementById("scoreConsolidatedSection");
+  // 🎯 CORREÇÃO CIRÚRGICA: Alterado de scoreConsolidatedSection para scoreConsolidadoSection para bater com o seu HTML
+  const scoreSection = document.getElementById("scoreConsolidadoSection");
+  
+  if (!scoreSection) {
+    console.error("Elemento 'scoreConsolidadoSection' não foi encontrado no HTML DOM.");
+    return;
+  }
   
   if (deveCalcularScore && dados.cliente) {
     scoreSection.style.display = "block";
@@ -156,7 +162,7 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     const scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
     const riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
     
-    // 🎯 INJEÇÃO DO COMPONENTE INTERRROGAÇÃO EXPLICATIVA (Mata as dúvidas do Scorecard)
+    // 🎯 INJEÇÃO DO COMPONENTE INTERROGATÓRIO EXPLICATIVA (Mata as dúvidas do Scorecard)
     const scoreValueContainer = document.getElementById("resScoreValue");
     scoreValueContainer.innerHTML = `${scoreVal} <span id="helpScoreTrigger" style="cursor: pointer; font-size: 16px; margin-left: 8px; color: #3b82f6; border: 1px solid #3b82f6; border-radius: 50%; padding: 0px 6px; display: inline-block; font-weight: bold;" title="Clique para ver a regra de cálculo">?</span>`;
     
