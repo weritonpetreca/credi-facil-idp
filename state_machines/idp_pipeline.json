@@ -42,7 +42,7 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${NovaStructurerFunctionArn}",
+        "FunctionName": "${NovaStructurerArn}",
         "Payload.$": "$"
       },
       "ResultSelector": {
@@ -68,7 +68,7 @@
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-              "FunctionName": "${ExcelGeneratorFunctionArn}",
+              "FunctionName": "${ExcelGeneratorArn}",
               "Payload.$": "$"
             },
             "End": true
