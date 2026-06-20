@@ -337,6 +337,15 @@ button:disabled {
   background: #1d4ed8;
 }
 
+/* Custom checkbox wrapper layout */
+.form-group input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
