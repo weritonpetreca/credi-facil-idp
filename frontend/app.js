@@ -140,7 +140,6 @@ function fecharModalEVerResultado() {
 function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   if (!dados) return;
 
-  // 🎯 CORREÇÃO CIRÚRGICA: Alterado de scoreConsolidatedSection para scoreConsolidadoSection para bater com o seu HTML
   const scoreSection = document.getElementById("scoreConsolidadoSection");
   
   if (!scoreSection) {
@@ -155,22 +154,19 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     document.getElementById("resDoc").textContent = dados.cliente.documento_identificacao || "Não Informado";
     document.getElementById("badgeModelo").textContent = dados.sistema?.processamento?.modelo_utilizado || "Amazon Nova Pro";
     
-    const docs = dados.documentos_analisados || [];
-    document.getElementById("resRenda").textContent = `US$ ${calcularMaiorValorCampo(docs, ['amount_numeric', 'Gross Pay', 'wages_tips_other_compensation']).toFixed(2)}`;
-    document.getElementById("resSaldo").textContent = `US$ ${calcularMaiorValorCampo(docs, ['saldo_bancario_fechamento', 'closing_balance', 'balance']).toFixed(2)}`;
+    const docsOriginal = dados.documentos_analisados || [];
+    document.getElementById("resRenda").textContent = `US$ ${calcularMaiorValorCampo(docsOriginal, ['amount_numeric', 'Gross Pay', 'wages_tips_other_compensation']).toFixed(2)}`;
+    document.getElementById("resSaldo").textContent = `US$ ${calcularMaiorValorCampo(docsOriginal, ['saldo_bancario_fechamento', 'closing_balance', 'balance']).toFixed(2)}`;
     
     const scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
     const riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
     
-    // 🎯 INJEÇÃO DO COMPONENTE INTERROGATÓRIO EXPLICATIVA (Mata as dúvidas do Scorecard)
     const scoreValueContainer = document.getElementById("resScoreValue");
     scoreValueContainer.innerHTML = `${scoreVal} <span id="helpScoreTrigger" style="cursor: pointer; font-size: 16px; margin-left: 8px; color: #3b82f6; border: 1px solid #3b82f6; border-radius: 50%; padding: 0px 6px; display: inline-block; font-weight: bold;" title="Clique para ver a regra de cálculo">?</span>`;
     
-    // Remove painel antigo se houver re-polling para não duplicar elementos na tela
     const painelAntigo = document.getElementById("scoreExplainPanel");
     if (painelAntigo) painelAntigo.remove();
 
-    // Cria o painel retrátil dinamicamente com estilo amigável corporativo
     const explainPanel = document.createElement("div");
     explainPanel.id = "scoreExplainPanel";
     explainPanel.style.display = "none";
@@ -196,10 +192,8 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
       <p style="margin-top: 5px; font-weight: 500; color: #0f172a;"><em>Fórmula: Pontuação Base (300) + Pontos KYC + Pontos Renda + Pontos Liquidez = Score Final (Máx 1000).</em></p>
     `;
     
-    // Injeta o painel explicativo logo abaixo da div de score
     scoreValueContainer.parentNode.appendChild(explainPanel);
 
-    // Eventos dinâmicos para abrir e recolher o painel explicativo de crédito
     document.getElementById("helpScoreTrigger").addEventListener("click", () => {
       explainPanel.style.display = explainPanel.style.display === "none" ? "block" : "none";
     });
@@ -234,7 +228,30 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   const tableBody = document.getElementById("tableDocsBody");
   tableBody.innerHTML = "";
   
-  const docs = dados.documentos_analisados || [];
+  // 🚀 MODELO ADITIVO: Cria uma cópia local e injeta o Documento Consolidado se o score foi gerado
+  let docs = [...(dados.documentos_analisados || [])];
+  if (deveCalcularScore && dados.cliente) {
+    docs.push({
+      tipo_documento: "CONSOLIDADO_CLIENTE",
+      arquivo_original: "customer_consolidated.json",
+      status_extracao: "sucesso",
+      confianca_media: 1.0,
+      s3_url_final: dados.s3_url_consolidado, // Consome a URL assinada mestre do backend
+      campos_extraidos: {
+        nome_completo_proponente: dados.cliente.nome,
+        documento_identificacao: dados.cliente.documento_identificacao,
+        score_atribuido: scoreVal,
+        classificacao_risco: riscoCat.toUpperCase(),
+        justificativa_analise: dados.cliente.classificacao_risco?.justificativa || "",
+        validacao_nome: dados.validacao?.nome_consistente_entre_documentos ? "CONSISTENTE" : "DIVERGENTE",
+        validacao_nascimento: dados.validacao?.data_nascimento_consistente ? "CONSISTENTE" : "DIVERGENTE",
+        presenca_identidade: dados.validacao?.documento_identificacao_presente ? "PRESENTE" : "AUSENTE",
+        presenca_renda: dados.validacao?.comprovante_renda_presente ? "PRESENTE" : "AUSENTE",
+        presenca_extrato: dados.validacao?.extrato_bancario_presente ? "PRESENTE" : "AUSENTE"
+      }
+    });
+  }
+
   docs.forEach((d, index) => {
     const row = document.createElement("tr");
     const s3UrlJson = d.s3_url_final || `https://${outputBucket || 'credifacil-docs-saida-dev'}.s3.amazonaws.com/${d.s3_key_resultado}`;
