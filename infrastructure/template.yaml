@@ -1,3 +1,11 @@
+# ==========================================================================
+# 🛠️ CAMADA DE INFRAESTRUTURA COMO CÓDIGO (AWS SAM TEMPLATE) - REVISADA
+# ==========================================================================
+# Projeto: CrediFácil IDP Engine
+# Padrão Arquitetural: Smart Writer Pattern & Desacoplamento SOLID (S.R.P)
+# Versão: 2026.06.19_Final
+# ==========================================================================
+
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
@@ -83,7 +91,6 @@ Resources:
         - Key: Criador
           Value: Grupo12
 
-  # 🌐 NOVO BUCKET EXCLUSIVO PARA HOSPEDAGEM ESTÁTICA DO SEU FRONT-END
   CrediFacilFrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -168,6 +175,73 @@ Resources:
       Tags:
         - Key: Criador
           Value: Grupo12
+
+  # ==========================================================================
+  # 🌐 INFRAESTRUTURA ORIENTADA A EVENTOS (EVENTBRIDGE & SQS)
+  # ==========================================================================
+  CrediFacilEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "credifacil-idp-bus-${Environment}"
+
+  CrediFacilReviewDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "credifacil-human-review-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600 
+
+  CrediFacilReviewQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "credifacil-human-review-queue-${Environment}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CrediFacilReviewDLQ.Arn
+        maxReceiveCount: 3 
+
+  CrediFacilDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alerta ativo de mensagens retidas na DLQ de Revisão Humana do CrediFácil"
+      Namespace: "AWS/SQS"
+      MetricName: "ApproximateNumberOfMessagesVisible"
+      Dimensions:
+        - Name: "QueueName"
+          Value: !GetAtt CrediFacilReviewDLQ.QueueName
+      Statistic: "Sum"
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      AlarmActions:
+        - !Ref SnsTopicoErros
+
+  LowConfidenceRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "credifacil-low-confidence-rule-${Environment}"
+      EventBusName: !Ref CrediFacilEventBus
+      EventPattern:
+        source:
+          - "credifacil.idp"
+        detail-type:
+          - "LowConfidenceFieldsDetected"
+      Targets:
+        - Arn: !GetAtt CrediFacilReviewQueue.Arn
+          Id: "ReviewQueueTarget"
+
+  QueuePolicyForEventBridge:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref CrediFacilReviewQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt CrediFacilReviewQueue.Arn
 
   # ==========================================================================
   # 🌐 CAMADA DE EXPOSIÇÃO DA API REST
@@ -319,6 +393,26 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  ConfidenceCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.confidence_checker.handler.handler
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref CrediFacilEventBus
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+        - Statement:
+            - Effect: Allow
+              Action: "events:PutEvents"
+              Resource: !GetAtt CrediFacilEventBus.Arn
+    Tags:
+      Criador: Grupo12
+
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -333,9 +427,50 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        # 🚀 AJUSTE ADICIONADO: Concede permissão de leitura para que possa consultar a flag execute_score de forma segura assíncrona
+        - DynamoDBReadPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
+              Action: "bedrock:InvokeModel"
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
+    Tags:
+      Criador: Grupo12
+
+  ExcelGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub credifacil-excel-generator-${Environment}
+      CodeUri: ../
+      Handler: src.lambdas.excel_generator.handler.handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          ENV: !Ref Environment
+          DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
+          BUCKET_SAIDA: !Ref BucketSaida
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref BucketSaida
+        - S3WritePolicy:
+            BucketName: !Ref BucketSaida
+      Tags:
+        Criador: Grupo12
+        Environment: !Ref Environment
+
+  CustomerConsolidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.customer_consolidator.handler.handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - Statement:
+            - Effect: Allow
               Action: "bedrock:InvokeModel"
               Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
     Tags:
@@ -406,7 +541,10 @@ Resources:
       DefinitionSubstitutions:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
+        ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        ExcelGeneratorArn: !GetAtt ExcelGeneratorFunction.Arn
+        CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
     Tags:
@@ -434,7 +572,10 @@ Resources:
                 Resource:
                   - !GetAtt BdaInvokerFunction.Arn
                   - !GetAtt BdaStatusPollerFunction.Arn
+                  - !GetAtt ConfidenceCheckerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt ExcelGeneratorFunction.Arn
+                  - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
       Tags:
