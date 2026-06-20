@@ -75,6 +75,19 @@ def handler(event, context):
                 except Exception as mestre_url_err:
                     logger.warning(f"Não foi possível assinar a URL mestre do lote: {str(mestre_url_err)}")
                 
+                # 🎯 COMPONENTE ADICIONADO: Se for um fluxo com score, gera a assinatura para a planilha executiva mestre (.xlsx)
+                if "clientes" in s3_key:
+                    s3_key_excel_mestre = f"results/planilhas/{package_id}/excel_metadados_customer_consolidated.xlsx"
+                    try:
+                        presigned_url_excel_mestre = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': BUCKET_SAIDA, 'Key': s3_key_excel_mestre},
+                            ExpiresIn=300
+                        )
+                        dados_extraidos["s3_url_excel_consolidado"] = presigned_url_excel_mestre
+                    except Exception as mestre_excel_err:
+                        logger.warning(f"Não foi possível assinar o Excel consolidado mestre: {str(mestre_excel_err)}")
+
                 # ==========================================================================
                 # 🔒 GERAÇÃO DE PRE-SIGNED URLS INDIVIDUAIS (Mata o erro 403 do S3)
                 # ==========================================================================
@@ -103,6 +116,7 @@ def handler(event, context):
                             logger.warning(f"Não foi possível assinar as URLs para o arquivo {orig_file}: {str(url_err)}")
                             doc["s3_url_final"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_res}"
                             doc["s3_url_excel"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_excel}"
+                            
                 resposta_base["dados_extraidos"] = dados_extraidos
                 
             except ClientError as s3_err:

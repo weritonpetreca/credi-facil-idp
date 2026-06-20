@@ -240,6 +240,7 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
       status_extracao: "sucesso",
       confianca_media: 1.0,
       s3_url_final: dados.s3_url_consolidado,
+      s3_url_excel: dados.s3_url_excel_consolidado,
       campos_extraidos: {
         nome_completo_proponente: dados.cliente.nome,
         documento_identificacao: dados.cliente.documento_identificacao,

@@ -91,7 +91,30 @@
     },
     "ConsolidateCustomer": {
       "Type": "Task",
-      "Resource": "${CustomerConsolidatorArn}",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CustomerConsolidatorArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "GenerateConsolidatedExcel"
+    },
+    "GenerateConsolidatedExcel": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ExcelGeneratorArn}",
+        "Payload": {
+          "package_id.$": "$.package_id",
+          "bda_output_bucket.$": "$.bda_output_bucket",
+          "arquivo_original": "customer_consolidated.pdf",
+          "s3_key_resultado.$": "States.Format('results/clientes/{}/customer_consolidated.json', $.package_id)"
+        }
+      },
+      "ResultPath": "$.consolidated_excel_result",
       "Next": "WriteResult"
     },
     "WriteResult": {
