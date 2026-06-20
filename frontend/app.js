@@ -146,6 +146,10 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     console.error("Elemento 'scoreConsolidadoSection' não foi encontrado no HTML DOM.");
     return;
   }
+
+  // 🚀 ESCOPO ELEVADO: Declara as variáveis no topo para estarem disponíveis em toda a função
+  let scoreVal = 0;
+  let riscoCat = "INCONCLUSIVO";
   
   if (deveCalcularScore && dados.cliente) {
     scoreSection.style.display = "block";
@@ -158,8 +162,8 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     document.getElementById("resRenda").textContent = `US$ ${calcularMaiorValorCampo(docsOriginal, ['amount_numeric', 'Gross Pay', 'wages_tips_other_compensation']).toFixed(2)}`;
     document.getElementById("resSaldo").textContent = `US$ ${calcularMaiorValorCampo(docsOriginal, ['saldo_bancario_fechamento', 'closing_balance', 'balance']).toFixed(2)}`;
     
-    const scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
-    const riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
+    scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
+    riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
     
     const scoreValueContainer = document.getElementById("resScoreValue");
     scoreValueContainer.innerHTML = `${scoreVal} <span id="helpScoreTrigger" style="cursor: pointer; font-size: 16px; margin-left: 8px; color: #3b82f6; border: 1px solid #3b82f6; border-radius: 50%; padding: 0px 6px; display: inline-block; font-weight: bold;" title="Clique para ver a regra de cálculo">?</span>`;
@@ -228,7 +232,6 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   const tableBody = document.getElementById("tableDocsBody");
   tableBody.innerHTML = "";
   
-  // 🚀 MODELO ADITIVO: Cria uma cópia local e injeta o Documento Consolidado se o score foi gerado
   let docs = [...(dados.documentos_analisados || [])];
   if (deveCalcularScore && dados.cliente) {
     docs.push({
@@ -236,7 +239,7 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
       arquivo_original: "customer_consolidated.json",
       status_extracao: "sucesso",
       confianca_media: 1.0,
-      s3_url_final: dados.s3_url_consolidado, // Consome a URL assinada mestre do backend
+      s3_url_final: dados.s3_url_consolidado,
       campos_extraidos: {
         nome_completo_proponente: dados.cliente.nome,
         documento_identificacao: dados.cliente.documento_identificacao,
