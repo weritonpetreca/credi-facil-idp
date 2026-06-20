@@ -29,8 +29,9 @@ TEMPLATE_DRIVER_LICENSE = {
     "identification_document_type": None, "document_number": None, "full_name": None,
     "date_of_birth": None, "issue_date": None, "expiration_date": None,
     "issuing_authority": None, "issuing_state": None, "issuing_country": None,
-    "address": None, "license_class": None, "restrictions": None, "endorsements": None,
-    "sex": None, "height": None, "eye_color": None
+    "address": None, "class": None, "restrictions": None, "endorsements": None,
+    "sex": None, "height": None, "eye_color": None, "document_discriminator": None,
+    "revision_date": None, "security_ghost_dob": None
 }
 
 TEMPLATE_W2_FORM = {
@@ -154,6 +155,7 @@ DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
 4. Datas (effective_date, expiration_date, date_of_birth): Devem seguir estritamente formatos válidos de data (ex: MM/DD/YYYY ou YYYY-MM-DD). Se contiver apenas letras ou caracteres especiais aleatórios, force para null.
 5. Números de Apólice/Documento (policy_number, document_number): Não podem conter apenas caracteres especiais repetidos (ex: %()*, ###). Devem possuir caracteres alfanuméricos válidos.
 6. Valores Financeiros (wages, amounts): Devem conter números e pontuações monetárias coerentes. Textos corrompidos devem ser anulados.
+7. Classe da Habilitação (chave 'class'): Remova qualquer prefixo como 'CLASS', 'CLASSE' ou numerais extras gerados por tabelas de OCR. O valor deve ser estritamente restrito a letras isoladas ou combinações oficiais de categorias de condução (Exemplos válidos: 'D', 'B', 'A', 'E', 'C'). Se o valor visual não for uma letra limpa, force para null.
 
 ⚠️ REGRA ESTRITA ANTI-ALUCINAÇÃO DE COMPACTAÇÃO:
 Se você identificar valores na transcrição original contendo ruídos visuais puros, strings corrompidas ou falhas de leitura de fontes (Exemplos: '&()*', 'SPSESS', '##88%', '#8SS UHila'), ignore esses caracteres completamente. Nunca repasse esses símbolos para o JSON final; marque o campo estritamente como null.
