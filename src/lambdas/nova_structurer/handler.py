@@ -382,7 +382,7 @@ def handler(event, context):
         return {
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
-            "execute_score": event.get("execute_score", True),
+            "execute_score": event.get("execute_score", False),
             "bda_output_bucket": bucket_saida,
             "confianca_geral": round(1.0, 2),
             "json_estruturado": json_base_lote

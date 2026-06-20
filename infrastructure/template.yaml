@@ -438,6 +438,10 @@ Resources:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
+        - Statement:
+            - Effect: Allow
+              Action: "bedrock:InvokeModel"
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
     Tags:
       Criador: Grupo12
 
