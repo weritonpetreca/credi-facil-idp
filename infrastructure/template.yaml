@@ -445,8 +445,6 @@ Resources:
       CodeUri: ../
       Handler: src.lambdas.excel_generator.handler.handler
       Runtime: python3.12
-      Layers:
-        - !Ref CrediFacilDependenciesLayer
       Timeout: 30
       MemorySize: 256
       Environment:
