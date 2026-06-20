@@ -360,13 +360,14 @@ def handler(event, context):
                 tipo_detectado = "documento_identificacao"
                 subtipo_detectado = "driver_license"
 
+            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
+            
             s3_meta_inputs = {
                 "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
                 "bucket_saida": bucket_saida, "key_bda": obj_selecionado["Key"], "key_resultado": s3_target_key
             }
 
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
             
             logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
             s3_client.put_object(
