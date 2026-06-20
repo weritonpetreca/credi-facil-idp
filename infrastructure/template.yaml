@@ -177,10 +177,36 @@ Resources:
     Properties:
       Name: !Sub "credifacil-idp-bus-${Environment}"
 
+  CrediFacilReviewDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "credifacil-human-review-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600 # 14 dias guardado para análise DevSecOps profunda
+
   CrediFacilReviewQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "credifacil-human-review-queue-${Environment}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CrediFacilReviewDLQ.Arn
+        maxReceiveCount: 3 # Se a Lambda falhar/rejeitar 3 vezes, isola na DLQ
+
+  CrediFacilDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alerta ativo de mensagens retidas na DLQ de Revisão Humana do CrediFácil"
+      Namespace: "AWS/SQS"
+      MetricName: "ApproximateNumberOfMessagesVisible"
+      Dimensions:
+        - Name: "QueueName"
+          Value: !GetAtt CrediFacilReviewDLQ.QueueName
+      Statistic: "Sum"
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: "GreaterThanOrEqualToThreshold"
+      AlarmActions:
+        - !Ref SnsTopicoErros
 
   LowConfidenceRule:
     Type: AWS::Events::Rule
