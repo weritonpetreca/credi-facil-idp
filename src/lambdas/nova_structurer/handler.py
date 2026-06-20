@@ -8,8 +8,11 @@ from src.shared.tools import obter_especificacao_ferramenta_loan
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+# 🚀 FONTE DA VERDADE: Inicializa o client do DynamoDB para recuperar a flag perdida
+db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-pro-v1:0"
+TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
 # ==========================================================================
 # 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS EM INGLÊS)
@@ -154,7 +157,7 @@ DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
 3. NÃO altere o nome das chaves, NÃO mude a hierarquia e NÃO remova chaves. Se um campo do gabarito não for localizado no texto, mantenha a chave preenchendo o valor como null (None).
 4. Datas (effective_date, expiration_date, date_of_birth): Devem seguir estritamente formatos válidos de data (ex: MM/DD/YYYY ou YYYY-MM-DD). Se contiver apenas letras ou caracteres especiais aleatórios, force para null.
 5. Números de Apólice/Documento (policy_number, document_number): Não podem conter apenas caracteres especiais repetidos (ex: %()*, ###). Devem possuir caracteres alfanuméricos válidos.
-6. Valores Financeiros (wages, amounts): Devem conter números e pontuações monetárias coerentes. Textos corrompidos devem ser anulados.
+6. Valores Financeiros (wages, amounts): Devem conter números e pontuações monetárias coerentes. Textos corrompidos devem ser engenhosamente anulados.
 7. Classe da Habilitação (chave 'class'): Remova qualquer prefixo como 'CLASS', 'CLASSE' ou numerais extras gerados por tabelas de OCR. O valor deve ser estritamente restrito a letras isoladas ou combinações oficiais de categorias de condução (Exemplos válidos: 'D', 'B', 'A', 'E', 'C'). Se o valor visual não for uma letra limpa, force para null.
 
 ⚠️ REGRA ESTRITA ANTI-ALUCINAÇÃO DE COMPACTAÇÃO:
@@ -172,7 +175,6 @@ Identifique o nome completo do titular principal no campo 'nome_titular' em CAIX
 """
 
 def extrair_texto_linear(dados: any) -> list:
-    """Realiza a varredura linear recursiva extraindo blocos de texto puros."""
     textos = []
     if isinstance(dados, dict):
         for k, v in dados.items():
@@ -184,7 +186,6 @@ def extrair_texto_linear(dados: any) -> list:
     return textos
 
 def limpar_ruido_recursivo(dados: any) -> any:
-    """Remove coordenadas espaciais e metadados geométricos poluidores do payload."""
     CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
     if isinstance(dados, dict):
         return {k: limpar_ruido_recursivo(v) for k, v in dados.items() if k not in CHAVES_INUTEIS}
@@ -193,7 +194,6 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
-    """Modela a carga de dados extraída no formato oficial do blueprint regulatório."""
     raw_fields = payload_ia.get("campos_extraidos_brutos", {})
     return {
         "tipo_documento": tipo.lower(),
@@ -218,7 +218,6 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
     }
 
 def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
-    """Inicializa o arquivo de linhagem física do lote sem misturar entidades de score ou dados de clientes."""
     timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     documentos_analisados = []
     presenca = {"identificacao": False, "renda": False, "extrato": False, "imovel": False}
@@ -269,7 +268,6 @@ def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metri
     }
 
 def handler(event, context):
-    """Handler AWS Lambda encarregado estritamente do isolamento sintático de documentos."""
     try:
         package_id = event.get("package_id")
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
@@ -277,6 +275,23 @@ def handler(event, context):
         prefix_busca = f"bda-output/{package_id}/"
 
         logger.info(f"Iniciando segmentação analítica pura de documentos para o lote {package_id}")
+
+        # 🚀 SOLUÇÃO DO CONTRATO: Busca a real intenção diretamente na fonte de dados persistida
+        execute_score = False
+        try:
+            db_res = db_client.get_item(
+                TableName=TABLE_NAME,
+                Key={
+                    "PK": {"S": package_id},
+                    "SK": {"S": "METADATA"}
+                }
+            )
+            item_db = db_res.get("Item", {})
+            execute_score = item_db.get("execute_score", {}).get("BOOL", False)
+            logger.info(f"Sincronização offline realizada. Flag execute_score recuperada do banco: {execute_score}")
+        except Exception as db_err:
+            logger.warning(f"Falha de barreira ao ler DynamoDB, recorrendo ao payload: {str(db_err)}")
+            execute_score = event.get("execute_score", False)
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -380,19 +395,17 @@ def handler(event, context):
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
 
-        # Escreve a linha de base física limpa no S3 para o ResultWriter ou Consolidator consumir
         s3_client.put_object(
             Bucket=bucket_saida, Key=f"results/{package_id}/output.json",
             Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
         )
 
-        # Acopla a intenção original do checkbox ('execute_score') no payload para o Choice State ler
         return {
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
-            "execute_score": event.get("execute_score", False),
+            "execute_score": execute_score,  # 🎯 AGORA VAI PREENCHIDO COM A VERDADE DO BANCO!
             "bda_output_bucket": bucket_saida,
-            "confianca_geral": round(1.0, 2),
+            "confianca_general": round(1.0, 2),
             "json_estruturado": json_base_lote
         }
 
