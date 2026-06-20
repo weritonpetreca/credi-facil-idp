@@ -61,7 +61,6 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> int
     elif saldo_maximo >= 5000.0: score_calculado += 100
     else: score_calculado += 0
 
-    # Força limitadores do teto de mercado (FICO standard)
     return min(1000, max(300, score_calculado))
 
 def handler(event, context):
@@ -82,6 +81,7 @@ def handler(event, context):
         docs_analisados = json_base_lote.get("documentos_analisados", [])
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
+        # 🎯 AJUSTE DE DIRETRIZ: Introduzido critérios estritos de negação por ausência de dados
         prompt_consolidacao = f"""
         Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada do proponente mestre.
 
@@ -91,7 +91,10 @@ def handler(event, context):
         DIRETRIZES DE CRÉDITO OBRIGATÓRIAS:
         - Mapeie o nome completo e documento civil do proponente baseado nos documentos de identificação oficiais mais confiáveis (ex: Driver License).
         - Classifique a categoria de risco em 'baixo', 'medio' ou 'alto', fornecendo uma justificativa técnica sucinta e fundamentada na saúde patrimonial e financeira demonstrada.
-        - Valide os booleanos de consistência cadastral verificando correspondência exata de nomes e datas de nascimento entre todos os papéis fornecidos, além da presença de comprovantes essenciais.
+        
+        - VALIDAÇÃO ESTRITA DE CONSISTÊNCIA CADASTRAL (REGRAS DE BOOLEANOS):
+          * 'nome_consistente_entre_documentos': true se o nome completo do proponente for idêntico em todos os arquivos onde ele foi localizado.
+          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false. Nunca alucine consistência se o dado não existe.
 
         Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo antes ou depois:
         {{
@@ -102,7 +105,7 @@ def handler(event, context):
           }},
           "validacao": {{
             "nome_consistente_entre_documentos": true,
-            "data_nascimento_consistente": true,
+            "data_nascimento_consistente": false,
             "documento_identificacao_presente": true,
             "comprovante_renda_presente": true,
             "extrato_bancario_presente": true
@@ -130,12 +133,11 @@ def handler(event, context):
 
         consolidado_json = json.loads(texto_resposta)
 
-        # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Substitui a estimativa livre da IA)
+        # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Subtrai automaticamente os 50 pontos caso a data caia como false)
         validacao_data = consolidado_json.get("validacao", {})
         score_final_calculado = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         logger.info(f"Cálculo do Scorecard executado com sucesso: {score_final_calculado} pontos.")
 
-        # Montagem do contrato de saída estruturado
         if "cliente" not in consolidado_json: consolidado_json["cliente"] = {}
         consolidado_json["cliente"]["score_credito"] = {"valor": score_final_calculado}
 
