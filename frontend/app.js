@@ -272,7 +272,11 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     tableBody.appendChild(row);
 
     document.getElementById(`exp-${index}`).addEventListener("click", () => {
-      exportarArquivoParaExcel(d);
+      if (d.s3_url_excel) {
+        window.open(d.s3_url_excel, "_blank");
+      } else {
+        exportarArquivoParaExcel(d);
+      }
     });
   });
 }

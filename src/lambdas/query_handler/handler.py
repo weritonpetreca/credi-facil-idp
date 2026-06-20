@@ -81,24 +81,28 @@ def handler(event, context):
                 if "documentos_analisados" in dados_extraidos:
                     for doc in dados_extraidos["documentos_analisados"]:
                         s3_key_res = doc.get("s3_key_resultado")
+                        orig_file = doc.get("arquivo_original", "")
+                        nome_limpo = orig_file.replace(".pdf", "").replace(".png", "").replace(".jpg", "").replace(".jpeg", "")
                         
                         if not s3_key_res:
                             tipo = str(doc.get("tipo_documento", "UNKNOWN")).lower()
                             subtipo = str(doc.get("subtipo_documento", "pay_stub")).lower()
-                            orig_file = doc.get("arquivo_original", "")
                             s3_key_res = f"results/{tipo}/{subtipo}/{package_id}/{orig_file.replace('.pdf', '')}_structured.json"
+
+                        s3_key_excel = f"results/planilhas/{package_id}/excel_metadados_{nome_limpo}.xlsx"
                         
                         try:
-                            presigned_url = s3_client.generate_presigned_url(
-                                'get_object',
-                                Params={'Bucket': BUCKET_SAIDA, 'Key': s3_key_res},
-                                ExpiresIn=300
+                            doc["s3_url_final"] = s3_client.generate_presigned_url(
+                                'get_object', Params={'Bucket': BUCKET_SAIDA, 'Key': s3_key_res}, ExpiresIn=300
                             )
-                            doc["s3_url_final"] = presigned_url
-                        except Exception as url_err:
-                            logger.warning(f"Não foi possível assinar a URL para o arquivo {s3_key_res}: {str(url_err)}")
-                            doc["s3_url_final"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_res}"
+                            doc["s3_url_excel"] = s3_client.generate_presigned_url(
+                                'get_object', Params={'Bucket': BUCKET_SAIDA, 'Key': s3_key_excel}, ExpiresIn=300
+                            )
 
+                        except Exception as url_err:
+                            logger.warning(f"Não foi possível assinar as URLs para o arquivo {orig_file}: {str(url_err)}")
+                            doc["s3_url_final"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_res}"
+                            doc["s3_url_excel"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_excel}"
                 resposta_base["dados_extraidos"] = dados_extraidos
                 
             except ClientError as s3_err:

@@ -438,6 +438,29 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  ExcelGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub credifacil-excel-generator-${Env}
+      CodeUri: .
+      Handler: src.lambdas.excel_generator.handler.handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          ENV: !Ref Env
+          DYNAMODB_TABLE: !Ref PacotesTable
+          BUCKET_SAIDA: !Ref DocumentsOutputBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DocumentsOutputBucket
+        - S3WritePolicy:
+            BucketName: !Ref DocumentsOutputBucket
+      Tags:
+        Criador: Grupo12
+        Environment: !Ref Env
+
   CustomerConsolidatorFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -446,7 +469,6 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
-        # 🚀 AJUSTE DE PRIVILÉGIO MÍNIMO REALIZADO: Acesso ao DynamoDB removido por completo (Toda a escrita centralizada no Writer - DRY)
         - Statement:
             - Effect: Allow
               Action: "bedrock:InvokeModel"
@@ -521,6 +543,7 @@ Resources:
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
         ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        ExcelGeneratorArn: !GetAtt ExcelGeneratorFunction.Arn
         CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
@@ -551,6 +574,7 @@ Resources:
                   - !GetAtt BdaStatusPollerFunction.Arn
                   - !GetAtt ConfidenceCheckerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt ExcelGeneratorFunction.Arn
                   - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn

@@ -40,7 +40,42 @@
     },
     "StructureWithNova": {
       "Type": "Task",
-      "Resource": "${NovaStructurerArn}",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NovaStructurerFunctionArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "GenerateExcelReports"
+    },
+    "GenerateExcelReports": {
+      "Type": "Map",
+      "ItemsPath": "$.json_estruturado.documentos_analisados",
+      "Parameters": {
+        "package_id.$": "$.package_id",
+        "bda_output_bucket.$": "$.bda_output_bucket",
+        "arquivo_original.$": "$$.Map.Item.Value.arquivo_original",
+        "s3_key_resultado.$": "$$.Map.Item.Value.s3_key_resultado",
+        "campos_extraidos.$": "$$.Map.Item.Value.campos_extraidos"
+      },
+      "Iterator": {
+        "StartAt": "InvokeExcelGenerator",
+        "States": {
+          "InvokeExcelGenerator": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ExcelGeneratorFunctionArn}",
+              "Payload.$": "$"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.excel_generation_results",
       "Next": "CheckScoreExecution"
     },
     "CheckScoreExecution": {
