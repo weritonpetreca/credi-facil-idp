@@ -395,10 +395,14 @@ def handler(event, context):
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
 
-        s3_client.put_object(
-            Bucket=bucket_saida, Key=f"results/{package_id}/output.json",
-            Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
-        )
+        if not execute_score:
+            logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/{package_id}/output.json")
+            s3_client.put_object(
+                Bucket=bucket_saida, Key=f"results/{package_id}/output.json",
+                Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
+            )
+        else:
+            logger.info("Gate de Score ativo. Adotando persistência sob demanda no Consolidador para mitigar arquivos fantasmas.")
 
         return {
             "package_id": package_id,

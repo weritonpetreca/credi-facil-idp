@@ -11,7 +11,6 @@ TABLE_PACOTES = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 TABLE_CLIENTES = os.environ.get("CLIENTS_DYNAMODB_TABLE", "credifacil-clientes-dev")
 
 def safe_float(val) -> float:
-    """Converte valores monetários textuais ou mistos vindo da IA em floats puros de forma segura."""
     if val is None:
         return 0.0
     if isinstance(val, (int, float)):
@@ -38,9 +37,13 @@ def handler(event, context):
         json_estruturado = event.get("json_estruturado", {})
         execute_score = event.get("execute_score", False)
         
-        # Padronização ISO em conformidade nativa com Python 3.12
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        s3_key_final = f"results/{package_id}/output.json"
+        
+        # 🚀 DIRETÓRIO DINÂMICO: Modula o ponteiro final do S3 baseado na flag de execução do Score
+        if execute_score:
+            s3_key_final = f"results/clientes/{package_id}/customer_consolidated.json"
+        else:
+            s3_key_final = f"results/{package_id}/output.json"
         
         try:
             confianca_lote = str(float(event.get("confianca_geral", 1.0)))
@@ -57,7 +60,7 @@ def handler(event, context):
         # ==========================================================================
         # 📦 1. ATUALIZAÇÃO MESTRE DA TABELA DE PACOTES (Sempre Executa)
         # ==========================================================================
-        logger.info(f"Atualizando metadados de ciclo de vida do lote {package_id} para COMPLETED")
+        logger.info(f"Atualizando metadados de ciclo de vida do lote {package_id} para COMPLETED apontando para {s3_key_final}")
         db_client.update_item(
             TableName=TABLE_PACOTES,
             Key={
@@ -90,7 +93,6 @@ def handler(event, context):
             nome_cliente = cliente_data.get("nome", "Não Identificado")
             pk_cliente = sistema_data.get("chave_cliente") or f"CLIENT#{nome_cliente.replace(' ', '_')}"
             
-            # Agregação de Perfil Financeiro promovido
             renda_maxima_promovida = 0.0
             saldo_maximo_promovido = 0.0
             ledger_documentos_enxuto = []
@@ -115,7 +117,6 @@ def handler(event, context):
                     "confianca_media": doc.get("confianca_media", 1.0)
                 })
 
-            # Mapeamento do KYC Cadastral Promovido para o CRM
             tipo_id = "Não Informado"
             num_id = "Não Informado"
             orgao_emissor = "Não Informado"
@@ -155,7 +156,7 @@ def handler(event, context):
                     "classificacao_risco": {"S": str(risco_individuo).upper() + "_RISK" if risco_individuo in ["baixo", "medio", "alto"] else "UNKNOWN_RISK"},
                     "justificativa_analise": {"S": justificativa_individuo},
                     "renda_bruta_estimada": {"N": str(renda_maxima_promovida)},
-                    "saldo_bancario_fechamento": {"N": str(saldo_maximo_promovido)},
+                    "saldo_bancario_fechamento": {"N": str(saldo_maxido_promovido)},
                     "documentos_indexados_ledger": {"S": json.dumps(ledger_documentos_enxuto, ensure_ascii=False)},
                     "ultimo_package_vinculado": {"S": package_id},
                     "data_ultima_atualizacao": {"S": timestamp_atual}

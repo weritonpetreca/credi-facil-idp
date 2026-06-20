@@ -15,14 +15,15 @@ def handler(event, context):
         
         logger.info(f"Iniciando consolidação analítica de score sob demanda para o pacote {package_id}")
 
-        # 1. Recupera a linha de base física limpa gerada pelo Structurer (evita ListObjects ineficientes)
-        key_base = f"results/{package_id}/output.json"
-        try:
+        # 🚀 OTIMIZAÇÃO: Lê a malha de dados diretamente da memória do Step Functions (Zero I/O no S3)
+        json_base_lote = event.get("json_estruturado")
+        
+        # Fallback de segurança caso a memória venha limpa por concorrência externa
+        if not json_base_lote:
+            logger.warning("Linha de base não localizada em memória. Recorrendo ao S3...")
+            key_base = f"results/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
-        except Exception as err:
-            logger.error(f"Erro ao carregar a linha de base de documentos {key_base}: {str(err)}")
-            raise err
 
         # Reduz o consumo de tokens enviando apenas o array estruturado de documentos analisados
         docs_analisados = json_base_lote.get("documentos_analisados", [])
@@ -76,7 +77,6 @@ def handler(event, context):
         response_body = json.loads(bedrock_response["body"].read().decode("utf-8"))
         texto_resposta = response_body["output"]["message"]["content"][0]["text"].strip()
         
-        # Sanitização robusta para blindar contra eventuais encapsulamentos de markdown da IA
         if texto_resposta.startswith("```json"):
             texto_resposta = texto_resposta.split("```json")[1].split("```")[0].strip()
         elif texto_resposta.startswith("```"):
@@ -88,9 +88,9 @@ def handler(event, context):
         json_base_lote["cliente"] = consolidado_json.get("cliente")
         json_base_lote["validacao"] = consolidado_json.get("validacao")
 
-        # 🚀 5. ISOLAMENTO COMPLETO SOLICITADO: Cria o diretório de clientes apenas por demanda ativa
-        s3_target_key = f"clientes/{package_id}/customer_consolidated.json"
-        logger.info(f"Gravando arquivo mestre do cliente em: {s3_target_key}")
+        # 🎯 5. GOVERNANÇA HIERÁRQUICA: Organiza a pasta de clientes para nascer dentro de results/
+        s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
+        logger.info(f"Gravando arquivo mestre único do cliente em: {s3_target_key}")
         
         s3_client.put_object(
             Bucket=bucket,
@@ -99,13 +99,7 @@ def handler(event, context):
             ContentType="application/json"
         )
 
-        # Sincroniza de forma atômica o output temporário do results para manter a esteira Step Functions alinhada
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=key_base,
-            Body=json.dumps(json_base_lote, ensure_ascii=False),
-            ContentType="application/json"
-        )
+        # ❌ INVOCACÃO DUPLICADA REMOVIDA DAQUI (Não sobrescreve mais o results/{package_id}/output.json)
 
         # 6. Retorna o payload enriquecido. Toda a persistência em Banco fica trancada no ResultWriter (DRY)
         return {
