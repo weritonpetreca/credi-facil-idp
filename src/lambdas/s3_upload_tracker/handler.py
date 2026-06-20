@@ -85,13 +85,13 @@ def handler(event, context):
                     }
                 )
                 
-                # 🚀 INJEÇÃO DO CONTRATO: Captura de forma segura a flag booleana retornada do banco
+                # 🚀 AJUSTE CIRÚRGICO: Captura de forma segura a flag booleana retornada do banco
                 execute_score = atributos.get("execute_score", {}).get("BOOL", False)
                 
                 payload_input_step = {
                     "package_id": package_id,
                     "user_id": atributos.get("uploadedBy", {}).get("S", "analista-weriton"),
-                    "execute_score": execute_score, # 🎯 Encaminha a flag tipada perfeitamente para o Choice State
+                    "execute_score": execute_score, # 🎯 Propaga o booleano tipado para o Choice State ler
                     "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}"
                 }
                 
@@ -105,7 +105,7 @@ def handler(event, context):
 
             except ClientError as ce:
                 if ce.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                    logger.warning("Trava de idempotência activa. O Step Functions já foi startado por outra thread.")
+                    logger.warning("Trava de idempotência ativa. O Step Functions já foi startado por outra thread.")
                     return {"status": "CONCURRENCY_LOCKED", "package_id": package_id}
                 raise ce
                 
