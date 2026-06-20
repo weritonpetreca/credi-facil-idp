@@ -7,6 +7,63 @@ logger = Logger(service="customer-consolidator")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
+def safe_float(val) -> float:
+    """Converte valores monetários textuais ou mistos em floats puros de forma segura."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        limpo = "".join(c for c in str(val) if c.isdigit() or c in [".", ","])
+        if "," in limpo and "." in limpo:
+            if limpo.rfind(",") > limpo.rfind("."):
+                limpo = limpo.replace(".", "").replace(",", ".")
+            else:
+                limpo = limpo.replace(",", "")
+        elif "," in limpo:
+            limpo = limpo.replace(",", ".")
+        return float(limpo) if limpo else 0.0
+    except:
+        return 0.0
+
+def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> int:
+    """Aplica o algoritmo determinístico de Application Scorecard das instituições financeiras."""
+    # 🏦 Pontuação Base Mínima do Mercado
+    score_calculado = 300
+    
+    # 1. Pilar de KYC & Compliance Cadastral (Até 150 pontos)
+    if validacao.get("nome_consistente_entre_documentos") is True: score_calculado += 50
+    if validacao.get("data_nascimento_consistente") is True: score_calculado += 50
+    if validacao.get("documento_identificacao_presente") is True: score_calculado += 50
+    
+    # Extração de Renda e Saldo para os pilares matemáticos
+    renda_maxima = 0.0
+    saldo_maximo = 0.0
+    for doc in docs_analisados:
+        tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
+        campos = doc.get("campos_extraidos", {})
+        if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"]:
+            v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation")
+            renda_maxima = max(renda_maxima, safe_float(v_renda))
+        elif tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
+            v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
+            saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
+
+    # 2. Pilar de Capacidade de Renda Líquida (Até 450 pontos)
+    if renda_maxima >= 5000.0: score_calculado += 450
+    elif renda_maxima >= 2500.0: score_calculado += 300
+    elif renda_maxima >= 1200.0: score_calculado += 150
+    else: score_calculado += 50
+
+    # 3. Pilar de Liquidez e Colchão de Amortização (Até 400 pontos)
+    if saldo_maximo >= 10000.0: score_calculado += 400
+    elif saldo_maximo >= 3000.0: score_calculado += 250
+    elif saldo_maximo >= 5000.0: score_calculado += 100
+    else: score_calculado += 0
+
+    # Força limitadores do teto de mercado (FICO standard)
+    return min(1000, max(300, score_calculado))
+
 def handler(event, context):
     """Handler AWS Lambda focado exclusivamente na consolidação e cálculo de Score do Proponente."""
     try:
@@ -15,30 +72,24 @@ def handler(event, context):
         
         logger.info(f"Iniciando consolidação analítica de score sob demanda para o pacote {package_id}")
 
-        # 🚀 OTIMIZAÇÃO: Lê a malha de dados diretamente da memória do Step Functions (Zero I/O no S3)
         json_base_lote = event.get("json_estruturado")
-        
-        # Fallback de segurança caso a memória venha limpa por concorrência externa
         if not json_base_lote:
             logger.warning("Linha de base não localizada em memória. Recorrendo ao S3...")
             key_base = f"results/packages/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        # Reduz o consumo de tokens enviando apenas o array estruturado de documentos analisados
         docs_analisados = json_base_lote.get("documentos_analisados", [])
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
-        # 2. Prompt corporativo sênior focado estritamente em cruzamento de dados e subscrição de risco
         prompt_consolidacao = f"""
-        Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada e calcular o score de crédito do proponente mestre.
+        Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada do proponente mestre.
 
         Dossiê de Documentos Estruturados:
         {dossie_textual}
 
         DIRETRIZES DE CRÉDITO OBRIGATÓRIAS:
         - Mapeie o nome completo e documento civil do proponente baseado nos documentos de identificação oficiais mais confiáveis (ex: Driver License).
-        - Calcule o 'score_credito' consolidado variando estritamente entre 0 e 1000 com base na solidez financeira, estabilidade empregatícia e liquidez salarial evidenciadas nos extratos e holerites.
         - Classifique a categoria de risco em 'baixo', 'medio' ou 'alto', fornecendo uma justificativa técnica sucinta e fundamentada na saúde patrimonial e financeira demonstrada.
         - Valide os booleanos de consistência cadastral verificando correspondência exata de nomes e datas de nascimento entre todos os papéis fornecidos, além da presença de comprovantes essenciais.
 
@@ -47,7 +98,6 @@ def handler(event, context):
           "cliente": {{
             "nome": "NOME COMPLETO EM CAIXA ALTA",
             "documento_identificacao": "NUMERO",
-            "score_credito": {{ "valor": 750 }},
             "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico base do parecer de crédito." }}
           }},
           "validacao": {{
@@ -65,13 +115,9 @@ def handler(event, context):
             "messages": [{"role": "user", "content": [{"text": prompt_consolidacao}]}]
         })
 
-        # 3. Invoca o Amazon Nova Pro para agregar inteligência aos metadados
         logger.info(f"Invocando o motor Amazon Nova Pro para o lote {package_id}")
         bedrock_response = bedrock_runtime.invoke_model(
-            modelId="amazon.nova-pro-v1:0",
-            contentType="application/json",
-            accept="application/json",
-            body=body_request
+            modelId="amazon.nova-pro-v1:0", contentType="application/json", accept="application/json", body=body_request
         )
 
         response_body = json.loads(bedrock_response["body"].read().decode("utf-8"))
@@ -84,24 +130,25 @@ def handler(event, context):
 
         consolidado_json = json.loads(texto_resposta)
 
-        # 4. Enriquecimento da malha de dados em memória
+        # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Substitui a estimativa livre da IA)
+        validacao_data = consolidado_json.get("validacao", {})
+        score_final_calculado = calcular_scorecard_financeiro(validacao_data, docs_analisados)
+        logger.info(f"Cálculo do Scorecard executado com sucesso: {score_final_calculado} pontos.")
+
+        # Montagem do contrato de saída estruturado
+        if "cliente" not in consolidado_json: consolidado_json["cliente"] = {}
+        consolidado_json["cliente"]["score_credito"] = {"valor": score_final_calculado}
+
         json_base_lote["cliente"] = consolidado_json.get("cliente")
         json_base_lote["validacao"] = consolidado_json.get("validacao")
 
-        # 🎯 5. GOVERNANÇA HIERÁRQUICA: Organiza a pasta de clientes para nascer dentro de results/
         s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
         logger.info(f"Gravando arquivo mestre único do cliente em: {s3_target_key}")
-        
         s3_client.put_object(
-            Bucket=bucket,
-            Key=s3_target_key,
-            Body=json.dumps(json_base_lote, ensure_ascii=False),
-            ContentType="application/json"
+            Bucket=bucket, Key=s3_target_key,
+            Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
         )
 
-        # ❌ INVOCACÃO DUPLICADA REMOVIDA DAQUI (Não sobrescreve mais o results/{package_id}/output.json)
-
-        # 6. Retorna o payload enriquecido. Toda a persistência em Banco fica trancada no ResultWriter (DRY)
         return {
             **event,
             "cliente": consolidado_json.get("cliente"),

@@ -140,7 +140,7 @@ function fecharModalEVerResultado() {
 function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   if (!dados) return;
 
-  const scoreSection = document.getElementById("scoreConsolidadoSection");
+  const scoreSection = document.getElementById("scoreConsolidatedSection");
   
   if (deveCalcularScore && dados.cliente) {
     scoreSection.style.display = "block";
@@ -156,7 +156,50 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     const scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
     const riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
     
-    document.getElementById("resScoreValue").textContent = scoreVal;
+    // 🎯 INJEÇÃO DO COMPONENTE INTERRROGAÇÃO EXPLICATIVA (Mata as dúvidas do Scorecard)
+    const scoreValueContainer = document.getElementById("resScoreValue");
+    scoreValueContainer.innerHTML = `${scoreVal} <span id="helpScoreTrigger" style="cursor: pointer; font-size: 16px; margin-left: 8px; color: #3b82f6; border: 1px solid #3b82f6; border-radius: 50%; padding: 0px 6px; display: inline-block; font-weight: bold;" title="Clique para ver a regra de cálculo">?</span>`;
+    
+    // Remove painel antigo se houver re-polling para não duplicar elementos na tela
+    const painelAntigo = document.getElementById("scoreExplainPanel");
+    if (painelAntigo) painelAntigo.remove();
+
+    // Cria o painel retrátil dinamicamente com estilo amigável corporativo
+    const explainPanel = document.createElement("div");
+    explainPanel.id = "scoreExplainPanel";
+    explainPanel.style.display = "none";
+    explainPanel.style.marginTop = "15px";
+    explainPanel.style.padding = "15px";
+    explainPanel.style.background = "#f8fafc";
+    explainPanel.style.borderLeft = "4px solid #3b82f6";
+    explainPanel.style.borderRadius = "4px";
+    explainPanel.style.fontSize = "13px";
+    explainPanel.style.color = "#334155";
+    explainPanel.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <strong style="color: #1e3a8a; font-size: 14px;">🧮 Regra de Cálculo do Application Scorecard:</strong>
+        <span id="closeExplainPanel" style="cursor: pointer; font-weight: bold; color: #94a3b8;">[Recolher]</span>
+      </div>
+      <p style="margin: 4px 0;">O cálculo segue as diretrizes rígidas de governança de risco financeiro:</p>
+      <ul style="margin: 5px 0; padding-left: 20px; line-height: 1.5;">
+        <li><strong>Pontuação Base Incondicional:</strong> 300 Pontos (Mínimo de entrada).</li>
+        <li><strong>Pilar KYC (Até 150 pts):</strong> +50 pts por consistência de Nome, +50 pts por Data de Nascimento e +50 pts por Documento Oficial verificado.</li>
+        <li><strong>Capacidade de Renda (Até 450 pts):</strong> Baseado no maior contracheque/W2 (Ex: Renda &ge; US$ 5.000 garante o teto de +450 pts).</li>
+        <li><strong>Colchão de Liquidez (Até 400 pts):</strong> Saldo de encerramento do extrato bancário (Ex: Saldo &ge; US$ 10.000 garante +400 pts).</li>
+      </ul>
+      <p style="margin-top: 5px; font-weight: 500; color: #0f172a;"><em>Fórmula: Pontuação Base (300) + Pontos KYC + Pontos Renda + Pontos Liquidez = Score Final (Máx 1000).</em></p>
+    `;
+    
+    // Injeta o painel explicativo logo abaixo da div de score
+    scoreValueContainer.parentNode.appendChild(explainPanel);
+
+    // Eventos dinâmicos para abrir e recolher o painel explicativo de crédito
+    document.getElementById("helpScoreTrigger").addEventListener("click", () => {
+      explainPanel.style.display = explainPanel.style.display === "none" ? "block" : "none";
+    });
+    document.getElementById("closeExplainPanel").addEventListener("click", () => {
+      explainPanel.style.display = "none";
+    });
     
     const catElement = document.getElementById("resRiscoCategoria");
     catElement.textContent = riscoCat.toUpperCase();
@@ -188,8 +231,6 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   const docs = dados.documentos_analisados || [];
   docs.forEach((d, index) => {
     const row = document.createElement("tr");
-    
-    // 🎯 CORREÇÃO DE SEGURANÇA: Lê a URL assinada gerada pelo backend para mitigar o erro 403 AccessDenied
     const s3UrlJson = d.s3_url_final || `https://${outputBucket || 'credifacil-docs-saida-dev'}.s3.amazonaws.com/${d.s3_key_resultado}`;
 
     row.innerHTML = `
