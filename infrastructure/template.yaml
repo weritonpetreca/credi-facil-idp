@@ -441,27 +441,27 @@ Resources:
   ExcelGeneratorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub credifacil-excel-generator-${Env}
+      FunctionName: !Sub credifacil-excel-generator-${Environment}
       CodeUri: ../
       Handler: src.lambdas.excel_generator.handler.handler
       Runtime: python3.12
       Layers:
-        - !Ref DependenciesLayer
+        - !Ref CrediFacilDependenciesLayer
       Timeout: 30
       MemorySize: 256
       Environment:
         Variables:
-          ENV: !Ref Env
-          DYNAMODB_TABLE: !Ref PacotesTable
-          BUCKET_SAIDA: !Ref DocumentsOutputBucket
+          ENV: !Ref Environment
+          DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref DocumentsOutputBucket
+            BucketName: !Ref BucketSaida
         - S3WritePolicy:
-            BucketName: !Ref DocumentsOutputBucket
+            BucketName: !Ref BucketSaida
       Tags:
         Criador: Grupo12
-        Environment: !Ref Env
+        Environment: !Ref Environment
 
   CustomerConsolidatorFunction:
     Type: AWS::Serverless::Function
