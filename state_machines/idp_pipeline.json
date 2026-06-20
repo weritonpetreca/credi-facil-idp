@@ -41,6 +41,22 @@
     "StructureWithNova": {
       "Type": "Task",
       "Resource": "${NovaStructurerArn}",
+      "Next": "CheckScoreExecution"
+    },
+    "CheckScoreExecution": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.execute_score",
+          "BooleanEquals": true,
+          "Next": "ConsolidateCustomer"
+        }
+      ],
+      "Default": "WriteResult"
+    },
+    "ConsolidateCustomer": {
+      "Type": "Task",
+      "Resource": "${CustomerConsolidatorArn}",
       "Next": "WriteResult"
     },
     "WriteResult": {

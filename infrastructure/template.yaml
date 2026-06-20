@@ -428,6 +428,19 @@ Resources:
     Tags:
       Criador: Grupo12
 
+  CustomerConsolidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.customer_consolidator.handler.handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        - DynamoDBCrudPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
+    Tags:
+      Criador: Grupo12
+
   ResultWriterFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -495,6 +508,7 @@ Resources:
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
         ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
     Tags:
@@ -524,6 +538,7 @@ Resources:
                   - !GetAtt BdaStatusPollerFunction.Arn
                   - !GetAtt ConfidenceCheckerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
       Tags:
