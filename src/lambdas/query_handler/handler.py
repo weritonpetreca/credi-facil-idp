@@ -6,7 +6,7 @@ from aws_lambda_powertools import Logger
 
 logger = Logger(service="query-handler")
 
-# 🚀 CORREÇÃO CIRÚRGICA: Força a região us-east-1 para garantir o alinhamento com o ecossistema do lote
+# 🚀 SEGURANÇA & ALINHAMENTO: Força a região us-east-1 para garantir o alinhamento regional do ecossistema
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 s3_client = boto3.client("s3", region_name="us-east-1")
 
@@ -14,6 +14,7 @@ TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 BUCKET_SAIDA = os.environ.get("BUCKET_SAIDA", "credifacil-docs-saida-dev")
 
 def handler(event, context):
+    """Handler AWS Lambda encarregado de buscar metadados do lote e assinar URLs de leitura para o S3."""
     try:
         path_parameters = event.get("pathParameters") or {}
         package_id = path_parameters.get("packageId")
@@ -62,7 +63,38 @@ def handler(event, context):
             try:
                 s3_response = s3_client.get_object(Bucket=BUCKET_SAIDA, Key=s3_key)
                 json_completo_content = s3_response["Body"].read().decode("utf-8")
-                resposta_base["dados_extraidos"] = json.loads(json_completo_content)
+                dados_extraidos = json.loads(json_completo_content)
+                
+                # ==========================================================================
+                # 🔒 GERAÇÃO DE PRE-SIGNED URLS INDIVIDUAIS (Mata o erro 403 do S3)
+                # ==========================================================================
+                if "documentos_analisados" in dados_extraidos:
+                    for doc in dados_extraidos["documentos_analisados"]:
+                        # Tenta ler a propriedade que adicionamos no structurer
+                        s3_key_res = doc.get("s3_key_resultado")
+                        
+                        # Fallback inteligente de segurança caso seja um pacote antigo em banco
+                        if not s3_key_res:
+                            tipo = str(doc.get("tipo_documento", "UNKNOWN")).lower()
+                            subtipo = str(doc.get("subtipo_documento", "pay_stub")).lower()
+                            orig_file = doc.get("arquivo_original", "")
+                            s3_key_res = f"results/{tipo}/{subtipo}/{package_id}/{orig_file.replace('.pdf', '')}_structured.json"
+                        
+                        try:
+                            # Gera o token de leitura válido por 300 segundos (5 minutos)
+                            presigned_url = s3_client.generate_presigned_url(
+                                'get_object',
+                                Params={'Bucket': BUCKET_SAIDA, 'Key': s3_key_res},
+                                ExpiresIn=300
+                            )
+                            # Injeta o link seguro e assinado direto no contrato do documento
+                            doc["s3_url_final"] = presigned_url
+                        except Exception as url_err:
+                            logger.warning(f"Não foi possível assinar a URL para o arquivo {s3_key_res}: {str(url_err)}")
+                            doc["s3_url_final"] = f"https://{BUCKET_SAIDA}.s3.amazonaws.com/{s3_key_res}"
+
+                resposta_base["dados_extraidos"] = dados_extraidos
+                
             except ClientError as s3_err:
                 logger.error(f"Falha de consistência: registro concluído no Dynamo mas ausente no S3: {str(s3_err)}")
                 return {

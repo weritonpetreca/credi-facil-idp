@@ -8,7 +8,6 @@ from aws_lambda_powertools import Logger
 logger = Logger(service="s3-upload-tracker")
 
 db_client = boto3.client("dynamodb", region_name="us-east-1")
-# 🚀 CORREÇÃO DEFINITIVA: O nome correto do serviço no Boto3 é 'stepfunctions'
 sf_client = boto3.client("stepfunctions", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
@@ -86,9 +85,13 @@ def handler(event, context):
                     }
                 )
                 
+                # 🚀 INJEÇÃO DO CONTRATO: Captura de forma segura a flag booleana retornada do banco
+                execute_score = atributos.get("execute_score", {}).get("BOOL", False)
+                
                 payload_input_step = {
                     "package_id": package_id,
                     "user_id": atributos.get("uploadedBy", {}).get("S", "analista-weriton"),
+                    "execute_score": execute_score, # 🎯 Encaminha a flag tipada perfeitamente para o Choice State
                     "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}"
                 }
                 
@@ -102,7 +105,7 @@ def handler(event, context):
 
             except ClientError as ce:
                 if ce.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                    logger.warning("Trava de idempotência ativa. O Step Functions já foi startado por outra thread.")
+                    logger.warning("Trava de idempotência activa. O Step Functions já foi startado por outra thread.")
                     return {"status": "CONCURRENCY_LOCKED", "package_id": package_id}
                 raise ce
                 

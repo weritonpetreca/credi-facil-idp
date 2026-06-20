@@ -142,21 +142,17 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
 
   const scoreSection = document.getElementById("scoreConsolidadoSection");
   
-  // 🏢 SEÇÃO 1: Renderização Condicional e Defensiva do Score do Cliente
   if (deveCalcularScore && dados.cliente) {
     scoreSection.style.display = "block";
     
-    // Vinculação de metadados do proponente mestre
     document.getElementById("resNome").textContent = dados.cliente.nome || "Não Identificado";
     document.getElementById("resDoc").textContent = dados.cliente.documento_identificacao || "Não Informado";
     document.getElementById("badgeModelo").textContent = dados.sistema?.processamento?.modelo_utilizado || "Amazon Nova Pro";
     
-    // Cálculo dinâmico e seguro de indicadores agregados promovidos
     const docs = dados.documentos_analisados || [];
     document.getElementById("resRenda").textContent = `US$ ${calcularMaiorValorCampo(docs, ['amount_numeric', 'Gross Pay', 'wages_tips_other_compensation']).toFixed(2)}`;
     document.getElementById("resSaldo").textContent = `US$ ${calcularMaiorValorCampo(docs, ['saldo_bancario_fechamento', 'closing_balance', 'balance']).toFixed(2)}`;
     
-    // Atribuição de Score e Badges de Risco
     const scoreVal = dados.cliente.score_credito?.valor ?? dados.cliente.score_atribuido ?? 0;
     const riscoCat = (dados.cliente.classificacao_risco?.categoria || "INCONCLUSIVO").toLowerCase();
     
@@ -175,7 +171,6 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     
     document.getElementById("resJustificativaBox").textContent = dados.cliente.classificacao_risco?.justificativa || "Sem parecer cadastrado.";
     
-    // População estruturada do Checklist de Regras de Negócio (KYC Cruzado)
     const val = dados.validacao || {};
     renderChecklistItem("chkNome", "Nome consistente entre todos os documentos", val.nome_consistente_entre_documentos);
     renderChecklistItem("chkNasc", "Data de nascimento consistente", val.data_nascimento_consistente);
@@ -186,7 +181,6 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
     scoreSection.style.display = "none";
   }
 
-  // 📂 SEÇÃO 2: Renderização Incondicional da Linhagem Física de Documentos
   document.getElementById("analyticsDashboard").style.display = "block";
   const tableBody = document.getElementById("tableDocsBody");
   tableBody.innerHTML = "";
@@ -195,10 +189,8 @@ function plotarDashboardAnalitico(dados, deveCalcularScore, outputBucket) {
   docs.forEach((d, index) => {
     const row = document.createElement("tr");
     
-    // 🎯 DESACOPLAMENTO ABSOLUTO: Consome a chave final estruturada vinda do contrato do Backend (Evita 404 por string hack)
-    const bucketFinal = outputBucket || "credifacil-docs-saida-dev";
-    const keyResultado = d.s3_key_resultado || `results/${String(d.tipo_documento).toLowerCase()}/${String(d.subtipo_documento || '').toLowerCase()}/${dados.sistema?.ultimo_package_vinculado?.package_id}/${d.arquivo_original.replace('.pdf', '')}_structured.json`;
-    const s3UrlJson = `https://${bucketFinal}.s3.amazonaws.com/${keyResultado}`;
+    // 🎯 CORREÇÃO DE SEGURANÇA: Lê a URL assinada gerada pelo backend para mitigar o erro 403 AccessDenied
+    const s3UrlJson = d.s3_url_final || `https://${outputBucket || 'credifacil-docs-saida-dev'}.s3.amazonaws.com/${d.s3_key_resultado}`;
 
     row.innerHTML = `
       <td style="padding: 10px; border: 1px solid #cbd5e1; font-weight: bold;">${d.tipo_documento}</td>
@@ -245,7 +237,6 @@ function calcularMaiorValorCampo(docs, chaves) {
   return max;
 }
 
-// 🚀 EXPORTADOR INDIVIDUAL NATIVO DE METADADOS (Compatibilidade Regional Excel BR via Semicolon e BOM)
 function exportarArquivoParaExcel(doc) {
   let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
   csvContent += "Propriedade;Valor Extraido;Confianca Campo\n";
@@ -257,7 +248,7 @@ function exportarArquivoParaExcel(doc) {
     let conf = "100%";
     
     if (campoDados && typeof campoDados === 'object') {
-      valor = campoDados.value !== undefined ? campoDados.value : JSON.dumps(campoDados);
+      valor = campoDados.value !== undefined ? campoDados.value : JSON.stringify(campoDados); // 🎯 CORREÇÃO EXCEL: Alterado de JSON.dumps para JSON.stringify
       conf = campoDados.confidence !== undefined ? `${(campoDados.confidence * 100).toFixed(1)}%` : "100%";
     }
     
