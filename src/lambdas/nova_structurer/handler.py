@@ -1,7 +1,7 @@
 import json
 import os
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 from src.shared.tools import obter_especificacao_ferramenta_loan
 
@@ -172,6 +172,7 @@ Identifique o nome completo do titular principal no campo 'nome_titular' em CAIX
 """
 
 def extrair_texto_linear(dados: any) -> list:
+    """Realiza a varredura linear recursiva extraindo blocos de texto puros."""
     textos = []
     if isinstance(dados, dict):
         for k, v in dados.items():
@@ -183,6 +184,7 @@ def extrair_texto_linear(dados: any) -> list:
     return textos
 
 def limpar_ruido_recursivo(dados: any) -> any:
+    """Remove coordenadas espaciais e metadados geométricos poluidores do payload."""
     CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
     if isinstance(dados, dict):
         return {k: limpar_ruido_recursivo(v) for k, v in dados.items() if k not in CHAVES_INUTEIS}
@@ -191,6 +193,7 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
+    """Modela a carga de dados extraída no formato oficial do blueprint regulatório."""
     raw_fields = payload_ia.get("campos_extraidos_brutos", {})
     return {
         "tipo_documento": tipo.lower(),
@@ -203,6 +206,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_origem": f"s3://{s3_inputs['bucket_entrada']}/{s3_inputs['key_entrada']}",
             "bucket_resultado_bda": s3_inputs["bucket_saida"],
             "s3_key_resultado_bda": s3_inputs["key_bda"],
+            "s3_key_resultado": s3_inputs["key_resultado"],
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
@@ -215,7 +219,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
 
 def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
     """Inicializa o arquivo de linhagem física do lote sem misturar entidades de score ou dados de clientes."""
-    timestamp_atual = datetime.utcnow().isoformat() + "Z"
+    timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     documentos_analisados = []
     presenca = {"identificacao": False, "renda": False, "extrato": False, "imovel": False}
 
@@ -230,9 +234,11 @@ def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metri
 
         documentos_analisados.append({
             "tipo_documento": tipo.upper(),
+            "subtipo_documento": bp.get("subtipo_documento", ""),
             "arquivo_original": bp["arquivo_original"],
             "s3_key_origem": bp["localizacao_documento_s3"]["s3_key_origem"],
             "s3_key_resultado_bda": bp["localizacao_documento_s3"]["s3_key_resultado_bda"],
+            "s3_key_resultado": bp["localizacao_documento_s3"].get("s3_key_resultado"),
             "status_extracao": bp["confiabilidade_extracao"]["status_extracao"],
             "campos_extraidos": bp["dados_extraidos_do_documento"],
             "confianca_media": float(bp["confiabilidade_extracao"]["confianca_media"]),
@@ -263,6 +269,7 @@ def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metri
     }
 
 def handler(event, context):
+    """Handler AWS Lambda encarregado estritamente do isolamento sintático de documentos."""
     try:
         package_id = event.get("package_id")
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
@@ -355,7 +362,7 @@ def handler(event, context):
 
             s3_meta_inputs = {
                 "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
-                "bucket_saida": bucket_saida, "key_bda": obj_selecionado["Key"]
+                "bucket_saida": bucket_saida, "key_bda": obj_selecionado["Key"], "key_resultado": s3_target_key
             }
 
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)

@@ -1,5 +1,5 @@
 {
-  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil com Auditoria Granular",
+  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil com Auditoria Granular e Roteamento Condicional de Score",
   "StartAt": "InvokeBDA",
   "States": {
     "InvokeBDA": {

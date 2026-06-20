@@ -1,3 +1,11 @@
+# ==========================================================================
+# 🛠️ CAMADA DE INFRAESTRUTURA COMO CÓDIGO (AWS SAM TEMPLATE) - REVISADA
+# ==========================================================================
+# Projeto: CrediFácil IDP Engine
+# Padrão Arquitetural: Smart Writer Pattern & Desacoplamento SOLID (S.R.P)
+# Versão: 2026.06.19_Final
+# ==========================================================================
+
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
@@ -83,7 +91,6 @@ Resources:
         - Key: Criador
           Value: Grupo12
 
-  # 🌐 NOVO BUCKET EXCLUSIVO PARA HOSPEDAGEM ESTÁTICA DO SEU FRONT-END
   CrediFacilFrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -181,7 +188,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "credifacil-human-review-dlq-${Environment}"
-      MessageRetentionPeriod: 1209600 # 14 dias guardado para análise DevSecOps profunda
+      MessageRetentionPeriod: 1209600 
 
   CrediFacilReviewQueue:
     Type: AWS::SQS::Queue
@@ -189,7 +196,7 @@ Resources:
       QueueName: !Sub "credifacil-human-review-queue-${Environment}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt CrediFacilReviewDLQ.Arn
-        maxReceiveCount: 3 # Se a Lambda falhar/rejeitar 3 vezes, isola na DLQ
+        maxReceiveCount: 3 
 
   CrediFacilDLQAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -420,6 +427,9 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
+        # 🚀 AJUSTE ADICIONADO: Concede permissão de leitura para que possa consultar a flag execute_score de forma segura assíncrona
+        - DynamoDBReadPolicy:
+            TableName: !Sub "credifacil-pacotes-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
@@ -436,8 +446,7 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${Environment}"
-        - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
+        # 🚀 AJUSTE DE PRIVILÉGIO MÍNIMO REALIZADO: Acesso ao DynamoDB removido por completo (Toda a escrita centralizada no Writer - DRY)
         - Statement:
             - Effect: Allow
               Action: "bedrock:InvokeModel"
