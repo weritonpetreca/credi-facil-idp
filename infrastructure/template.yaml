@@ -442,9 +442,11 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub credifacil-excel-generator-${Env}
-      CodeUri: .
+      CodeUri: ../
       Handler: src.lambdas.excel_generator.handler.handler
       Runtime: python3.12
+      Layers:
+        - !Ref DependenciesLayer
       Timeout: 30
       MemorySize: 256
       Environment:
