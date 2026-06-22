@@ -2,8 +2,12 @@ import { useState } from "react";
 import FileDropZone from "./components/FileDropZone";
 import StatusTerminal from "./components/StatusTerminal";
 import ResultPanel from "./components/ResultPanel";
+import SuccessModal from "./components/SuccessModal";
 import Footer from "./components/Footer";
+import HourglassBackdrop from "./components/HourglassBackdrop";
+import ThemeToggle from "./components/ThemeToggle";
 import { useDocumentPipeline } from "./hooks/useDocumentPipeline";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
 const PHASE_LABEL = {
@@ -17,23 +21,49 @@ const PHASE_LABEL = {
 
 export default function App() {
   const [files, setFiles] = useState([]);
-  const { phase, logs, result, errorMessage, upload, reset } =
-    useDocumentPipeline();
+  const [scoreRequested, setScoreRequested] = useState(true);
+  const [modalDismissed, setModalDismissed] = useState(false);
+  const { theme, toggleTheme } = useTheme();
+
+  const {
+    phase,
+    logs,
+    result,
+    executeScore,
+    outputBucket,
+    errorMessage,
+    startedAt,
+    finishedAt,
+    upload,
+    reset,
+  } = useDocumentPipeline();
 
   const isBusy = ["preparing", "uploading", "waiting"].includes(phase);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await upload(files);
+    const success = await upload(files, scoreRequested);
+    if (!success) return;
   };
 
   const handleReset = () => {
     reset();
     setFiles([]);
+    setModalDismissed(false);
   };
+
+  // Modal abre automaticamente quando a análise é concluída,
+  // e fica fechado se o usuário já o dispensou ou resetou o fluxo.
+  const modalOpen = phase === "done" && !!result && !modalDismissed;
+
+  const scoreVal =
+    result?.cliente?.score_credito?.valor ??
+    result?.cliente?.score_atribuido ??
+    0;
 
   return (
     <div className="page">
+      <HourglassBackdrop active={isBusy} />
       <header className="header">
         <div className="header-inner">
           <div className="brand">
@@ -60,10 +90,13 @@ export default function App() {
             </div>
             <span className="brand-name">CrediFácil</span>
           </div>
-          <span className="header-pill">
-            <span className="pill-dot" />
-            Análise por IA generativa
-          </span>
+          <div className="header-actions">
+            <span className="header-pill">
+              <span className="pill-dot" />
+              Análise por IA generativa
+            </span>
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          </div>
         </div>
       </header>
 
@@ -93,6 +126,19 @@ export default function App() {
                   onChange={setFiles}
                   disabled={isBusy}
                 />
+
+                <label className="score-toggle">
+                  <input
+                    type="checkbox"
+                    checked={scoreRequested}
+                    onChange={(e) => setScoreRequested(e.target.checked)}
+                    disabled={isBusy}
+                  />
+                  <span className="score-toggle-text">
+                    🎯 Executar análise de score de crédito consolidado
+                    <span className="score-toggle-tag">bônus</span>
+                  </span>
+                </label>
 
                 {errorMessage && phase === "error" && (
                   <div className="inline-error animate-fade-up">
@@ -147,7 +193,7 @@ export default function App() {
                             strokeLinejoin="round"
                           />
                         </svg>
-                        Enviar para análise
+                        Iniciar processamento inteligente
                       </>
                     )}
                   </button>
@@ -165,19 +211,30 @@ export default function App() {
               </form>
             </div>
 
-            {result && <ResultPanel data={result} />}
+            {result && (
+              <ResultPanel
+                data={result}
+                executeScore={executeScore}
+                outputBucket={outputBucket}
+              />
+            )}
           </div>
 
           <div className="col-status">
-            <StatusTerminal logs={logs} phase={phase} />
+            <StatusTerminal
+              logs={logs}
+              phase={phase}
+              startedAt={startedAt}
+              finishedAt={finishedAt}
+            />
 
             <div className="card info-card">
-              <span className="info-label">Como funciona</span>
+              <span className="info-label">Mecanismo cross-validation</span>
               <ol className="info-steps">
-                <li>Envie de 1 a 8 documentos (PDF ou imagem)</li>
-                <li>O Amazon Bedrock extrai os dados estruturais</li>
-                <li>O Amazon Nova Pro interpreta e calcula o score</li>
-                <li>Você recebe o relatório completo, em tempo real</li>
+                <li>Consistência nominal e KYC entre documentos</li>
+                <li>Saúde financeira e renda bruta estimada</li>
+                <li>Liquidez e colchão de amortização</li>
+                <li>Score consolidado, quando solicitado</li>
               </ol>
             </div>
           </div>
@@ -185,6 +242,14 @@ export default function App() {
       </main>
 
       <Footer />
+
+      {modalOpen && (
+        <SuccessModal
+          score={scoreVal}
+          showScore={executeScore}
+          onClose={() => setModalDismissed(true)}
+        />
+      )}
     </div>
   );
 }

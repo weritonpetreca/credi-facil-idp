@@ -13,6 +13,11 @@ export default function Footer() {
   return (
     <footer className="site-footer">
       <div className="footer-inner">
+        <p className="footer-tagline">
+          Tecnologia que entende seus documentos, decide com agilidade e
+          constrói confiança em cada análise.
+        </p>
+
         <div className="footer-top">
           <div className="footer-brand">
             <div className="footer-logo">
@@ -59,7 +64,12 @@ export default function Footer() {
           <p className="footer-credit">
             Desenvolvido para o <strong>Hack2Hire</strong> · Escola da Nuvem
           </p>
-          <p className="footer-meta">Processamento via IA generativa · AWS</p>
+          <p
+            className="footer-meta"
+            title="Mesmo aquela carteirinha do Havaí com nome de espião não passaria pela nossa validação."
+          >
+            Processamento via IA generativa · AWS
+          </p>
         </div>
       </div>
     </footer>

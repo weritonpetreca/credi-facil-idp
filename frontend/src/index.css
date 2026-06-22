@@ -5,11 +5,12 @@
 @import "@fontsource/space-grotesk/500.css";
 @import "@fontsource/space-grotesk/600.css";
 @import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/dseg7/classic-700.css";
 
 :root {
   --bg: #05070d;
   --bg-elevated: #0a0d17;
-  --card: #0d1019;
+  --card: rgba(13, 16, 25, 0.78);
   --card-border: #1a1f2e;
   --card-border-hover: #2a3148;
 
@@ -27,10 +28,35 @@
   --amber: #ffb800;
 
   --text-primary: #f4f5fa;
-  --text-secondary: #8b93a8;
-  --text-muted: #4a4f5e;
+  --text-secondary: #a4acc2;
+  --text-muted: #6b7188;
 
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+
+[data-theme="light"] {
+  --bg: #f4f5fa;
+  --bg-elevated: #ffffff;
+  --card: rgba(255, 255, 255, 0.82);
+  --card-border: #e0e3ec;
+  --card-border-hover: #c8ccdc;
+
+  --violet: #6b4fe0;
+  --violet-soft: rgba(107, 79, 224, 0.08);
+  --violet-glow: rgba(107, 79, 224, 0.18);
+  --blue: #3d6fd1;
+
+  --lime: #5fa319;
+  --lime-soft: rgba(95, 163, 25, 0.1);
+
+  --red: #d6435c;
+  --red-soft: rgba(214, 67, 92, 0.08);
+
+  --amber: #b8860b;
+
+  --text-primary: #1a1d29;
+  --text-secondary: #4d5266;
+  --text-muted: #80869c;
 }
 
 * {
@@ -48,7 +74,7 @@ body {
   background-image:
     radial-gradient(
       ellipse 80% 50% at 50% -10%,
-      rgba(124, 92, 255, 0.15),
+      var(--violet-glow),
       transparent
     ),
     radial-gradient(
@@ -61,6 +87,9 @@ body {
   font-family: "Inter", sans-serif;
   min-height: 100vh;
   position: relative;
+  transition:
+    background-color 0.5s ease,
+    color 0.4s ease;
 }
 
 body::before {
@@ -68,11 +97,22 @@ body::before {
   position: fixed;
   inset: 0;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+    linear-gradient(
+      var(--grid-line-color, rgba(255, 255, 255, 0.018)) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      var(--grid-line-color, rgba(255, 255, 255, 0.018)) 1px,
+      transparent 1px
+    );
   background-size: 48px 48px;
   pointer-events: none;
   z-index: 0;
+}
+
+[data-theme="light"] body::before {
+  --grid-line-color: rgba(20, 25, 45, 0.035);
 }
 
 #root {

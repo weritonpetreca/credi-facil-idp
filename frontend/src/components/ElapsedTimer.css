@@ -1,0 +1,69 @@
+.elapsed-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 4px 10px;
+  border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+}
+
+.elapsed-timer.running {
+  background: linear-gradient(
+    135deg,
+    rgba(124, 92, 255, 0.14),
+    rgba(76, 141, 255, 0.08)
+  );
+  border: 1px solid rgba(124, 92, 255, 0.35);
+  box-shadow: inset 0 0 12px rgba(124, 92, 255, 0.08);
+}
+
+.elapsed-timer.stopped {
+  background: var(--lime-soft);
+  border: 1px solid rgba(166, 255, 0, 0.3);
+}
+
+.elapsed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.elapsed-timer.running .elapsed-dot {
+  color: var(--violet);
+  animation: pulseGlow 1.4s ease-in-out infinite;
+}
+.elapsed-timer.stopped .elapsed-dot {
+  color: var(--lime);
+}
+
+.elapsed-digits {
+  font-family: "Share Tech Mono", var(--mono);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 1.5px;
+  line-height: 1;
+}
+
+.elapsed-timer.running .elapsed-digits {
+  color: var(--violet);
+  text-shadow:
+    0 0 8px var(--violet-glow),
+    0 0 2px rgba(124, 92, 255, 0.6);
+}
+
+.elapsed-timer.stopped .elapsed-digits {
+  color: var(--lime);
+  text-shadow:
+    0 0 8px rgba(166, 255, 0, 0.45),
+    0 0 2px rgba(166, 255, 0, 0.6);
+}
+
+/* Efeito sutil de "ghost segments" atrás dos dígitos, como num display LCD real */
+.elapsed-digits::before {
+  content: attr(data-ghost);
+  position: absolute;
+  color: currentColor;
+  opacity: 0.12;
+}

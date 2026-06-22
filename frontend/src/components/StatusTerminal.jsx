@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import "../hooks/useDocumentPipeline";
+import ElapsedTimer from "./ElapsedTimer";
+import "./StatusTerminal.css";
 
 const LEVEL_COLOR = {
   info: "#8B93A8",
@@ -13,7 +14,7 @@ const LEVEL_PREFIX = {
   error: "✕",
 };
 
-export default function StatusTerminal({ logs, phase }) {
+export default function StatusTerminal({ logs, phase, startedAt, finishedAt }) {
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -33,23 +34,51 @@ export default function StatusTerminal({ logs, phase }) {
           <span style={{ background: "#28C840" }} />
         </div>
         <span className="terminal-title">credifacil-idp · monitor</span>
-        <span className={`terminal-status ${isActive ? "live" : ""}`}>
-          {isActive
-            ? "● LIVE"
-            : phase === "done"
-              ? "● CONCLUÍDO"
-              : phase === "error"
-                ? "● ERRO"
-                : "○ OCIOSO"}
-        </span>
+
+        <div className="terminal-bar-right">
+          <ElapsedTimer
+            startedAt={startedAt}
+            finishedAt={finishedAt}
+            running={isActive}
+          />
+          <span className={`terminal-status ${isActive ? "live" : ""}`}>
+            {isActive
+              ? "LIVE"
+              : phase === "done"
+                ? "CONCLUÍDO"
+                : phase === "error"
+                  ? "ERRO"
+                  : "OCIOSO"}
+          </span>
+        </div>
       </div>
 
       <div className="terminal-body" ref={scrollRef}>
         {logs.length === 0 ? (
-          <p className="terminal-placeholder">
-            <span className="terminal-cursor">_</span> aguardando envio de
-            documentos...
-          </p>
+          <div className="terminal-idle">
+            <div className="terminal-idle-icon">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path
+                  d="M12 7v5l3 3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <p className="terminal-idle-title">Nenhuma atividade ainda</p>
+            <p className="terminal-idle-sub">
+              Os eventos do processamento vão aparecer aqui em tempo real,
+              conforme os documentos forem enviados e analisados.
+            </p>
+          </div>
         ) : (
           logs.map((log, i) => (
             <div key={i} className="terminal-line animate-fade-up">

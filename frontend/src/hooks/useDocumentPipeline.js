@@ -29,7 +29,11 @@ export function useDocumentPipeline() {
   // idle | preparing | uploading | waiting | done | error
   const [logs, setLogs] = useState([]);
   const [result, setResult] = useState(null);
+  const [executeScore, setExecuteScoreFlag] = useState(false);
+  const [outputBucket, setOutputBucket] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [startedAt, setStartedAt] = useState(null);
+  const [finishedAt, setFinishedAt] = useState(null);
   const pollTimer = useRef(null);
   const pollDeadline = useRef(null);
 
@@ -52,11 +56,14 @@ export function useDocumentPipeline() {
     setPhase("idle");
     setLogs([]);
     setResult(null);
+    setOutputBucket(null);
     setErrorMessage("");
+    setStartedAt(null);
+    setFinishedAt(null);
   }, [stopPolling]);
 
   const pollUntilDone = useCallback(
-    (packageId) => {
+    (packageId, scoreRequested) => {
       pollDeadline.current = Date.now() + POLL_TIMEOUT_MS;
 
       const tick = async () => {
@@ -66,6 +73,7 @@ export function useDocumentPipeline() {
             "O processamento está demorando mais que o esperado. Tente novamente em alguns minutos.",
           );
           pushLog("Tempo limite de espera atingido.", "error");
+          setFinishedAt(Date.now());
           return;
         }
 
@@ -88,8 +96,11 @@ export function useDocumentPipeline() {
           }
 
           if (data.status === "COMPLETED") {
-            pushLog("Análise concluída com sucesso.", "success");
+            pushLog("Análise estrutural finalizada.", "success");
             setResult(data.dados_extraidos || null);
+            setOutputBucket(data.bda_output_bucket || null);
+            setExecuteScoreFlag(scoreRequested);
+            setFinishedAt(Date.now());
             setPhase("done");
             return;
           }
@@ -103,12 +114,13 @@ export function useDocumentPipeline() {
               data.erro_processamento || "Falha no processamento.",
               "error",
             );
+            setFinishedAt(Date.now());
             return;
           }
 
           // status desconhecido, continua tentando
           pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
-        } catch (err) {
+        } catch {
           pushLog("Erro ao consultar status, tentando novamente...", "error");
           pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
         }
@@ -120,11 +132,13 @@ export function useDocumentPipeline() {
   );
 
   const upload = useCallback(
-    async (files) => {
+    async (files, scoreRequested) => {
       stopPolling();
       setResult(null);
+      setOutputBucket(null);
       setErrorMessage("");
       setLogs([]);
+      setFinishedAt(null);
 
       if (!files || files.length < MIN_FILES) {
         setPhase("error");
@@ -149,12 +163,16 @@ export function useDocumentPipeline() {
 
       try {
         setPhase("preparing");
-        pushLog("Registrando lote e coletando credenciais do S3...");
+        setStartedAt(Date.now());
+        pushLog("Registrando lote e coletando credenciais de storage do S3...");
 
         const prepResponse = await fetch(`${API_URL}v1/packages/upload-urls`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ documentos: files.map((f) => f.name) }),
+          body: JSON.stringify({
+            documentos: files.map((f) => f.name),
+            execute_score: scoreRequested,
+          }),
         });
 
         const prepData = await prepResponse.json().catch(() => null);
@@ -207,13 +225,10 @@ export function useDocumentPipeline() {
           );
         }
 
-        pushLog(
-          "Lote enviado. Processamento reativo iniciado em background...",
-          "success",
-        );
+        pushLog("Lote enviado. Monitorando progresso do IDP...", "success");
         setPhase("waiting");
 
-        pollUntilDone(prepData.package_id);
+        pollUntilDone(prepData.package_id, scoreRequested);
         return true;
       } catch (err) {
         setPhase("error");
@@ -222,11 +237,23 @@ export function useDocumentPipeline() {
             "Não foi possível concluir o envio. Verifique os arquivos e tente novamente.",
         );
         pushLog(err.message || "Erro inesperado.", "error");
+        setFinishedAt(Date.now());
         return false;
       }
     },
     [pollUntilDone, pushLog, stopPolling],
   );
 
-  return { phase, logs, result, errorMessage, upload, reset };
+  return {
+    phase,
+    logs,
+    result,
+    executeScore,
+    outputBucket,
+    errorMessage,
+    startedAt,
+    finishedAt,
+    upload,
+    reset,
+  };
 }

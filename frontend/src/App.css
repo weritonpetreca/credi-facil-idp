@@ -2,6 +2,8 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 1;
 }
 
 .header {
@@ -37,6 +39,11 @@
   font-size: 19px;
   font-weight: 700;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .header-pill {
   display: flex;
   align-items: center;
@@ -47,6 +54,12 @@
   border: 1px solid var(--card-border);
   padding: 7px 14px;
   border-radius: 999px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition:
+    background-color 0.5s ease,
+    border-color 0.5s ease,
+    color 0.4s ease;
 }
 .pill-dot {
   width: 6px;
@@ -98,15 +111,17 @@
 
 .grid {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: 1.6fr 1fr;
   gap: 22px;
   align-items: start;
+  min-width: 0;
 }
 .col-form,
 .col-status {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  min-width: 0;
 }
 
 .card {
@@ -114,6 +129,13 @@
   border: 1px solid var(--card-border);
   border-radius: 16px;
   padding: 26px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  position: relative;
+  z-index: 2;
+  transition:
+    background-color 0.5s ease,
+    border-color 0.5s ease;
 }
 
 form {
@@ -266,4 +288,49 @@ form {
   .hero-title {
     font-size: 32px;
   }
+  .header-inner {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+}
+
+.score-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+.score-toggle:hover {
+  border-color: var(--card-border-hover);
+}
+.score-toggle input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--violet);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.score-toggle-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.score-toggle-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--lime);
+  background: var(--lime-soft);
+  border: 1px solid rgba(166, 255, 0, 0.3);
+  padding: 2px 8px;
+  border-radius: 999px;
 }

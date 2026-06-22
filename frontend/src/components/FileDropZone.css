@@ -1,83 +1,125 @@
-.terminal {
-  background: #08090d;
-  border: 1px solid var(--card-border);
-  border-radius: 14px;
-  overflow: hidden;
-  font-family: var(--mono);
-  box-shadow:
-    0 0 0 1px rgba(124, 92, 255, 0.04),
-    0 20px 60px rgba(0, 0, 0, 0.4);
-}
-.terminal-bar {
+.dz-wrapper {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
-  padding: 12px 16px;
-  background: #0c0e15;
-  border-bottom: 1px solid var(--card-border);
 }
-.terminal-dots {
-  display: flex;
-  gap: 6px;
+.dz {
+  position: relative;
+  border: 1.5px dashed var(--card-border);
+  border-radius: 16px;
+  padding: 40px 24px;
+  cursor: pointer;
+  transition:
+    border-color 0.25s,
+    background 0.25s;
+  background: rgba(255, 255, 255, 0.012);
+  overflow: hidden;
 }
-.terminal-dots span {
-  width: 10px;
-  height: 10px;
+.dz:hover:not(.disabled) {
+  border-color: var(--violet);
+  background: var(--violet-soft);
+}
+.dz.dragging {
+  border-color: var(--violet);
+  background: var(--violet-soft);
+}
+.dz.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.dz-glow {
+  position: absolute;
+  top: -60%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  height: 280px;
   border-radius: 50%;
-  opacity: 0.85;
+  background: radial-gradient(circle, var(--violet-glow), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
 }
-.terminal-title {
-  font-size: 12px;
-  color: var(--text-muted);
-  flex: 1;
+.dz:hover .dz-glow,
+.dz.dragging .dz-glow {
+  opacity: 0.5;
+}
+.dz-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+.dz-icon {
+  color: var(--violet);
+}
+.dz-label {
+  font-size: 14.5px;
+  color: var(--text-secondary);
+  font-weight: 500;
   text-align: center;
 }
-.terminal-status {
-  font-size: 11px;
+.dz-hint {
+  font-size: 11.5px;
   color: var(--text-muted);
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
-.terminal-status.live {
-  color: var(--lime);
-  animation: pulseGlow 1.8s ease-in-out infinite;
+  letter-spacing: 0.4px;
 }
 
-.terminal-body {
-  padding: 16px;
-  height: 260px;
-  overflow-y: auto;
-  font-size: 12.5px;
-  line-height: 1.9;
-}
-.terminal-placeholder {
-  color: var(--text-muted);
-}
-.terminal-cursor {
-  animation: blink 1s step-start infinite;
-  color: var(--violet);
-}
-
-.terminal-line {
+.dz-file-list {
   display: flex;
-  gap: 10px;
-  align-items: baseline;
+  flex-direction: column;
+  gap: 7px;
 }
-.terminal-time {
-  color: #3a3f4e;
-  font-size: 11px;
+.dz-file-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.dz-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 5px;
   flex-shrink: 0;
-  width: 70px;
+  font-family: "Space Grotesk", sans-serif;
+  letter-spacing: 0.6px;
 }
-.terminal-prefix {
-  font-weight: 700;
+.dz-name {
+  flex: 1;
+  font-size: 13px;
+  color: #c9cddb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dz-size {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
   flex-shrink: 0;
-  width: 14px;
 }
-.terminal-prefix-blink {
-  color: var(--violet);
-  animation: blink 1s step-start infinite;
+.dz-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
-.terminal-message {
-  word-break: break-word;
+.dz-remove:hover {
+  background: var(--red-soft);
+  color: var(--red);
 }

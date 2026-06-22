@@ -11,6 +11,18 @@
   flex-direction: column;
   gap: 24px;
 }
+.footer-tagline {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+  max-width: 620px;
+  background: linear-gradient(135deg, var(--text-primary), var(--violet) 140%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
 
 .footer-top {
   display: flex;
