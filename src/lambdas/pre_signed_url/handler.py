@@ -12,7 +12,6 @@ s3_client = boto3.client("s3", region_name="us-east-1")
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
-# 🚀 ENGENHARIA DE CONTRATO: Mapeamento dinâmico de Content-Type suportado pelo Bedrock BDA
 def mapear_content_type(doc_name: str) -> str:
     extensoes_suportadas = {
         "pdf": "application/pdf",
@@ -21,11 +20,9 @@ def mapear_content_type(doc_name: str) -> str:
         "jpeg": "image/jpeg",
         "webp": "image/webp"
     }
-    
     ext = doc_name.lower().split('.')[-1]
     if ext not in extensoes_suportadas:
         raise ValueError(f"Extensão .{ext} inválida para o arquivo {doc_name}. Permitidos: PDF, PNG, JPG, JPEG e WEBP.")
-        
     return extensoes_suportadas[ext]
 
 def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
@@ -34,9 +31,7 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
         
     urls_geradas = {}
     for doc_name in lista_documentos:
-        # 🚀 DINAMISMO: Captura o Content-Type correto ao invés de forçar application/pdf
         content_type_dinamico = mapear_content_type(doc_name)
-        
         s3_key = f"packages/{package_id}/{uuid.uuid4()}-{doc_name}"
         
         try:
@@ -45,7 +40,7 @@ def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
                 Params={
                     "Bucket": os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev"),
                     "Key": s3_key,
-                    "ContentType": content_type_dinamico # Injetado de forma dinâmica e segura
+                    "ContentType": content_type_dinamico
                 },
                 ExpiresIn=900
             )
@@ -74,6 +69,8 @@ def handler(event, context):
             body = {}
 
         documentos = body.get("documentos", [])
+        # 🚀 CAPTURA SEGURA: Resgata a intenção de execução de score enviada pelo Front
+        execute_score = body.get("execute_score", False)
         
         if not documentos:
             return {
@@ -85,7 +82,7 @@ def handler(event, context):
         package_id = str(uuid.uuid4())
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         
-        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} no DynamoDB")
+        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} com execute_score={execute_score} no DynamoDB")
         
         db_client.put_item(
             TableName=TABLE_NAME,
@@ -97,7 +94,8 @@ def handler(event, context):
                 "uploadedAt": {"S": timestamp_atual},
                 "documentCount": {"N": str(len(documentos))},
                 "uploadedCount": {"N": "0"},
-                "humanReview": {"BOOL": False}
+                "humanReview": {"BOOL": False},
+                "execute_score": {"BOOL": execute_score} # 🎯 SALVAMENTO DO CONTRATO: Persiste a flag de forma tipada!
             }
         )
         

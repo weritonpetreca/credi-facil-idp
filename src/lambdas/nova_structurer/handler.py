@@ -1,15 +1,18 @@
 import json
 import os
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 from src.shared.tools import obter_especificacao_ferramenta_loan
 
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+# 🚀 FONTE DA VERDADE: Inicializa o client do DynamoDB para recuperar a flag perdida
+db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-pro-v1:0"
+TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
 # ==========================================================================
 # 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS EM INGLÊS)
@@ -29,8 +32,9 @@ TEMPLATE_DRIVER_LICENSE = {
     "identification_document_type": None, "document_number": None, "full_name": None,
     "date_of_birth": None, "issue_date": None, "expiration_date": None,
     "issuing_authority": None, "issuing_state": None, "issuing_country": None,
-    "address": None, "license_class": None, "restrictions": None, "endorsements": None,
-    "sex": None, "height": None, "eye_color": None
+    "address": None, "class": None, "restrictions": None, "endorsements": None,
+    "sex": None, "height": None, "eye_color": None, "document_discriminator": None,
+    "revision_date": None, "security_ghost_dob": None
 }
 
 TEMPLATE_W2_FORM = {
@@ -144,13 +148,20 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
 }
 
 PROMPT_SISTEMA = f"""
-Você é um agente IDP especialista em extração de dados e conformidade estrita de schemas.
+Você é um agente IDP analítico sênior especialista em extração de dados e conformidade cadastral.
 Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
 
 DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
 1. Classifique o documento em um dos pares de tipo/subtipo aceitos.
 2. No campo 'campos_extraidos_brutos', você DEVE retornar obrigatoriamente um objeto que possua EXATAMENTE as mesmas chaves e a mesma hierarquia estrutural (aninhamento) do gabarito correspondente abaixo.
 3. NÃO altere o nome das chaves, NÃO mude a hierarquia e NÃO remova chaves. Se um campo do gabarito não for localizado no texto, mantenha a chave preenchendo o valor como null (None).
+4. Datas (effective_date, expiration_date, date_of_birth): Devem seguir estritamente formatos válidos de data (ex: MM/DD/YYYY ou YYYY-MM-DD). Se contiver apenas letras ou caracteres especiais aleatórios, force para null.
+5. Números de Apólice/Documento (policy_number, document_number): Não podem conter apenas caracteres especiais repetidos (ex: %()*, ###). Devem possuir caracteres alfanuméricos válidos.
+6. Valores Financeiros (wages, amounts): Devem conter números e pontuações monetárias coerentes. Textos corrompidos devem ser engenhosamente anulados.
+7. Classe da Habilitação (chave 'class'): Remova qualquer prefixo como 'CLASS', 'CLASSE' ou numerais extras gerados por tabelas de OCR. O valor deve ser estritamente restrito a letras isoladas ou combinações oficiais de categorias de condução (Exemplos válidos: 'D', 'B', 'A', 'E', 'C'). Se o valor visual não for uma letra limpa, force para null.
+
+⚠️ REGRA ESTRITA ANTI-ALUCINAÇÃO DE COMPACTAÇÃO:
+Se você identificar valores na transcrição original contendo ruídos visuais puros, strings corrompidas ou falhas de leitura de fontes (Exemplos: '&()*', 'SPSESS', '##88%', '#8SS UHila'), ignore esses caracteres completamente. Nunca repasse esses símbolos para o JSON final; marque o campo estritamente como null.
 
 GABARITOS DE COMPLIANCE (Siga estritamente a hierarquia destes blocos):
 - Subtipo 'payroll_check': {json.dumps(TEMPLATE_PAYROLL_CHECK)}
@@ -168,13 +179,10 @@ def extrair_texto_linear(dados: any) -> list:
     if isinstance(dados, dict):
         for k, v in dados.items():
             if k in ["text", "textString", "value", "content"] and isinstance(v, str):
-                if len(v.strip()) > 0:
-                    textos.append(v.strip())
-            else:
-                textos.extend(extrair_texto_linear(v))
+                if len(v.strip()) > 0: textos.append(v.strip())
+            else: textos.extend(extrair_texto_linear(v))
     elif isinstance(dados, list):
-        for item in dados:
-            textos.extend(extrair_texto_linear(item))
+        for item in dados: textos.extend(extrair_texto_linear(item))
     return textos
 
 def limpar_ruido_recursivo(dados: any) -> any:
@@ -186,11 +194,7 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
-    """Monta a estrutura JSON rica respeitando a integridade dos campos internos."""
     raw_fields = payload_ia.get("campos_extraidos_brutos", {})
-    
-    # 🚀 FIX CIRÚRGICO: Mantém 'total_auto_claims_accidents_violations_all_applicants' 
-    # intocado dentro de 'dados_extraidos_do_documento', evitando o vazamento para a raiz.
     return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
@@ -202,6 +206,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_origem": f"s3://{s3_inputs['bucket_entrada']}/{s3_inputs['key_entrada']}",
             "bucket_resultado_bda": s3_inputs["bucket_saida"],
             "s3_key_resultado_bda": s3_inputs["key_bda"],
+            "s3_key_resultado": s3_inputs["key_resultado"],
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
@@ -212,118 +217,54 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         }
     }
 
-def consolidar_dossie_unico_cliente(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
-    timestamp_atual = datetime.utcnow().isoformat() + "Z"
-    nome_final = None
-    documentos_identificacao = []
+def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
+    timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     documentos_analisados = []
-    
     presenca = {"identificacao": False, "renda": False, "extrato": False, "imovel": False}
-    nomes_coletados = set()
-    pendencias = []
-    
-    renda_acumulada = 0.0
-    saldo_acumulado = 0.0
-    PLACEHOLDERS = {"N/A", "—", "-", "NONE", "NULL", ""}
 
     for item in intermediarios:
         bp = item["blueprint"]
-        raw_ia = item["raw_ia"]
-        
         tipo = bp["tipo_documento"]
-        nome_doc = str(raw_ia.get("nome_titular", "")).strip().upper()
         
-        if nome_doc and nome_doc not in PLACEHOLDERS:
-            nomes_coletados.add(nome_doc)
-            if not nome_final:
-                nome_final = nome_doc
-
-        campos = bp["dados_extraidos_do_documento"]
-        confianca_num = float(bp["confiabilidade_extracao"]["confianca_media"])
-
-        if tipo == "documento_identificacao":
-            presenca["identificacao"] = True
-            documentos_identificacao.append({
-                "tipo_documento": campos.get("identification_document_type") or "Outro",
-                "numero_documento": campos.get("document_number") or raw_ia.get("numero_documento_identificacao"),
-                "orgao_emissor": campos.get("issuing_authority") or "Não Informado",
-                "estado_emissor": campos.get("issuing_state") or "Não Informado",
-                "pais_emissor": campos.get("issuing_country") or "Não Informado",
-                "data_emissao": campos.get("issue_date"),
-                "data_validade": campos.get("expiration_date"),
-                "arquivo_origem": bp["arquivo_original"]
-            })
-        elif tipo == "comprovante_renda":
-            presenca["renda"] = True
-            renda_acumulada += float(raw_ia.get("renda_bruta_informada", 0.0) or 0.0)
-        elif tipo == "extrato_bancario":
-            presenca["extrato"] = True
-            saldo_acumulado += float(raw_ia.get("saldo_bancario_fechamento", 0.0) or 0.0)
-        elif tipo == "documento_imovel":
-            presenca["imovel"] = True
+        if tipo == "documento_identificacao": presenca["identificacao"] = True
+        elif tipo == "comprovante_renda": presenca["renda"] = True
+        elif tipo == "extrato_bancario": presenca["extrato"] = True
+        elif tipo == "documento_imovel": presenca["imovel"] = True
 
         documentos_analisados.append({
             "tipo_documento": tipo.upper(),
+            "subtipo_documento": bp.get("subtipo_documento", ""),
             "arquivo_original": bp["arquivo_original"],
             "s3_key_origem": bp["localizacao_documento_s3"]["s3_key_origem"],
             "s3_key_resultado_bda": bp["localizacao_documento_s3"]["s3_key_resultado_bda"],
+            "s3_key_resultado": bp["localizacao_documento_s3"].get("s3_key_resultado"),
             "status_extracao": bp["confiabilidade_extracao"]["status_extracao"],
-            "campos_extraidos": campos,
-            "confianca_media": confianca_num,
+            "campos_extraidos": bp["dados_extraidos_do_documento"],
+            "confianca_media": float(bp["confiabilidade_extracao"]["confianca_media"]),
             "observacoes": bp["confiabilidade_extracao"]["observacoes"]
         })
 
-    nome_consistente = True if len(nomes_coletados) == 1 else (False if len(nomes_coletados) > 1 else None)
-
-    if not presenca["identificacao"]: pendencias.append("Falta Documento de Identificação Oficial (RG/CNH/Passaporte).")
-    if not presenca["renda"]: pendencias.append("Falta Comprovante de Renda Válido (Holerite/W-2).")
-    if not presenca["extrato"]: pendencias.append("Falta Extrato Bancário para comprovação de liquidez.")
-
-    score_calculado = 0
-    if presenca["identificacao"] and nome_consistente: score_calculado += 30
-    if renda_acumulada > 0: score_calculado += 40
-    if saldo_acumulado > 0: score_calculado += 30
-
-    if score_calculado >= 70 and len(pendencias) == 0:
-        decisao, categoria_risco, resumo = "aprovar", "baixo", "Dossiê regularizado. Proponente possui KYC consistente e saúde financeira estável."
-    elif score_calculado >= 30 or len(pendencias) > 0:
-        decisao, categoria_risco, resumo = "revisar", "medio", f"Crédito em atenção. Foram localizadas {len(pendencias)} pendências documentais na esteira."
-    else:
-        decisao, categoria_risco, resumo = "recusar", "alto", "Solicitação recusada devido à ausência severa de comprovações de renda ou KYC inválido."
-
-    nome_modelo_final = "Amazon Nova Pro" if "pro" in MODEL_ID.lower() else "Amazon Nova"
-
     return {
-        "cliente": {
-            "nome": nome_final or "Não Identificado",
-            "data_nascimento": None,
-            "score_credito": {"valor": score_calculado, "fonte": "documentos", "observacao": "Score computado via análise sintática e volumetria do dossiê."},
-            "classificacao_risco": {"categoria": categoria_risco, "justificativa": resumo},
-            "documentos_identificacao": documentos_identificacao
-        },
         "sistema": {
-            "chave_cliente": f"CLIENT#{nome_final.replace(' ', '_')}" if nome_final else "CLIENT#UNKNOWN",
-            "ultimo_package_vinculado": {"package_id": package_id, "client_folder": f"packages/{package_id}/", "data_recebimento": timestamp_atual},
+            "ultimo_package_vinculado": {
+                "package_id": package_id,
+                "client_folder": f"packages/{package_id}/",
+                "data_recebimento": timestamp_atual
+            },
             "processamento": {
                 "status": "processado",
-                "modelo_utilizado": nome_modelo_final,
+                "modelo_utilizado": "Amazon Nova Pro",
                 "bda_project_arn": os.environ.get("BDA_PROJECT_ARN"),
-                "quantidade_tokens": {"input_tokens": metricas_tokens["input"], "output_tokens": metricas_tokens["output"], "total_tokens": metricas_tokens["input"] + metricas_tokens["output"]},
+                "quantidade_tokens": {
+                    "input_tokens": metricas_tokens["input"],
+                    "output_tokens": metricas_tokens["output"],
+                    "total_tokens": metricas_tokens["input"] + metricas_tokens["output"]
+                },
                 "data_processamento": timestamp_atual
             },
             "tipos_documentos_analisados": [k for k, v in presenca.items() if v]
         },
-        "documentos_analisados": documentos_analisados,
-        "validacao": {
-            "nome_consistente_entre_documentos": nome_consistente,
-            "data_nascimento_consistente": None,
-            "documento_identificacao_presente": presenca["identificacao"],
-            "comprovante_renda_presente": presenca["renda"],
-            "extrato_bancario_presente": presenca["extrato"],
-            "documentacao_imovel_presente": presenca["imovel"],
-            "pendencias": pendencias
-        },
-        "resultado_final": {"decisao_sugerida": decisao, "resumo_analise": resumo, "principais_alertas": []}
+        "documentos_analisados": documentos_analisados
     }
 
 def handler(event, context):
@@ -333,7 +274,24 @@ def handler(event, context):
         bucket_entrada = f"credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}"
         prefix_busca = f"bda-output/{package_id}/"
 
-        logger.info(f"Iniciando segmentação analítica por categorias para o lote {package_id}")
+        logger.info(f"Iniciando segmentação analítica pura de documentos para o lote {package_id}")
+
+        # 🚀 SOLUÇÃO DO CONTRATO: Busca a real intenção diretamente na fonte de dados persistida
+        execute_score = False
+        try:
+            db_res = db_client.get_item(
+                TableName=TABLE_NAME,
+                Key={
+                    "PK": {"S": package_id},
+                    "SK": {"S": "METADATA"}
+                }
+            )
+            item_db = db_res.get("Item", {})
+            execute_score = item_db.get("execute_score", {}).get("BOOL", False)
+            logger.info(f"Sincronização offline realizada. Flag execute_score recuperada do banco: {execute_score}")
+        except Exception as db_err:
+            logger.warning(f"Falha de barreira ao ler DynamoDB, recorrendo ao payload: {str(db_err)}")
+            execute_score = event.get("execute_score", False)
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
@@ -348,8 +306,7 @@ def handler(event, context):
             if len(partes) < 3: continue
             nome_pdf_original = partes[2]
             
-            if nome_pdf_original not in mapa_documentos:
-                mapa_documentos[nome_pdf_original] = []
+            if nome_pdf_original not in mapa_documentos: mapa_documentos[nome_pdf_original] = []
             mapa_documentos[nome_pdf_original].append(obj)
 
         intermediarios_coletados = []
@@ -361,7 +318,7 @@ def handler(event, context):
             if not obj_selecionado:
                 obj_selecionado = next((o for o in lista_objetos if "standard_output" in o["Key"]), lista_objetos[0])
 
-            logger.info(f"Processando arquivo original: {nome_pdf_original}")
+            logger.info(f"Extraindo metadados sintáticos do arquivo original: {nome_pdf_original}")
             
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj_selecionado["Key"])
             json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -414,50 +371,48 @@ def handler(event, context):
             elif "insurance" in nome_pdf_original.lower() or tipo_detectado == "property_document":
                 tipo_detectado = "documento_imovel"
                 subtipo_detectado = "homeowners_insurance_application"
-            elif "license" in nome_pdf_original.lower() or tipo_detectado == "identity_document":
+            elif "license" in nome_pdf_original.lower() or "id_card" in nome_pdf_original.lower() or tipo_detectado == "identity_document":
                 tipo_detectado = "documento_identificacao"
                 subtipo_detectado = "driver_license"
 
+            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
+            
             s3_meta_inputs = {
-                "bucket_entrada": bucket_entrada,
-                "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
-                "bucket_saida": bucket_saida,
-                "key_bda": obj_selecionado["Key"]
+                "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
+                "bucket_saida": bucket_saida, "key_bda": obj_selecionado["Key"], "key_resultado": s3_target_key
             }
 
             blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
             
-            logger.info(f"Salvando JSON no caminho global agrupado estável: {s3_target_key}")
+            logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
             s3_client.put_object(
-                Bucket=bucket_saida,
-                Key=s3_target_key,
-                Body=json.dumps(blueprint_json, ensure_ascii=False),
-                ContentType="application/json"
+                Bucket=bucket_saida, Key=s3_target_key,
+                Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"
             )
 
             intermediarios_coletados.append({"blueprint": blueprint_json, "raw_ia": achado})
 
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
-        json_final_consolidado = consolidar_dossie_unico_cliente(package_id, intermediarios_coletados, metricas)
+        json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
 
-        s3_client.put_object(
-            Bucket=bucket_saida,
-            Key=f"results/{package_id}/output.json",
-            Body=json.dumps(json_final_consolidado, ensure_ascii=False),
-            ContentType="application/json"
-        )
+        if not execute_score:
+            logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/packages/{package_id}/output.json")
+            s3_client.put_object(
+                Bucket=bucket_saida, Key=f"results/packages/{package_id}/output.json",
+                Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
+            )
+        else:
+            logger.info("Gate de Score ativo. Adotando persistência sob demanda no Consolidador para mitigar arquivos fantasmas.")
 
         return {
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
+            "execute_score": execute_score,  # 🎯 AGORA VAI PREENCHIDO COM A VERDADE DO BANCO!
             "bda_output_bucket": bucket_saida,
-            "confianca_geral": round(1.0, 2),
-            "decisao_sugerida": json_final_consolidado["resultado_final"]["decisao_sugerida"],
-            "revisao_humana": json_final_consolidado["cliente"]["classificacao_risco"]["categoria"] == "medio",
-            "json_estruturado": json_final_consolidado
+            "confianca_general": round(1.0, 2),
+            "json_estruturado": json_base_lote
         }
 
     except Exception as e:
-        logger.error(f"Falha crítica na segmentação categórica de documentos: {str(e)}")
+        logger.error(f"Falha catastrófica no processamento isolado do Structurer: {str(e)}")
         raise e

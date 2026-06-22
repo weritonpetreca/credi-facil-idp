@@ -1,5 +1,5 @@
 {
-  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil",
+  "Comment": "Pipeline simplificado e robusto de IDP para o CrediFacil com Auditoria Granular e Roteamento Condicional de Score",
   "StartAt": "InvokeBDA",
   "States": {
     "InvokeBDA": {
@@ -23,7 +23,7 @@
         {
           "Variable": "$.status",
           "StringEquals": "SUCCESS",
-          "Next": "StructureWithNova"
+          "Next": "EvaluateConfidence"
         },
         {
           "Variable": "$.status",
@@ -33,9 +33,88 @@
       ],
       "Default": "WaitForBDA"
     },
+    "EvaluateConfidence": {
+      "Type": "Task",
+      "Resource": "${ConfidenceCheckerArn}",
+      "Next": "StructureWithNova"
+    },
     "StructureWithNova": {
       "Type": "Task",
-      "Resource": "${NovaStructurerArn}",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NovaStructurerArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "GenerateExcelReports"
+    },
+    "GenerateExcelReports": {
+      "Type": "Map",
+      "ItemsPath": "$.json_estruturado.documentos_analisados",
+      "Parameters": {
+        "package_id.$": "$.package_id",
+        "bda_output_bucket.$": "$.bda_output_bucket",
+        "arquivo_original.$": "$$.Map.Item.Value.arquivo_original",
+        "s3_key_resultado.$": "$$.Map.Item.Value.s3_key_resultado",
+        "campos_extraidos.$": "$$.Map.Item.Value.campos_extraidos"
+      },
+      "Iterator": {
+        "StartAt": "InvokeExcelGenerator",
+        "States": {
+          "InvokeExcelGenerator": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ExcelGeneratorArn}",
+              "Payload.$": "$"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.excel_generation_results",
+      "Next": "CheckScoreExecution"
+    },
+    "CheckScoreExecution": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.execute_score",
+          "BooleanEquals": true,
+          "Next": "ConsolidateCustomer"
+        }
+      ],
+      "Default": "WriteResult"
+    },
+    "ConsolidateCustomer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CustomerConsolidatorArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "GenerateConsolidatedExcel"
+    },
+    "GenerateConsolidatedExcel": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ExcelGeneratorArn}",
+        "Payload": {
+          "package_id.$": "$.package_id",
+          "bda_output_bucket.$": "$.bda_output_bucket",
+          "arquivo_original": "customer_consolidated.pdf",
+          "s3_key_resultado.$": "States.Format('results/clientes/{}/customer_consolidated.json', $.package_id)"
+        }
+      },
+      "ResultPath": "$.consolidated_excel_result",
       "Next": "WriteResult"
     },
     "WriteResult": {
