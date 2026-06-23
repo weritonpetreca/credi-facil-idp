@@ -40,10 +40,10 @@ O **Hack2Hire** é um hackathon promovido pela **Escola da Nuvem** em parceria c
 
 | Integrante |
 |---|
-| Weriton Luis Petreca |
-| Mikael Kobama |
-| Juan Levi |
-| Ítalo Palhares |
+| [Weriton Petreca](https://github.com/weritonpetreca) |
+| [Mikael Kobama](https://github.com/Mikael-Kobama) |
+| [Juan Levi](https://github.com/Juan92eng) |
+| [Ítalo Palhares](https://github.com/ItaloPalhares) |
 
 ---
 
