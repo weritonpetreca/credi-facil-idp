@@ -71,9 +71,8 @@ O analista interage com tudo isso por uma única interface web, sem precisar abr
 
 ## 🏗️ Arquitetura
 
-![Arquitetura da Solução CrediFácil](docs/architecture-diagram.png)
+![Arquitetura da Solução CrediFácil](architecture-diagram.png)
 
-> 📌 *Coloque a imagem do diagrama em `docs/architecture-diagram.png` neste repositório para que ela seja exibida aqui no GitHub.*
 
 A solução é **100% serverless**, na região `us-east-1`, dividida em duas frentes: o **fluxo principal** de processamento e uma camada transversal de **segurança e observabilidade**.
 
@@ -205,9 +204,6 @@ Considerando um cenário de aproximadamente **750 solicitações diárias**, foi
 
 ---
 
-## 📜 Licença
-
-Projeto desenvolvido para fins acadêmicos e de hackathon, sem fins comerciais. Caso o grupo deseje formalizar uma licença open-source (ex.: MIT), basta adicionar um arquivo `LICENSE` na raiz do repositório.
 
 ## 🙏 Agradecimentos
 
