@@ -67,23 +67,36 @@ jobs:
               BdaProjectId="$BDA_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
-      - name: Sync Front-End Assets and Invalidate CloudFront
+      - name: Deploy Front-End to S3 & Invalidate CloudFront
         run: |
-          echo "🔍 Capturando dinamicamente o ID da distribuição do CloudFront na Stack..."
+          echo "🔍 Capturando dinamicamente as informações de saída da Stack..."
+          
           DIST_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
             --output text)
           
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name credifacil-idp-dev \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" \
+            --output text)
+
+          if [ -z "$BUCKET_NAME" ] || [ "$BUCKET_NAME" = "None" ]; then
+            echo "⚠️ FrontendBucketName não encontrado nos Outputs. Montando via STS..."
+            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+            BUCKET_NAME="credifacil-idp-frontend-${ACCOUNT_ID}-dev"
+          fi
+
           if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
-            echo "❌ Erro: Não foi possível obter o CloudFrontDistributionId da Stack."
+            echo "❌ Erro: Não foi possível obter o CloudFrontDistributionId."
             exit 1
           fi
           
-          echo "✅ ID Detectado com sucesso: $DIST_ID"
+          echo "✅ ID do CloudFront Detectado: $DIST_ID"
+          echo "✅ Bucket do S3 Detectado: $BUCKET_NAME"
           
           echo "📦 Iniciando publicação automática dos arquivos estáticos para o S3..."
-          aws s3 sync frontend/ s3://credifacil-idp-frontend-dev --delete
+          aws s3 sync frontend/dist/ s3://$BUCKET_NAME --delete
           
           echo "⚡ Disparando invalidação de cache no CloudFront..."
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
