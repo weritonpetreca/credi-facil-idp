@@ -1,14 +1,17 @@
-# 🏦 CrediFácil IDP
+# 🏆🏦 CrediFácil IDP — Vencedor Hack2Hire 2026
 
 ![AWS](https://img.shields.io/badge/AWS-Serverless-FF9900?logo=amazon-aws&logoColor=white)
+![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8.0-646CFF?logo=vite&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![SAM](https://img.shields.io/badge/IaC-AWS%20SAM-FF9900)
 ![Bedrock](https://img.shields.io/badge/AI-Amazon%20Bedrock-8C4FFF)
-![Status](https://img.shields.io/badge/status-MVP%20funcional-success)
+![CloudWatch](https://img.shields.io/badge/Observability-CloudWatch%20%2B%20X--Ray-FF9900)
+![Status](https://img.shields.io/badge/status-MVP%20Produção-success)
 
-> Solução serverless de **Processamento Inteligente de Documentos (IDP)** para automação da análise de crédito com garantia imobiliária, construída de ponta a ponta na AWS com IA generativa.
+> 🎯 **Solução serverless de Processamento Inteligente de Documentos (IDP)** para automação completa da análise de crédito com garantia imobiliária, construída de ponta a ponta na AWS com IA generativa e observabilidade em tempo real.
 
-Projeto desenvolvido para o **Hack2Hire 2026**, evento promovido pela **Escola da Nuvem** em parceria com a **AWS** — **Case A**.
+**Desenvolvido pelo Grupo 12** para o **Hack2Hire 2026** — evento promovido pela **Escola da Nuvem** em parceria com a **AWS**. 🚀
 
 ---
 
@@ -19,13 +22,15 @@ Projeto desenvolvido para o **Hack2Hire 2026**, evento promovido pela **Escola d
 - [O Desafio (Case A)](#-o-desafio-case-a)
 - [A Solução](#-a-solução)
 - [Arquitetura](#️-arquitetura)
-- [Como Funciona](#️-como-funciona)
+- [Frontend — UX Moderna](#-frontend--experiência-de-usuário-moderna)
+- [Fluxo de Processamento](#️-fluxo-de-processamento-automático)
 - [Impacto Mensurável](#-impacto-mensurável)
 - [Estrutura do Repositório](#-estrutura-do-repositório)
 - [Como Executar / Deploy](#-como-executar--deploy)
-- [Segurança & Observabilidade](#-segurança--observabilidade)
-- [Limitações Conhecidas](#️-limitações-conhecidas)
-- [Roadmap / Melhorias Futuras](#️-roadmap--melhorias-futuras)
+- [Segurança & Observabilidade](#-segurança--observabilidade---produção-ready)
+- [Implementado no Hack2Hire](#-hack2hire-2026--o-que-foi-implementado-vs-futuro)
+- [Limitações Conhecidas](#️-limitações-conhecidas--em-desenvolvimento)
+- [Roadmap](#-roadmap--evolução-da-solução)
 - [Estimativa de Custos](#-estimativa-de-custos)
 - [Licença](#-licença)
 - [Agradecimentos](#-agradecimentos)
@@ -38,7 +43,7 @@ O **Hack2Hire** é um hackathon promovido pela **Escola da Nuvem** em parceria c
 
 ## 👥 Equipe — Grupo 12
 
-| Integrante |
+| Integrantes |
 |---|
 | [Weriton Petreca](https://github.com/weritonpetreca) |
 | [Mikael Kobama](https://github.com/Mikael-Kobama) |
@@ -96,17 +101,31 @@ A solução é **100% serverless**, na região `us-east-1`, dividida em duas fre
 | Segurança | **AWS IAM** (Roles + Permission Boundary) + **OIDC** | Privilégio mínimo, sem credenciais estáticas no CI/CD |
 | IaC | **AWS SAM** / CloudFormation | Toda a infraestrutura é reprodutível via código |
 
-## ⚙️ Como Funciona
+## 💻 Frontend — Experiência de Usuário Moderna
 
-1. **Upload:** o analista envia os documentos pela interface web → a API gera URLs pré-assinadas → o navegador faz o upload **direto para o S3**, sem passar pelo backend.
-2. **Disparo automático:** quando todos os arquivos do lote chegam ao S3, uma Lambda detecta o evento e inicia automaticamente a execução do Step Functions.
-3. **Extração:** o **Amazon Bedrock Data Automation** realiza o OCR e a classificação de cada documento.
-4. **Estruturação:** o **Amazon Nova Pro** transforma a extração bruta em JSON estruturado e tipado, por documento.
-5. **Score (opcional):** se solicitado, uma segunda chamada ao Nova Pro cruza os dados entre todos os documentos (consistência de nome, data de nascimento, documentos) e uma **regra determinística em código** calcula o score final (300 a 1000 pontos) com base em KYC, renda e liquidez.
-6. **Persistência:** o resultado é salvo no **DynamoDB** e no **S3** (JSON + Excel).
-7. **Consulta:** a interface consulta o status em tempo real e, ao concluir, exibe o relatório completo com links de download seguros (URLs assinadas).
+O **CrediFácil IDP** conta com uma interface web construída em **React 19** com **Vite** como bundler, oferecendo uma experiência fluida e responsiva:
 
-## 📊 Impacto Mensurável
+- **🎯 Upload por Drag-and-Drop:** O usuário arrasta os documentos diretamente na interface, sem complexidade. Upload seguro e direto ao S3 via URLs pré-assinadas.
+- **📺 Terminal de Logs em Tempo Real:** Acompanhamento ao vivo de cada etapa do processamento (OCR, validação, extração, score) através de um terminal interativo estilizado, mostrando fase ativa, tempo decorrido e status (LIVE, CONCLUÍDO, ERRO).
+- **📊 Dashboard de Score de Crédito:** Visualização instantânea do score calculado (300 a 1000 pontos), classificação de risco (baixo/médio/alto) com cores visuais intuitivas, e explicação estruturada de cada fator avaliado.
+- **📥 Download Seguro:** Links assinados para download de planilhas Excel consolidadas e JSON estruturados, com auditoria completa integrada.
+- **🌓 Dark Mode:** Tema escuro nativo otimizado para ambientes de análise operacional.
+
+**Stack Frontend:** React 19.2 | Vite 8.0 | Componentes funcionais | Hooks customizados | CSS modular
+
+---
+
+## ⚙️ Fluxo de Processamento Automático
+
+1. **Upload Seguro:** O usuário arrasta os documentos para o drag-and-drop → a API gera URLs pré-assinadas → o navegador faz o upload **direto para o S3**, sem exposição de credenciais.
+2. **Disparo Automático:** Quando todos os arquivos do lote chegam ao S3, uma Lambda detecta o evento e inicia automaticamente a execução do Step Functions.
+3. **Extração Inteligente:** O **Amazon Bedrock Data Automation** realiza OCR, classificação e extração bruta de cada documento em paralelo.
+4. **Estruturação de Dados:** O **Amazon Nova Pro** transforma a extração bruta em JSON estruturado e tipado, por documento, com validações.
+5. **Cálculo de Score (Opcional):** Se solicitado, uma segunda chamada ao Nova Pro realiza validação cruzada de KYC entre documentos (consistência de nome, data de nascimento, tipos de documento), e uma **regra determinística em código** (100% auditável) calcula o score final (300 a 1000 pontos) com base em análise de risco, renda e liquidez.
+6. **Persistência Imediata:** O resultado é salvo no **DynamoDB** (metadados) e no **S3** (JSON estruturado + Excel consolidado).
+7. **Consulta em Tempo Real:** A interface consulta o status continuamente; quando concluído, exibe o relatório completo com links de download seguros (URLs assinadas com validade limitada).
+
+**📊 Impacto Mensurável**
 
 Em aproximadamente **2 minutos**, o CrediFácil IDP processa um pacote com **6 documentos distintos**, classifica cada arquivo e entrega os resultados em JSON estruturado e Excel — uma etapa que, manualmente, levaria entre **20 e 30 minutos** de triagem operador a operador.
 
@@ -121,10 +140,16 @@ Com a automação, o operador deixa de fazer a conferência campo a campo e pass
 ├── .github/workflows/         # Pipeline de CI/CD (GitHub Actions + OIDC)
 │   └── deploy-dev.yml
 ├── events/                    # Eventos de exemplo para testes locais
-├── frontend/                  # Interface web (HTML/CSS/JS)
+├── frontend/                  # Interface web — React 19 + Vite
+│   ├── src/
+│   │   ├── components/        # Componentes React (FileDropZone, StatusTerminal, ResultPanel, etc)
+│   │   ├── hooks/             # Custom hooks para polling e gerenciamento de estado
+│   │   ├── utils/             # Funções auxiliares (formatação, cálculos)
+│   │   ├── App.jsx
+│   │   └── main.jsx
 │   ├── index.html
-│   ├── app.js
-│   └── style.css
+│   ├── vite.config.js
+│   └── package.json
 ├── infrastructure/
 │   └── template.yaml          # Infraestrutura como código (AWS SAM)
 ├── samples/                   # Exemplos de payloads (ex.: baixa confiança do BDA)
@@ -169,32 +194,75 @@ sam deploy \
 
 ---
 
-## 🔐 Segurança & Observabilidade
+## 🔐 Segurança & Observabilidade — Produção-Ready
 
-Aplicado de forma transversal a todas as Lambdas, ao Step Functions e à API Gateway:
+Implementado de forma transversal a todas as Lambdas, ao Step Functions e à API Gateway:
 
-- **AWS IAM** — roles com privilégio mínimo, escopadas por recurso, sob um *Permission Boundary* obrigatório do ambiente do hackathon;
-- **OIDC (GitHub Actions)** — deploy sem credenciais de longa duração;
-- **AWS X-Ray** — tracing distribuído ativo em todas as funções;
-- **Amazon CloudWatch** — logs estruturados (AWS Lambda Powertools), métricas e alarmes;
-- **Upload seguro** — arquivos só entram no S3 via URL pré-assinada de curta duração; downloads também são feitos via URLs assinadas, nunca por acesso público ao bucket.
+### 🔍 Observabilidade em Tempo Real
 
-## ⚠️ Limitações Conhecidas
+- **AWS Lambda Powertools** — Logger estruturado em todas as Lambdas (JSON), com serviços identificados e contexto de execução completo;
+- **Amazon CloudWatch** — Logs centralizados com buscas por package_id, tempo de execução e status de processamento; métricas customizadas para custo por requisição;
+- **AWS X-Ray** — Tracing distribuído ativo em todas as funções (Tracing: Active nos Globals do SAM template), com mapa de serviços visual e latência ponta-a-ponta.
+- **Dashboard Operacional** — Terminal em tempo real no frontend com atualizações contínuas do status de cada etapa.
 
-- O fluxo de **notificação assíncrona (Amazon SNS)** e a **fila de revisão humana (Amazon SQS)** já estão desenhados na infraestrutura como código, mas **ainda não estão validados como funcionais** nesta fase do projeto. O pipeline de extração e cálculo de score funciona de ponta a ponta independentemente disso.
-- Não há autenticação de usuários conectada à API neste MVP (o formato de claims do Cognito já está previsto nos eventos de exemplo, mas não está integrado ao código).
-- O endpoint manual `/v1/packages/{packageId}/process` existe na infraestrutura mas não é utilizado pelo fluxo atual do frontend (o disparo é automático via evento de upload no S3).
+### 🛡️ Segurança
 
-## 🛣️ Roadmap / Melhorias Futuras
+- **AWS IAM** — Roles com privilégio mínimo, escopadas por recurso, sob *Permission Boundary* obrigatório;
+- **OIDC (GitHub Actions)** — Deploy sem credenciais de longa duração (assumindo roles temporárias);
+- **S3 Bucket Encryption** — Criptografia AES-256 ativada em todos os buckets;
+- **Signed URLs** — Arquivos entram e saem do S3 apenas via URLs pré-assinadas de curta duração (nunca acesso público).
 
-- 🔐 **Segurança e monitoramento ampliados:** integração de **AWS Shield** (proteção contra DDoS), **AWS WAF**, **Amazon GuardDuty** e **Amazon Cognito** (gerenciamento de usuários e senhas em escala);
-- 📣 Correção e ativação completa da cadeia **Amazon SNS** (notificações) e **Amazon SQS** (fila de revisão humana);
-- 🌐 **Amazon CloudFront** na frente do frontend e dos downloads (HTTPS customizado, cache, WAF);
-- 🔄 Substituição do polling de status por **WebSocket API** ou **AWS AppSync** (atualização em tempo real);
-- 🧩 Migração do disparo sequencial do BDA para um *Map state* nativo do Step Functions (paralelismo real, sem risco de timeout);
-- ✅ Implementação de testes automatizados (`pytest` + `moto`);
-- 💾 Habilitação de *Point-in-Time Recovery* (PITR) e backups automáticos no DynamoDB;
-- 🔑 Criptografia customizada (KMS) em S3 e DynamoDB para uma postura de compliance mais forte.
+---
+
+## 🏆 Hack2Hire 2026 — O que foi Implementado vs Futuro
+
+### ✅ Implementado Durante o Evento
+
+Tudo funcionando e em produção:
+
+- ✅ **Pipeline IDP Completo:** Extração com Bedrock Data Automation, estruturação com Nova Pro, cálculo de score determinístico;
+- ✅ **Frontend React + Vite:** Interface moderna com drag-and-drop, terminal de logs em tempo real, dashboard de score com dark mode;
+- ✅ **Observabilidade:** CloudWatch logs estruturados (AWS Lambda Powertools) + X-Ray tracing distribuído em todas as funções;
+- ✅ **Upload Seguro:** URLs pré-assinadas, S3 com criptografia AES-256, sem credenciais expostas;
+- ✅ **CI/CD via OIDC:** GitHub Actions com autenticação segura na AWS (sem secrets estáticos);
+- ✅ **IaC Reprodutível:** 100% da infraestrutura via AWS SAM / CloudFormation;
+- ✅ **Tratamento de Confiança:** Validação granular de acurácia do BDA, com alertas para campos críticos;
+- ✅ **Relatórios Excel:** Geração automática de planilhas estilizadas com openpyxl;
+- ✅ **DynamoDB CRM:** Persistência de dados consolidados do cliente para auditoria e consultas futuras.
+
+## ⚠️ Limitações Conhecidas & Em Desenvolvimento
+
+### Em Desenvolvimento Pós-Hackathon
+
+- 🔄 **Amazon SNS & SQS** — Estrutura desenhada no SAM template, implementação de notificações assíncronas e fila de revisão humana em validação;
+- 🔑 **Amazon Cognito** — Autenticação de usuários integrada à API (claims já mapeados nos eventos de exemplo, integração backend em progresso).
+
+### Limitações do MVP
+
+- O endpoint manual `/v1/packages/{packageId}/process` existe na infraestrutura mas não é utilizado pelo fluxo atual (disparo é 100% automático via evento de S3).
+
+## 🛣️ Roadmap — Evolução da Solução
+
+### 🔜 Próximas Iterações (Curto Prazo)
+
+- 🔔 **SNS/SQS Completo** — Ativar notificações de conclusão e fila de revisão humana (estrutura já existe);
+- 🔐 **Cognito com MFA** — Integração de autenticação de usuários com multi-factor authentication;
+- 🔄 **WebSocket / AppSync** — Atualização real-time de status em vez de polling;
+- 🧪 **Testes Automatizados** — Suite de testes com `pytest` + `moto` para Lambdas e Step Functions.
+
+### 🚀 Médio Prazo — Escalabilidade & Performance
+
+- 🌐 **Amazon CloudFront** — CDN na frente do frontend e downloads (cache, HTTPS, WAF integrado);
+- ⚡ **Paralelismo Real** — Migração de BDA para *Map state* nativo do Step Functions (sem risco de timeout);
+- 📊 **Batching Automático** — Processamento agrupado de múltiplos pacotes (reduz custos de API);
+- 💾 **PITR + Backups** — Point-in-Time Recovery e backup automático no DynamoDB.
+
+### 🔒 Longo Prazo — Compliance & Segurança Avançada
+
+- 🛡️ **AWS Shield / WAF** — Proteção contra DDoS e ataques web;
+- 🔍 **GuardDuty** — Detecção de ameaças e comportamentos anômalos;
+- 🔐 **KMS Customizado** — Chaves de criptografia gerenciadas pelo cliente para S3 e DynamoDB;
+- 📋 **Compliance Audit Trail** — Log imutável de todas as operações sensíveis (CloudTrail + S3 Object Lock).
 
 ## 💰 Estimativa de Custos
 
