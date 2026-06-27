@@ -67,30 +67,39 @@ jobs:
               BdaProjectId="$BDA_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
+      - name: Build Front-End (Vite Compilation)
+        run: |
+          echo "🟢 Entrando na pasta do front-end..."
+          cd frontend
+          
+          echo "📦 Instalando dependências do projeto..."
+          npm ci 
+          
+          echo "⚙️ Injetando variáveis de ambiente locais para o build..."
+
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name credifacil-idp-dev \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text)
+          
+          echo "VITE_API_URL=$API_ENDPOINT" > .env
+          
+          echo "🛠️ Compilando os assets estáticos de produção..."
+          npm run build
+          
+          echo "✅ Pasta dist/ gerada com sucesso!"
+          ls -la dist/ 
+          
       - name: Deploy Front-End to S3 & Invalidate CloudFront
         run: |
           echo "🔍 Capturando dinamicamente as informações de saída da Stack..."
-          
           DIST_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
             --output text)
           
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name credifacil-idp-dev \
-            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" \
-            --output text)
-
-          if [ -z "$BUCKET_NAME" ] || [ "$BUCKET_NAME" = "None" ]; then
-            echo "⚠️ FrontendBucketName não encontrado nos Outputs. Montando via STS..."
-            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-            BUCKET_NAME="credifacil-idp-frontend-${ACCOUNT_ID}-dev"
-          fi
-
-          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
-            echo "❌ Erro: Não foi possível obter o CloudFrontDistributionId."
-            exit 1
-          fi
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          BUCKET_NAME="credifacil-idp-frontend-${ACCOUNT_ID}-dev"
           
           echo "✅ ID do CloudFront Detectado: $DIST_ID"
           echo "✅ Bucket do S3 Detectado: $BUCKET_NAME"
