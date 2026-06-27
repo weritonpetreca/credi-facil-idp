@@ -1,35 +1,68 @@
-# === Python e Ambientes Virtuais ===
+# ==========================================================================
+# 🛡️ CREDIFÁCIL IDP - OFFICIAL GITIGNORE (DevSecOps Approved)
+# ==========================================================================
+
+# 🐍 Python & Ambientes Virtuais
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
+*.py[cod]
+*$py.class
 .venv/
 venv/
 ENV/
-interface/
+env/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# === Framework de Testes (Pytest) ===
-.pytest_cache/
-.coverage
-htmlcov/
-
-# === Infraestrutura como Código (AWS SAM) ===
+# 🐳 AWS SAM CLI & CloudFormation
 .aws-sam/
 samconfig.toml
-# Opcional: Se vocês guardarem secrets locais nos parâmetros
-parameters/*.json
 
-# === IDEs e Editores (VS Code / JetBrains) ===
-.vscode/
+# 🟢 Node.js & Front-end (React/Vite)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+.npm
+.eslintcache
+.parcel-cache
+.cache
+.vite
+
+# 🔑 Segurança & Segredos (Não trackear de forma alguma)
+.env
+.env.local
+.env.development
+.env.development.local
+.env.production
+.env.production.local
+frontend/.env
+frontend/.env.development
+frontend/.env.production
+*.pem
+*.key
+*.secret
+
+# 💻 Arquivos do Sistema Operacional / IDEs
+.DS_Store
+Thumbs.db
 .idea/
+.vscode/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.swp
-
-# === Sistema Operacional ===
-.DS_Store
-Thumbs.db

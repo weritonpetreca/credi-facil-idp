@@ -71,7 +71,7 @@ O analista interage com tudo isso por uma única interface web, sem precisar abr
 
 ## 🏗️ Arquitetura
 
-![Arquitetura da Solução CrediFácil](architecture-diagram.png)
+![Arquitetura da Solução CrediFácil](docs/architecture-diagram.png)
 
 
 A solução é **100% serverless**, na região `us-east-1`, dividida em duas frentes: o **fluxo principal** de processamento e uma camada transversal de **segurança e observabilidade**.

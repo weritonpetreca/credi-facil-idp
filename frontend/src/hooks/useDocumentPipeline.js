@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 
-const API_URL = "https://zrky80ks0l.execute-api.us-east-1.amazonaws.com/dev/";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/";
 
 const MIN_FILES = 1;
 const MAX_FILES = 8;

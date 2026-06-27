@@ -44,7 +44,7 @@ def handler(event, context):
         payload_input_step = {
             "package_id": package_id,
             "user_id": user_id,
-            "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}",
+            "bda_output_bucket": os.environ.get("BUCKET_SAIDA"),
             "bda_output_key": f"bda-output/{package_id}/result.json"
         }
         
