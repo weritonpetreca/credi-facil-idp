@@ -135,42 +135,43 @@ Com a automação, o operador deixa de fazer a conferência campo a campo e pass
 
 ## 📁 Estrutura do Repositório
 
-```
+```bash
 .
 ├── .github/workflows/         # Pipeline de CI/CD (GitHub Actions + OIDC)
-│   └── deploy-dev.yml
-├── events/                    # Eventos de exemplo para testes locais
+│   ├── deploy-dev.yml         # Deploy automático para o ambiente de desenvolvimento
+│   └── destroy-dev.yml        # Workflow para desprovisionar o ambiente de dev
+├── docs/                      # Documentação e diagramas da arquitetura
+│   └── architecture-diagram.png
 ├── frontend/                  # Interface web — React 19 + Vite
 │   ├── src/
-│   │   ├── components/        # Componentes React (FileDropZone, StatusTerminal, ResultPanel, etc)
-│   │   ├── hooks/             # Custom hooks para polling e gerenciamento de estado
-│   │   ├── utils/             # Funções auxiliares (formatação, cálculos)
-│   │   ├── App.jsx
-│   │   └── main.jsx
+│   │   # ...
 │   ├── index.html
 │   ├── vite.config.js
 │   └── package.json
 ├── infrastructure/
 │   └── template.yaml          # Infraestrutura como código (AWS SAM)
-├── samples/                   # Exemplos de payloads (ex.: baixa confiança do BDA)
 ├── src/
-│   ├── lambdas/                # Uma pasta por função Lambda
-│   │   ├── pre_signed_url/
-│   │   ├── s3_upload_tracker/
+│   ├── lambdas/               # Código-fonte de cada função Lambda
 │   │   ├── bda_invoker/
 │   │   ├── bda_status_poller/
 │   │   ├── confidence_checker/
-│   │   ├── nova_structurer/
-│   │   ├── excel_generator/
 │   │   ├── customer_consolidator/
-│   │   ├── result_writer/
+│   │   ├── excel_generator/
+│   │   ├── nova_structurer/
+│   │   ├── pipeline_trigger/
+│   │   ├── pre_signed_url/
 │   │   ├── query_handler/
+│   │   ├── result_writer/
+│   │   ├── s3_upload_tracker/
 │   │   └── notification/
-│   ├── layers/dependencies/    # Layer compartilhada (boto3, pydantic, powertools, openpyxl)
-│   └── shared/                 # Modelos Pydantic, schemas JSON e tools do Bedrock
+│   ├── layers/dependencies/   # Layer compartilhada (boto3, pydantic, powertools, openpyxl)
+│   └── shared/                # Modelos Pydantic, schemas JSON e tools do Bedrock
 ├── state_machines/
-│   └── idp_pipeline.json       # Definição da máquina de estados
-└── requirements.txt
+│   └── idp_pipeline.json      # Definição da máquina de estados (Step Functions)
+├── tests/                     # Testes automatizados (unitários, integração)
+│   └── unit/                  # Testes unitários para as funções Lambda
+├── requirements.txt           # Dependências Python do backend
+└── LICENSE                    # Licença de uso do projeto (MIT)
 ```
 
 ## 🚀 Como Executar / Deploy
@@ -272,6 +273,9 @@ Considerando um cenário de aproximadamente **750 solicitações diárias**, foi
 
 ---
 
+## 📜 Licença
+
+Este projeto é distribuído sob a **Licença MIT**. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
 
 ## 🙏 Agradecimentos
 

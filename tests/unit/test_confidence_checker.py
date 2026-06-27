@@ -3,12 +3,16 @@ import pytest
 from src.lambdas.confidence_checker.handler import avaliar_confianca
 
 def test_deve_exigir_revisao_humana_quando_campo_critico_tiver_baixa_confianca():
-    # Carrega o nosso arquivo de simulação (Mock)
-    with open("samples/bda_output_low_confidence.json", "r") as f:
-        mock_data = json.load(f)
-        
+    # Mock de dados que antes estava em um arquivo externo
+    mock_data = {
+        "documentType": "IdentityDocument",
+        "extractedFields": {
+            "nome": {"value": "Weriton", "confidence": 0.95},
+            "cpf": {"value": "529.982.247-25", "confidence": 0.78},
+            "data_nascimento": {"value": "1989-12-25", "confidence": 0.91}
+        }
+    }
     resultado = avaliar_confianca(mock_data)
-    
     # O sistema precisa detectar que precisa de revisão por causa do CPF
     assert resultado["needs_human_review"] is True
     assert "cpf" in resultado["low_confidence_fields"]

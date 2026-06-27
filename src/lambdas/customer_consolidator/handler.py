@@ -57,8 +57,8 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> int
 
     # 3. Pilar de Liquidez e Colchão de Amortização (Até 400 pontos)
     if saldo_maximo >= 10000.0: score_calculado += 400
-    elif saldo_maximo >= 3000.0: score_calculado += 250
-    elif saldo_maximo >= 5000.0: score_calculado += 100
+    elif saldo_maximo >= 5000.0: score_calculado += 250 # Correção: Ordem ajustada
+    elif saldo_maximo >= 3000.0: score_calculado += 100
     else: score_calculado += 0
 
     return min(1000, max(300, score_calculado))
