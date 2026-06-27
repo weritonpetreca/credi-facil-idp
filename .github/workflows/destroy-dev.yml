@@ -1,0 +1,43 @@
+name: Destroy Dev Environment
+
+on:
+  workflow_dispatch: 
+
+permissions:
+  id-token: write    
+  contents: read
+
+jobs:
+  destroy-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v6
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2 
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4 
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+
+      - name: Purge S3 Buckets Data (FinOps Safety)
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "🧹 Esvaziando buckets da conta $ACCOUNT_ID para evitar falhas no CloudFormation..."
+          
+          # Remove arquivos e as versões ocultas do bucket de entrada
+          aws s3 rm s3://credifacil-docs-entrada-$ACCOUNT_ID-dev --recursive || true
+          aws s3api delete-objects --bucket credifacil-docs-entrada-$ACCOUNT_ID-dev --delete "$(aws s3api list-object-versions --bucket credifacil-docs-entrada-$ACCOUNT_ID-dev --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' --output json)" 2>/dev/null || true
+          aws s3api delete-objects --bucket credifacil-docs-entrada-$ACCOUNT_ID-dev --delete "$(aws s3api list-object-versions --bucket credifacil-docs-entrada-$ACCOUNT_ID-dev --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' --output json)" 2>/dev/null || true
+          
+          # Limpa os buckets de saída e frontend
+          aws s3 rm s3://credifacil-docs-saida-$ACCOUNT_ID-dev --recursive || true
+          aws s3 rm s3://credifacil-idp-frontend-$ACCOUNT_ID-dev --recursive || true
+
+      - name: Execute SAM Delete
+        run: |
+          sam delete --stack-name credifacil-idp-dev --no-prompts
+          echo "✅ Sucesso! Toda a infraestrutura Serverless foi desprovisionada via GitHub Actions."

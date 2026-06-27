@@ -16,7 +16,7 @@ def handler(event, context):
         bucket_saida = event.get("bda_output_bucket")
         prefixo_saida = f"bda-output/{package_id}/"
         
-        bucket_entrada = f"credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}"
+        bucket_entrada = os.environ.get("BUCKET_ENTRADA")
         prefix_entrada = f"packages/{package_id}/"
 
         logger.info(f"Listando caminhos de arquivos para processamento paralelo na Lambda: {package_id}")

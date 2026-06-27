@@ -3,13 +3,13 @@
 # ==========================================================================
 # Projeto: CrediFácil IDP Engine
 # Padrão Arquitetural: Smart Writer Pattern & Desacoplamento SOLID (S.R.P)
-# Versão: 2026.06.19_Final
+# Versão: 2026.06.26_FinOps_Compliant
 # ==========================================================================
 
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CrediFacil IDP - Pipeline IDP Serverless de Alta Performance (Hackathon 2026)
+  CrediFacil IDP - Pipeline IDP Serverless com Rastreabilidade Total de Custos FinOps
 
 Parameters:
   Environment:
@@ -19,7 +19,7 @@ Parameters:
 
   BdaProjectId:
     Type: String
-    Default: "e020be1b735a"
+    Default: "e1a9e2ae3eb7"
 
 Globals:
   Function:
@@ -58,7 +58,18 @@ Resources:
   BucketEntrada:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+      BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDeleteDevTestFiles
+            Status: Enabled
+            ExpirationInDays: 7
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
@@ -71,13 +82,24 @@ Resources:
               - "*"
             MaxAge: 3000
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   BucketSaida:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "credifacil-docs-saida-${Environment}"
+      BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDeleteDevOutputFiles
+            Status: Enabled
+            ExpirationInDays: 7
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
@@ -88,24 +110,63 @@ Resources:
               - "*"
             MaxAge: 3000
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilFrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "credifacil-idp-grupo12-novo-frontend-${Environment}"
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
+      BucketName: !Sub "credifacil-idp-frontend-${AWS::AccountId}-${Environment}"
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
+
+  CrediFacilCloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "credifacil-frontend-oac-${Environment}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CrediFacilCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt CrediFacilFrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt CrediFacilCloudFrontOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilFrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -114,11 +175,15 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: PublicReadForGetBucketObjects
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
             Effect: Allow
-            Principal: '*'
+            Principal:
+              Service: cloudfront.amazonaws.com
             Action: 's3:GetObject'
-            Resource: !Sub "arn:aws:s3:::credifacil-idp-grupo12-novo-frontend-${Environment}/*"
+            Resource: !Sub "arn:aws:s3:::credifacil-idp-frontend-${AWS::AccountId}-${Environment}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CrediFacilCloudFrontDistribution}"
 
   # ==========================================================================
   # 🗄️ CAMADA DE ARMAZENAMENTO (Tabelas Isoladas de Domínio)
@@ -139,8 +204,10 @@ Resources:
         - AttributeName: SK
           KeyType: RANGE
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilClientesTable:
     Type: AWS::DynamoDB::Table
@@ -154,8 +221,10 @@ Resources:
         - AttributeName: PK
           KeyType: HASH
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   # ==========================================================================
   # 📢 ECOSSISTEMA DE MENSAGERIA (Amazon SNS)
@@ -165,16 +234,20 @@ Resources:
     Properties:
       TopicName: !Sub "credifacil-conclusao-${Environment}"
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   SnsTopicoErros:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub "credifacil-erros-${Environment}"
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   # ==========================================================================
   # 🌐 INFRAESTRUTURA ORIENTADA A EVENTOS (EVENTBRIDGE & SQS)
@@ -183,12 +256,22 @@ Resources:
     Type: AWS::Events::EventBus
     Properties:
       Name: !Sub "credifacil-idp-bus-${Environment}"
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilReviewDLQ:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "credifacil-human-review-dlq-${Environment}"
       MessageRetentionPeriod: 1209600 
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilReviewQueue:
     Type: AWS::SQS::Queue
@@ -197,6 +280,11 @@ Resources:
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt CrediFacilReviewDLQ.Arn
         maxReceiveCount: 3 
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   CrediFacilDLQAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -214,6 +302,11 @@ Resources:
       ComparisonOperator: "GreaterThanOrEqualToThreshold"
       AlarmActions:
         - !Ref SnsTopicoErros
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
   LowConfidenceRule:
     Type: AWS::Events::Rule
@@ -256,7 +349,8 @@ Resources:
         AllowOrigin: "'*'"
         MaxAge: "'600'"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   # ==========================================================================
   # 🚀 COMPONENTES DE ENTRADA
@@ -268,10 +362,10 @@ Resources:
       Handler: src.lambdas.pre_signed_url.handler.handler
       Environment:
         Variables:
-          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${Environment}"
+          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+            BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
       Events:
@@ -282,7 +376,8 @@ Resources:
             Method: post
             RestApiId: !Ref CrediFacilRestApi
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
@@ -291,6 +386,7 @@ Resources:
       Handler: src.lambdas.pipeline_trigger.handler.handler
       Environment:
         Variables:
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
           STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
@@ -308,7 +404,8 @@ Resources:
             Method: post
             RestApiId: !Ref CrediFacilRestApi
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   S3UploadTrackerFunction:
     Type: AWS::Serverless::Function
@@ -319,6 +416,7 @@ Resources:
       Timeout: 15
       Environment:
         Variables:
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
           STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
@@ -340,7 +438,8 @@ Resources:
                   - Name: prefix
                     Value: packages/
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   # ==========================================================================
   # 💡 COMPONENTES INTERNOS DO WORKFLOW
@@ -354,13 +453,13 @@ Resources:
       Environment:
         Variables:
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
-          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${Environment}"
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
+          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-entrada-${Environment}"
+            BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
         - Statement:
             - Sid: PermissaoListagemParaPastasS3
               Effect: Allow
@@ -368,8 +467,8 @@ Resources:
                 - "s3:ListBucket"
                 - "s3:ListBucketVersions"
               Resource:
-                - !Sub "arn:aws:s3:::credifacil-docs-entrada-${Environment}"
-                - !Sub "arn:aws:s3:::credifacil-docs-saida-${Environment}"
+                - !Sub "arn:aws:s3:::credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+                - !Sub "arn:aws:s3:::credifacil-docs-saida-${AWS::AccountId}-${Environment}"
             - Sid: AllowBedrockAutomationAsync
               Effect: Allow
               Action: 
@@ -377,7 +476,8 @@ Resources:
                 - "sts:GetCallerIdentity"
               Resource: "*"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   BdaStatusPollerFunction:
     Type: AWS::Serverless::Function
@@ -391,7 +491,8 @@ Resources:
               Action: "bedrock:GetDataAutomationStatus"
               Resource: "*"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   ConfidenceCheckerFunction:
     Type: AWS::Serverless::Function
@@ -403,7 +504,7 @@ Resources:
           EVENT_BUS_NAME: !Ref CrediFacilEventBus
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
         - Statement:
@@ -411,7 +512,8 @@ Resources:
               Action: "events:PutEvents"
               Resource: !GetAtt CrediFacilEventBus.Arn
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   NovaStructurerFunction:
     Type: AWS::Serverless::Function
@@ -422,21 +524,22 @@ Resources:
       Timeout: 120
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
+          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
-        # 🚀 AJUSTE ADICIONADO: Concede permissão de leitura para que possa consultar a flag execute_score de forma segura assíncrona
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
               Action: "bedrock:InvokeModel"
-              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   ExcelGeneratorFunction:
     Type: AWS::Serverless::Function
@@ -457,9 +560,9 @@ Resources:
             BucketName: !Ref BucketSaida
         - S3WritePolicy:
             BucketName: !Ref BucketSaida
-      Tags:
-        Criador: Grupo12
-        Environment: !Ref Environment
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   CustomerConsolidatorFunction:
     Type: AWS::Serverless::Function
@@ -468,13 +571,14 @@ Resources:
       Handler: src.lambdas.customer_consolidator.handler.handler
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
         - Statement:
             - Effect: Allow
               Action: "bedrock:InvokeModel"
               Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   ResultWriterFunction:
     Type: AWS::Serverless::Function
@@ -483,16 +587,17 @@ Resources:
       Handler: src.lambdas.result_writer.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
         - DynamoDBCrudPolicy:
             TableName: !Sub "credifacil-clientes-${Environment}"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   QueryHandlerFunction:
     Type: AWS::Serverless::Function
@@ -501,14 +606,14 @@ Resources:
       Handler: src.lambdas.query_handler.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${Environment}"
+          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-pacotes-${Environment}"
         - DynamoDBReadPolicy:
             TableName: !Sub "credifacil-clientes-${Environment}"
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${Environment}"
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -517,7 +622,8 @@ Resources:
             Method: get
             RestApiId: !Ref CrediFacilRestApi
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   NotificationFunction:
     Type: AWS::Serverless::Function
@@ -530,7 +636,8 @@ Resources:
         - SNSPublishMessagePolicy:
             TopicName: !Sub "credifacil-erros-${Environment}"
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -548,12 +655,12 @@ Resources:
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
     Tags:
-      Criador: Grupo12
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
 
   CrediFacilStateMachineRole:
     Type: AWS::IAM::Role
     Properties:
-      PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/grupo-alunos-permission-boundary"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -579,14 +686,20 @@ Resources:
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
       Tags:
-        - Key: Criador
-          Value: Grupo12
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
 
 Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway
     Value: !Sub "https://${CrediFacilRestApi}.execute-api.us-east-1.amazonaws.com/${Environment}/"
 
-  FrontendWebsiteUrl:
-    Description: URL Oficial do Novo Site Estatíco do Front-End (Isolado)
-    Value: !GetAtt CrediFacilFrontendBucket.WebsiteURL
+  FrontendCloudFrontUrl:
+    Description: URL Oficial de Acesso ao Front-end do CrediFácil (Via CloudFront CDN)
+    Value: !Sub "https://${CrediFacilCloudFrontDistribution.DomainName}"
+
+  CloudFrontDistributionId:
+    Description: ID da Distribuicao do CloudFront para Invalidação de Cache
+    Value: !Ref CrediFacilCloudFrontDistribution

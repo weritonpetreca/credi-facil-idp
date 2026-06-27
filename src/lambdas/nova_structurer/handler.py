@@ -8,10 +8,9 @@ from src.shared.tools import obter_especificacao_ferramenta_loan
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
-# 🚀 FONTE DA VERDADE: Inicializa o client do DynamoDB para recuperar a flag perdida
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 
-MODEL_ID = "amazon.nova-pro-v1:0"
+MODEL_ID = "amazon.nova-lite-v1:0"
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
 # ==========================================================================
@@ -271,7 +270,7 @@ def handler(event, context):
     try:
         package_id = event.get("package_id")
         bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
-        bucket_entrada = f"credifacil-docs-entrada-{os.environ.get('ENV', 'dev')}"
+        bucket_entrada = os.environ.get("BUCKET_ENTRADA")
         prefix_busca = f"bda-output/{package_id}/"
 
         logger.info(f"Iniciando segmentação analítica pura de documentos para o lote {package_id}")

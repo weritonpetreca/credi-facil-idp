@@ -92,7 +92,7 @@ def handler(event, context):
                     "package_id": package_id,
                     "user_id": atributos.get("uploadedBy", {}).get("S", "analista-weriton"),
                     "execute_score": execute_score, # 🎯 Propaga o booleano tipado para o Choice State ler
-                    "bda_output_bucket": f"credifacil-docs-saida-{os.environ.get('ENV', 'dev')}"
+                    "bda_output_bucket": os.environ.get("BUCKET_SAIDA")
                 }
                 
                 logger.info(f"Lote completo! Disparando Step Functions de forma 100% automatizada para {package_id}")
