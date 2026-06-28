@@ -83,7 +83,7 @@ A solução é **100% serverless**, na região `us-east-1`, dividida em duas fre
 
 | Camada | Serviço AWS | Papel |
 |---|---|---|
-| Frontend | **Amazon S3** (Website Hosting) | Interface web estática (HTML/CSS/JS) |
+| Frontend | **Amazon S3** (Website Hosting) | Interface web moderna (React + Vite) para upload e visualização de resultados |
 | API | **Amazon API Gateway** (REST) | Ponto único de entrada HTTP |
 | Ingestão | **AWS Lambda** | Geração de URLs pré-assinadas para upload direto |
 | Armazenamento (entrada) | **Amazon S3** | Recebe os documentos originais via upload direto do navegador |
@@ -229,6 +229,7 @@ Tudo funcionando e em produção:
 - ✅ **IaC Reprodutível:** 100% da infraestrutura via AWS SAM / CloudFormation;
 - ✅ **Tratamento de Confiança:** Validação granular de acurácia do BDA, com alertas para campos críticos;
 - ✅ **Relatórios Excel:** Geração automática de planilhas estilizadas com openpyxl;
+- ✅ **Testes Unitários:** Base de testes unitários com `pytest` para as principais funções Lambda, garantindo a lógica de negócio;
 - ✅ **DynamoDB CRM:** Persistência de dados consolidados do cliente para auditoria e consultas futuras.
 
 ## ⚠️ Limitações Conhecidas & Em Desenvolvimento
