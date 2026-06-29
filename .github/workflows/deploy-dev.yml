@@ -3,6 +3,8 @@ name: Deploy Dev Environment
 on:
   push:
     branches: [ develop ]
+  pull_request:
+    branches: [ develop ]
 
 permissions:
   id-token: write
@@ -52,6 +54,7 @@ jobs:
           fi
 
       - name: SAM Deploy to AWS
+        if: github.event_name == 'push'
         env:
           BDA_ID: ${{ secrets.BDA_PROJECT_ID }}
         run: |
@@ -68,6 +71,7 @@ jobs:
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
       - name: Build Front-End (Vite Compilation)
+        if: github.event_name == 'push'
         run: |
           echo "🟢 Entrando na pasta do front-end..."
           cd frontend
@@ -111,6 +115,7 @@ jobs:
           ls -la dist/
           
       - name: Deploy Front-End to S3 & Invalidate CloudFront
+        if: github.event_name == 'push'
         run: |
           echo "🔍 Capturando dinamicamente as informações de saída da Stack..."
           DIST_ID=$(aws cloudformation describe-stacks \
