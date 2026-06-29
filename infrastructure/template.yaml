@@ -337,7 +337,7 @@ Resources:
             Resource: !GetAtt CrediFacilReviewQueue.Arn
 
   # ==========================================================================
-  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST
+  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (PROTEGIDA POR PADRÃO)
   # ==========================================================================
   CrediFacilRestApi:
     Type: AWS::Serverless::Api
@@ -348,6 +348,14 @@ Resources:
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
         AllowOrigin: "'*'"
         MaxAge: "'600'"
+      # 🔑 INTERCEPTADOR DE ACESSO GLOBAL
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt CrediFacilUserPool.Arn
+            Identity:
+              Header: Authorization # O front-end obrigatoriamente passará o Bearer Token aqui
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -691,6 +699,44 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # ==========================================================================
+  # 🛡️ CAMADA DE SEGURANÇA E IDENTIDADE (AMAZON COGNITO B2B)
+  # ==========================================================================
+  CrediFacilUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "credifacil-user-pool-${Environment}"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      # 🚫 HARDENING B2B: Desabilita o auto-cadastro público.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      # 🔒 POLÍTICA DE SENHAS ROBUSTA (DevSecOps Baseline)
+      PasswordPolicy:
+        MinimumLength: 8
+        RequireLowercase: true
+        RequireNumbers: true
+        RequireSymbols: true
+        RequireUppercase: true
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
+
+  CrediFacilUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "credifacil-frontend-client-${Environment}"
+      UserPoolId: !Ref CrediFacilUserPool
+      # ⚠️ INSIGHT DE SEGURANÇA: Deve ser 'false' para Single Page Applications (React/Vite)
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
 Outputs:
   ApiEndpoint:
     Description: URL Base da API REST no API Gateway
@@ -703,3 +749,11 @@ Outputs:
   CloudFrontDistributionId:
     Description: ID da Distribuicao do CloudFront para Invalidação de Cache
     Value: !Ref CrediFacilCloudFrontDistribution
+
+  UserPoolId:
+    Description: ID do Diretório de Usuários Cognito
+    Value: !Ref CrediFacilUserPool
+
+  UserPoolClientId:
+    Description: ID do Cliente do Cognito para o Front-End
+    Value: !Ref CrediFacilUserPoolClient

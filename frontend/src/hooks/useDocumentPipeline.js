@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/";
+const USER_POOL_ID = import.meta.env.VITE_USER_POOL_ID;
+const USER_POOL_CLIENT_ID = import.meta.env.VITE_USER_POOL_CLIENT_ID;
 
 const MIN_FILES = 1;
 const MAX_FILES = 8;
@@ -168,7 +170,10 @@ export function useDocumentPipeline() {
 
         const prepResponse = await fetch(`${API_URL}v1/packages/upload-urls`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+           },
           body: JSON.stringify({
             documentos: files.map((f) => f.name),
             execute_score: scoreRequested,
