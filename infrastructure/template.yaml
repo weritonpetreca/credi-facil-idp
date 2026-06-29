@@ -337,7 +337,7 @@ Resources:
             Resource: !GetAtt CrediFacilReviewQueue.Arn
 
   # ==========================================================================
-  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (PROTEGIDA POR PADRÃO)
+  # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (PROTEGIDA POR PADRÃO) - SCHEMA FINAL
   # ==========================================================================
   CrediFacilRestApi:
     Type: AWS::Serverless::Api
@@ -348,7 +348,6 @@ Resources:
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
         AllowOrigin: "'*'"
         MaxAge: "'600'"
-      # 🔑 INTERCEPTADOR DE ACESSO GLOBAL
       Auth:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
@@ -708,28 +707,21 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
-      # 🚫 HARDENING B2B: Desabilita o auto-cadastro público.
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
-      # 🔒 POLÍTICA DE SENHAS ROBUSTA (DevSecOps Baseline)
-      PasswordPolicy:
-        MinimumLength: 8
-        RequireLowercase: true
-        RequireNumbers: true
-        RequireSymbols: true
-        RequireUppercase: true
-      Tags:
-        - Key: Project
-          Value: CrediFacil-IDP
-        - Key: Environment
-          Value: !Ref Environment
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
 
   CrediFacilUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       ClientName: !Sub "credifacil-frontend-client-${Environment}"
       UserPoolId: !Ref CrediFacilUserPool
-      # ⚠️ INSIGHT DE SEGURANÇA: Deve ser 'false' para Single Page Applications (React/Vite)
       GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
