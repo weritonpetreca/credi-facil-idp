@@ -354,8 +354,6 @@ Resources:
         Authorizers:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt CrediFacilUserPool.Arn
-            Identity:
-              Header: Authorization # O front-end obrigatoriamente passará o Bearer Token aqui
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
