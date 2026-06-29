@@ -353,6 +353,11 @@ Resources:
         Authorizers:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt CrediFacilUserPool.Arn
+      MethodSettings:
+        - ResourcePath: '/*'  
+          HttpMethod: '*'     
+          ThrottlingRateLimit: 5    
+          ThrottlingBurstLimit: 10
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -726,6 +731,20 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ==========================================================================
+  # 👥 PROVISIONAMENTO DE USUÁRIO DE TESTE (Seed Data para Dev)
+  # ==========================================================================
+  CrediFacilSeedAnalista:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      UserPoolId: !Ref CrediFacilUserPool
+      Username: "analista@credifacil.com"
+      UserAttributes:
+        - Name: email
+          Value: "analista@credifacil.com"
+        - Name: email_verified
+          Value: "true"
 
 Outputs:
   ApiEndpoint:
