@@ -61,8 +61,9 @@ export function useDocumentPipeline() {
     setFinishedAt(null);
   }, [stopPolling]);
 
+  // 🛠️ ATUALIZAÇÃO: pollUntilDone agora recebe o token para conseguir furar o API Gateway
   const pollUntilDone = useCallback(
-    (packageId, scoreRequested) => {
+    (packageId, scoreRequested, token) => {
       pollDeadline.current = Date.now() + POLL_TIMEOUT_MS;
 
       const tick = async () => {
@@ -77,7 +78,12 @@ export function useDocumentPipeline() {
         }
 
         try {
-          const response = await fetch(`${API_URL}v1/packages/${packageId}`);
+          // 🛡️ Injeta o cabeçalho Authorization também na busca de status do lote
+          const response = await fetch(`${API_URL}v1/packages/${packageId}`, {
+            headers: {
+              "Authorization": `Bearer ${token}`
+            }
+          });
 
           if (!response.ok) {
             pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
@@ -87,9 +93,7 @@ export function useDocumentPipeline() {
           const data = await response.json();
 
           if (data.status === "PROCESSING") {
-            pushLog(
-              "Em processamento na AWS. Extraindo metadados via Bedrock BDA...",
-            );
+            pushLog("Em processamento na AWS. Extraindo metadados via Bedrock BDA...");
             pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
             return;
           }
@@ -106,13 +110,8 @@ export function useDocumentPipeline() {
 
           if (data.status === "FAILED") {
             setPhase("error");
-            setErrorMessage(
-              data.erro_processamento || "A esteira de processamento falhou.",
-            );
-            pushLog(
-              data.erro_processamento || "Falha no processamento.",
-              "error",
-            );
+            setErrorMessage(data.erro_processamento || "A esteira de processamento falhou.");
+            pushLog(data.erro_processamento || "Falha no processamento.", "error");
             setFinishedAt(Date.now());
             return;
           }
@@ -146,9 +145,7 @@ export function useDocumentPipeline() {
 
       if (files.length > MAX_FILES) {
         setPhase("error");
-        setErrorMessage(
-          `Envie no máximo ${MAX_FILES} documentos por solicitação.`,
-        );
+        setErrorMessage(`Envie no máximo ${MAX_FILES} documentos por solicitação.`);
         return false;
       }
 
@@ -168,7 +165,7 @@ export function useDocumentPipeline() {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}` // 🛡️ Injeção do Guarda-Costas
+            "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({
             documentos: files.map((f) => f.name),
@@ -179,31 +176,23 @@ export function useDocumentPipeline() {
         const prepData = await prepResponse.json().catch(() => null);
 
         if (!prepResponse.ok) {
-          throw new Error(
-            prepData?.erro || "Erro ao solicitar autorização de upload.",
-          );
+          throw new Error(prepData?.erro || "Erro ao solicitar autorização de upload.");
         }
 
         if (!prepData?.uploads || typeof prepData.uploads !== "object") {
-          throw new Error(
-            "Resposta inválida do servidor. Instruções de upload ausentes.",
-          );
+          throw new Error("Resposta inválida do servidor. Instruções de upload ausentes.");
         }
 
         pushLog(`Lote registrado: ${prepData.package_id}`);
 
         setPhase("uploading");
-        pushLog(
-          `Enviando ${files.length} documento(s) para o storage seguro...`,
-        );
+        pushLog(`Enviando ${files.length} documento(s) para o storage seguro...`);
 
         for (const file of files) {
           const instruction = prepData.uploads[file.name];
 
           if (!instruction) {
-            throw new Error(
-              `Instrução de upload não encontrada para o arquivo: ${file.name}`,
-            );
+            throw new Error(`Instrução de upload não encontrada para o arquivo: ${file.name}`);
           }
 
           const putResponse = await fetch(instruction.uploadUrl, {
@@ -215,28 +204,21 @@ export function useDocumentPipeline() {
           });
 
           if (!putResponse.ok) {
-            throw new Error(
-              `Erro ao transmitir o binário do arquivo: ${file.name}`,
-            );
+            throw new Error(`Erro ao transmitir o binário do arquivo: ${file.name}`);
           }
 
-          pushLog(
-            `${file.name} (${formatFileSize(file.size)}) enviado.`,
-            "success",
-          );
+          pushLog(`${file.name} (${formatFileSize(file.size)}) enviado.`, "success");
         }
 
         pushLog("Lote enviado. Monitorando progresso do IDP...", "success");
         setPhase("waiting");
 
-        pollUntilDone(prepData.package_id, scoreRequested);
+        // 🚀 O SEGREDO: Passa o token adiante para o loop de monitoramento
+        pollUntilDone(prepData.package_id, scoreRequested, token);
         return true;
       } catch (err) {
         setPhase("error");
-        setErrorMessage(
-          err.message ||
-            "Não foi possível concluir o envio. Verifique os arquivos e tente novamente.",
-        );
+        setErrorMessage(err.message || "Não foi possível concluir o envio. Verifique os arquivos e tente novamente.");
         pushLog(err.message || "Erro inesperado.", "error");
         setFinishedAt(Date.now());
         return false;
