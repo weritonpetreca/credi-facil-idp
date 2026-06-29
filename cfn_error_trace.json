@@ -1,0 +1,949 @@
+{
+    "Changes": [
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "BdaInvokerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-BdaInvokerFunction-yPEsWso0M97l",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "BdaStatusPollerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-BdaStatusPollerFunction-I89u0233q5pS",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "BucketEntrada",
+                "PhysicalResourceId": "credifacil-docs-entrada-635106763014-dev",
+                "ResourceType": "AWS::S3::Bucket",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "NotificationConfiguration",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "S3UploadTrackerFunction.Arn"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "ConfidenceCheckerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-ConfidenceCheckerFunction-l3YkjxYrxEWy",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Add",
+                "LogicalResourceId": "CrediFacilDependenciesLayeraf48a6c598",
+                "ResourceType": "AWS::Lambda::LayerVersion",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "PolicyAction": "Retain",
+                "Action": "Remove",
+                "LogicalResourceId": "CrediFacilDependenciesLayerb3ad784ab9",
+                "PhysicalResourceId": "arn:aws:lambda:us-east-1:635106763014:layer:credifacil-dependencies-dev:5",
+                "ResourceType": "AWS::Lambda::LayerVersion",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "PolicyAction": "Delete",
+                "Action": "Remove",
+                "LogicalResourceId": "CrediFacilRestApiDeploymentd394b02435",
+                "PhysicalResourceId": "36crtc",
+                "ResourceType": "AWS::ApiGateway::Deployment",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Add",
+                "LogicalResourceId": "CrediFacilRestApiDeploymente8160873f0",
+                "ResourceType": "AWS::ApiGateway::Deployment",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "CrediFacilRestApiStage",
+                "PhysicalResourceId": "dev",
+                "ResourceType": "AWS::ApiGateway::Stage",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DeploymentId",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilRestApiDeploymente8160873f0"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DeploymentId",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "CrediFacilRestApi",
+                "PhysicalResourceId": "ngr4mqwgv5",
+                "ResourceType": "AWS::ApiGateway::RestApi",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Body",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Body",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "PreSignedUrlFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Body",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "CrediFacilUserPool.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Body",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "PipelineTriggerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Body",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "QueryHandlerFunction.Arn"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "CrediFacilStateMachineRole",
+                "PhysicalResourceId": "credifacil-idp-dev-CrediFacilStateMachineRole-k8el7nejUlz3",
+                "ResourceType": "AWS::IAM::Role",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ResultWriterFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ExcelGeneratorFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "NovaStructurerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "CustomerConsolidatorFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ConfidenceCheckerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "NotificationFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "BdaStatusPollerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Policies",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "BdaInvokerFunction.Arn"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "CrediFacilStateMachine",
+                "PhysicalResourceId": "arn:aws:states:us-east-1:635106763014:stateMachine:credifacil-idp-pipeline-dev",
+                "ResourceType": "AWS::StepFunctions::StateMachine",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "NotificationFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ConfidenceCheckerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "NovaStructurerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "CustomerConsolidatorFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "RoleArn",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "CrediFacilStateMachineRole.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ExcelGeneratorFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "ResultWriterFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "BdaInvokerFunction.Arn"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionS3Location",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "DefinitionSubstitutions",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "ResourceAttribute",
+                        "CausingEntity": "BdaStatusPollerFunction.Arn"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Add",
+                "LogicalResourceId": "CrediFacilUserPoolClient",
+                "ResourceType": "AWS::Cognito::UserPoolClient",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Add",
+                "LogicalResourceId": "CrediFacilUserPool",
+                "ResourceType": "AWS::Cognito::UserPool",
+                "Scope": [],
+                "Details": []
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "CustomerConsolidatorFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-CustomerConsolidatorFunction-j8DKAYAzKKVI",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "ExcelGeneratorFunction",
+                "PhysicalResourceId": "credifacil-excel-generator-dev",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "NotificationFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-NotificationFunction-2IPLXrpFiday",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "NovaStructurerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-NovaStructurerFunction-XIw6GJGh4CSa",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "PipelineTriggerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-PipelineTriggerFunction-CvPnhrB1ItWO",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "PreSignedUrlFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-PreSignedUrlFunction-YmYnmdDLXiLD",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "QueryHandlerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-QueryHandlerFunction-9S2U8RhMEBK5",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "ResultWriterFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-ResultWriterFunction-1wBLzgpxeeRn",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        },
+        {
+            "Type": "Resource",
+            "ResourceChange": {
+                "Action": "Modify",
+                "LogicalResourceId": "S3UploadTrackerFunction",
+                "PhysicalResourceId": "credifacil-idp-dev-S3UploadTrackerFunction-7AWO8vspI7gn",
+                "ResourceType": "AWS::Lambda::Function",
+                "Replacement": "False",
+                "Scope": [
+                    "Properties"
+                ],
+                "Details": [
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Code",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "DirectModification"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Static",
+                        "ChangeSource": "ResourceReference",
+                        "CausingEntity": "CrediFacilDependenciesLayeraf48a6c598"
+                    },
+                    {
+                        "Target": {
+                            "Attribute": "Properties",
+                            "Name": "Layers",
+                            "RequiresRecreation": "Never"
+                        },
+                        "Evaluation": "Dynamic",
+                        "ChangeSource": "DirectModification"
+                    }
+                ]
+            }
+        }
+    ],
+    "ChangeSetName": "samcli-deploy1782754869",
+    "ChangeSetId": "arn:aws:cloudformation:us-east-1:635106763014:changeSet/samcli-deploy1782754869/402991b3-6010-47f5-ab66-3c39406377d4",
+    "StackId": "arn:aws:cloudformation:us-east-1:635106763014:stack/credifacil-idp-dev/a21a05a0-7323-11f1-a21c-0affe4161cad",
+    "StackName": "credifacil-idp-dev",
+    "Description": "Created by SAM CLI at 2026-06-29T17:41:09.915562+00:00 UTC",
+    "Parameters": [
+        {
+            "ParameterKey": "BdaProjectId",
+            "ParameterValue": "e1a9e2ae3eb7"
+        },
+        {
+            "ParameterKey": "Environment",
+            "ParameterValue": "dev"
+        }
+    ],
+    "CreationTime": "2026-06-29T17:41:11.282000+00:00",
+    "ExecutionStatus": "UNAVAILABLE",
+    "Status": "FAILED",
+    "StatusReason": "The following hook(s)/validation failed: [AWS::EarlyValidation::PropertyValidation]. To troubleshoot Early Validation errors, use the DescribeEvents API for detailed failure information.",
+    "NotificationARNs": [],
+    "RollbackConfiguration": {},
+    "Capabilities": [
+        "CAPABILITY_IAM",
+        "CAPABILITY_AUTO_EXPAND"
+    ],
+    "Tags": null,
+    "ParentChangeSetId": null,
+    "IncludeNestedStacks": false,
+    "RootChangeSetId": null,
+    "OnStackFailure": null,
+    "ImportExistingResources": null,
+    "StackDriftStatus": null,
+    "DeploymentMode": null
+}
