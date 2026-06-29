@@ -70,6 +70,23 @@ jobs:
               BdaProjectId="$BDA_VAL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
+      - name: Seed Cognito User Password
+        if: github.event_name == 'push'
+        run: |
+          echo "🔍 Capturando o ID do pool para provisionamento de dados..."
+          USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name credifacil-idp-dev \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+            --output text)
+          
+          echo "⚙️ Forçando a senha definitiva e confirmando o analista de testes..."
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id "$USER_POOL_ID" \
+            --username "analista@credifacil.com" \
+            --password "Mudar@Senha2026" \
+            --permanent
+          echo "✅ Massa de dados de teste homologada e pronta na nuvem!"
+
       - name: Build Front-End (Vite Compilation)
         if: github.event_name == 'push'
         run: |
