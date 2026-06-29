@@ -81,7 +81,7 @@ export default function App() {
       sessionStorage.setItem("auth_token", idToken);
     } catch (err) {
       setAuthError(err.message);
-    } finaly {
+    } finally {
       setAuthLoading(false);
     }
   };
