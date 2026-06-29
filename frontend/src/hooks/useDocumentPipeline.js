@@ -1,8 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/";
-const USER_POOL_ID = import.meta.env.VITE_USER_POOL_ID;
-const USER_POOL_CLIENT_ID = import.meta.env.VITE_USER_POOL_CLIENT_ID;
 
 const MIN_FILES = 1;
 const MAX_FILES = 8;
@@ -28,7 +26,6 @@ function formatFileSize(bytes) {
 
 export function useDocumentPipeline() {
   const [phase, setPhase] = useState("idle");
-  // idle | preparing | uploading | waiting | done | error
   const [logs, setLogs] = useState([]);
   const [result, setResult] = useState(null);
   const [executeScore, setExecuteScoreFlag] = useState(false);
@@ -120,7 +117,6 @@ export function useDocumentPipeline() {
             return;
           }
 
-          // status desconhecido, continua tentando
           pollTimer.current = setTimeout(tick, POLL_INTERVAL_MS);
         } catch {
           pushLog("Erro ao consultar status, tentando novamente...", "error");
@@ -134,7 +130,7 @@ export function useDocumentPipeline() {
   );
 
   const upload = useCallback(
-    async (files, scoreRequested) => {
+    async (files, scoreRequested, token) => {
       stopPolling();
       setResult(null);
       setOutputBucket(null);
@@ -172,8 +168,8 @@ export function useDocumentPipeline() {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-           },
+            "Authorization": `Bearer ${token}` // 🛡️ Injeção do Guarda-Costas
+          },
           body: JSON.stringify({
             documentos: files.map((f) => f.name),
             execute_score: scoreRequested,
