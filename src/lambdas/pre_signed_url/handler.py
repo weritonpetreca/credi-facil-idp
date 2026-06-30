@@ -25,12 +25,27 @@ def mapear_content_type(doc_name: str) -> str:
         raise ValueError(f"Extensão .{ext} inválida para o arquivo {doc_name}. Permitidos: PDF, PNG, JPG, JPEG e WEBP.")
     return extensoes_suportadas[ext]
 
-def gerar_urls_upload(lista_documentos: list[str], package_id: str) -> dict:
+# 🛠️ REFATORAÇÃO SÊNIOR: Ajustada a assinatura para receber a lista de objetos estruturados
+def gerar_urls_upload(lista_documentos: list[dict], package_id: str) -> dict:
     if len(lista_documentos) > 8:
         raise ValueError("O limite máximo permitido é de 8 documentos por pacote.")
         
+    # 🛡️ DEFINE TETOS DE SEGURANÇA (10 MB em Bytes)
+    LIMITE_MAX_BYTES = 10 * 1024 * 1024 
     urls_geradas = {}
-    for doc_name in lista_documentos:
+    
+    for doc in lista_documentos:
+        # Validação defensiva do contrato interno do payload
+        if not isinstance(doc, dict) or "nome" not in doc or "tamanho" not in doc:
+            raise ValueError("Contrato inválido. Cada documento deve conter os campos 'nome' e 'tamanho'.")
+            
+        doc_name = doc["nome"]
+        doc_size = doc["tamanho"]
+        
+        # 📈 REQUISITO [RF-07]: Bloqueio imediato na borda para proteção FinOps
+        if doc_size > LIMITE_MAX_BYTES:
+            raise ValueError(f"O arquivo {doc_name} ultrapassa o tamanho máximo permitido de 10 MB.")
+            
         content_type_dinamico = mapear_content_type(doc_name)
         s3_key = f"packages/{package_id}/{uuid.uuid4()}-{doc_name}"
         
@@ -69,7 +84,6 @@ def handler(event, context):
             body = {}
 
         documentos = body.get("documentos", [])
-        # 🚀 CAPTURA SEGURA: Resgata a intenção de execução de score enviada pelo Front
         execute_score = body.get("execute_score", False)
         
         if not documentos:
@@ -95,10 +109,11 @@ def handler(event, context):
                 "documentCount": {"N": str(len(documentos))},
                 "uploadedCount": {"N": "0"},
                 "humanReview": {"BOOL": False},
-                "execute_score": {"BOOL": execute_score} # 🎯 SALVAMENTO DO CONTRATO: Persiste a flag de forma tipada!
+                "execute_score": {"BOOL": execute_score}
             }
         )
         
+        # Repassa a lista estruturada para o motor de geração de links
         links = gerar_urls_upload(documentos, package_id)
         
         return {

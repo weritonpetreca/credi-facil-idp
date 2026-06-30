@@ -1,35 +1,78 @@
 import json
 import pytest
-from src.lambdas.confidence_checker.handler import avaliar_confianca
+from src.lambdas.confidence_checker.handler import handler
 
-def test_deve_exigir_revisao_humana_quando_campo_critico_tiver_baixa_confianca():
-    # Mock de dados que antes estava em um arquivo externo
-    mock_data = {
-        "documentType": "IdentityDocument",
+# Criamos uma simulação de corpo de streaming para responder como se fosse o S3 real
+class MockS3Body:
+    def __init__(self, content_dict):
+        self.content_str = json.dumps(content_dict)
+    def read(self):
+        return self.content_str.encode("utf-8")
+
+@pytest.fixture
+def base_event():
+    """Gera o payload padrão que a State Machine injeta na Lambda de auditoria."""
+    return {
+        "package_id": "pkg-test-123",
+        "bda_output_bucket": "credifacil-bda-output-dev"
+    }
+
+def test_deve_marcar_como_clean_se_todos_os_campos_forem_confiaveis(base_event, monkeypatch):
+    """Garante o fluxo feliz se a IA extraiu dados cadastrais com alta acurácia."""
+    
+    # Moca a listagem do S3 simulando que encontrou 1 arquivo estruturado de uma CNH
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
+        lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/driver_license.json"}]})
+
+    # Moca o download do JSON do S3 com confianças altas (CNH exige document_number e full_name)
+    bda_output_perfeito = {
         "extractedFields": {
-            "nome": {"value": "Weriton", "confidence": 0.95},
-            "cpf": {"value": "529.982.247-25", "confidence": 0.78},
-            "data_nascimento": {"value": "1989-12-25", "confidence": 0.91}
+            "document_number": {"value": "1234567", "confidence": 0.95},
+            "full_name": {"value": "WERITON LUIS PETRECA", "confidence": 0.99},
+            "expiration_date": {"value": "2030-10-12", "confidence": 0.92}
         }
     }
-    resultado = avaliar_confianca(mock_data)
-    # O sistema precisa detectar que precisa de revisão por causa do CPF
-    assert resultado["needs_human_review"] is True
-    assert "cpf" in resultado["low_confidence_fields"]
-    assert resultado["status"] == "NEEDS_REVIEW"
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.get_object",
+        lambda Bucket, Key: {"Body": MockS3Body(bda_output_perfeito)})
 
-def test_deve_passar_direto_se_todos_os_campos_forem_confiaveis():
-    mock_perfeito = {
-        "documentType": "IdentityDocument",
+    response = handler(base_event, None)
+    
+    # Asserte o contrato de saída: deve passar sem acionar alertas humanos
+    assert response["audit_status"] == "CLEAN"
+    assert response["failed_fields_count"] == 0
+
+def test_deve_exigir_revisao_humana_e_notificar_se_campo_critico_tiver_baixa_confianca(base_event, monkeypatch):
+    """Garante o Fail-Safe do SRS: Se um dado crucial falhar, tranca no Dynamo e avisa o EventBridge."""
+    
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
+        lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/pay_stub.json"}]})
+
+    # Simula o cenário crítico: O nome do funcionário veio ilegível (confiança 0.45)
+    bda_output_corrompido = {
         "extractedFields": {
-            "nome": {"value": "Weriton", "confidence": 0.95},
-            "cpf": {"value": "529.982.247-25", "confidence": 0.99},
-            "data_nascimento": {"value": "1989-12-25", "confidence": 0.91}
+            "employee_name": {"value": "W#riton Lui%", "confidence": 0.45}, # Abaixo do THRESHOLD de 0.80
+            "pay_date": {"value": "2026-06-20", "confidence": 0.91},
+            "employer_name": {"value": "CrediFacil Corp", "confidence": 0.88}
         }
     }
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.get_object",
+        lambda Bucket, Key: {"Body": MockS3Body(bda_output_corrompido)})
+
+    # Capturadores de estado para validar se a Lambda realmente executou os side-effects de segurança
+    event_bridge_acionado = []
+    dynamo_atualizado = []
+
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.events_client.put_events",
+        lambda Entries: event_bridge_acionado.append(Entries) or {"FailedEntryCount": 0})
+        
+    monkeypatch.setattr("src.lambdas.confidence_checker.handler.db_client.update_item",
+        lambda TableName, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues: 
+            dynamo_atualizado.append(ExpressionAttributeValues))
+
+    response = handler(base_event, None)
     
-    resultado = avaliar_confianca(mock_perfeito)
-    
-    assert resultado["needs_human_review"] is False
-    assert len(resultado["low_confidence_fields"]) == 0
-    assert resultado["status"] == "PROCESSING"
+    # Validações de Borda estritas
+    assert response["audit_status"] == "NEEDS_REVISION"
+    assert response["failed_fields_count"] == 1
+    assert len(event_bridge_acionado) == 1  # Provou o disparo do alerta assíncrono para o ecossistema
+    assert dynamo_atualizado[0][":s"]["S"] == "NEEDS_REVISION" # Provou a trava de segurança na tabela

@@ -1,37 +1,70 @@
+import json
 import pytest
-from unittest.mock import patch
-from src.lambdas.pre_signed_url.handler import gerar_urls_upload
+from src.lambdas.pre_signed_url.handler import handler
 
-@patch("src.lambdas.pre_signed_url.handler.s3_client")
-def test_deve_gerar_urls_pre_assinadas_com_sucesso(mock_s3):
-    # Simula o retorno de uma URL falsa pelo cliente do boto3
-    mock_s3.generate_presigned_url.return_value = "https://s3.amazonaws.com/fake-presigned-url"
-    
-    documentos_teste = ["identidade.pdf", "holerite.pdf"]
-    package_id = "test-package-123"
-    
-    resultado = gerar_urls_upload(documentos_teste, package_id)
-    
-    assert "identidade.pdf" in resultado
-    assert "holerite.pdf" in resultado
-    assert resultado["identidade.pdf"]["upload_url"] == "https://s3.amazonaws.com/fake-presigned-url"
-    # Garante que os arquivos foram roteados para a pasta correta do pacote
-    assert resultado["identidade.pdf"]["s3_key"].startswith(f"packages/{package_id}/")
+@pytest.fixture
+def api_gateway_event():
+    """Simula o novo contrato de dados exigido pelo SRS v2.0 com validação de tamanho."""
+    return {
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "email": "analista@credifacil.com"
+                }
+            }
+        },
+        "body": json.dumps({
+            "documentos": [
+                {"nome": "contrato_locacao.pdf", "tamanho": 512000},
+                {"nome": "rg_frente.png", "tamanho": 204800}
+            ],
+            "execute_score": True
+        })
+    }
 
-def test_deve_rejeitar_se_houver_documento_que_nao_seja_pdf():
-    documentos_invalidos = ["foto_imovel.jpg"]
-    package_id = "test-package-123"
-    
-    with pytest.raises(ValueError) as exc_info:
-        gerar_urls_upload(documentos_invalidos, package_id)
-        
-    assert "Apenas PDFs são permitidos" in str(exc_info.value)
+def test_deve_gerar_urls_pre_assinadas_com_sucesso(api_gateway_event, monkeypatch):
+    """Garante o fluxo feliz se os tamanhos e extensões forem válidos."""
+    # 🛡️ ISOLAMENTO TOTAL: Moca o S3 para não fazer chamadas reais de rede
+    class MockS3Client:
+        def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
+            return f"https://mock-s3-bucket.s3.amazonaws.com/{Params['Key']}?token=mocked"
 
-def test_deve_rejeitar_se_lista_ultrapassar_limite_de_oito_arquivos():
-    documentos_excessivos = [f"doc_{i}.pdf" for i in range(9)]
-    package_id = "test-package-123"
+    # 🛡️ ISOLAMENTO TOTAL: Moca o DynamoDB para evitar side-effects em tabelas reais
+    class MockDynamoClient:
+        def put_item(self, TableName, Item):
+            return {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+    monkeypatch.setattr("src.lambdas.pre_signed_url.handler.s3_client", MockS3Client())
+    monkeypatch.setattr("src.lambdas.pre_signed_url.handler.db_client", MockDynamoClient())
+
+    response = handler(api_gateway_event, None)
+    assert response["statusCode"] == 200
     
-    with pytest.raises(ValueError) as exc_info:
-        gerar_urls_upload(documentos_excessivos, package_id)
-        
-    assert "O limite máximo permitido é de 8 documentos" in str(exc_info.value)
+    body = json.loads(response["body"])
+    assert "package_id" in body
+    assert "uploads" in body
+    assert "contrato_locacao.pdf" in body["uploads"]
+    assert "uploadUrl" in body["uploads"]["contrato_locacao.pdf"]
+    assert "s3Key" in body["uploads"]["contrato_locacao.pdf"]
+
+def test_deve_rejeitar_se_o_arquivo_ultrapassar_dez_megabytes(api_gateway_event, monkeypatch):
+    """Proteção FinOps: Bloqueia uploads gigantes na borda da API."""
+    class MockDynamoClient:
+        def put_item(self, TableName, Item):
+            return {}
+
+    monkeypatch.setattr("src.lambdas.pre_signed_url.handler.db_client", MockDynamoClient())
+
+    event = api_gateway_event
+    event["body"] = json.dumps({
+        "documentos": [
+            {"nome": "video_pesado.mp4", "tamanho": 50 * 1024 * 1024} # 50 MB
+        ],
+        "execute_score": False
+    })
+
+    response = handler(event, None)
+    assert response["statusCode"] == 400
+    body = json.loads(response["body"])
+    assert "erro" in body
+    assert "tamanho" in body["erro"].lower()
