@@ -1,49 +1,341 @@
 # 🏆🏦 CrediFácil IDP — Vencedor Hack2Hire 2026
 
 ![AWS](https://img.shields.io/badge/AWS-Serverless-FF9900?logo=amazon-aws&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8.0-646CFF?logo=vite&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![SAM](https://img.shields.io/badge/IaC-AWS%20SAM-FF9900)
 ![Bedrock](https://img.shields.io/badge/AI-Amazon%20Bedrock-8C4FFF)
-![CloudWatch](https://img.shields.io/badge/Observability-CloudWatch%20%2B%20X--Ray-FF9900)
-![Status](https://img.shields.io/badge/status-MVP%20Produção-success)
+![Cognito](https://img.shields.io/badge/Auth-Amazon%20Cognito-DD344C)
+![Status](https://img.shields.io/badge/status-Pós--Hackathon%20em%20Evolução-blue)
 
-> 🎯 **Solução serverless de Processamento Inteligente de Documentos (IDP)** para automação completa da análise de crédito com garantia imobiliária, construída de ponta a ponta na AWS com IA generativa e observabilidade em tempo real.
+> 🎯 **Solução serverless de Processamento Inteligente de Documentos (IDP)** para automação completa da análise de crédito com garantia imobiliária, construída 100% na AWS com IA generativa, segurança B2B e observabilidade em tempo real.
 
-**Desenvolvido pelo Grupo 12** para o **Hack2Hire 2026** — evento promovido pela **Escola da Nuvem** em parceria com a **AWS**. 🚀
+Desenvolvida pelo **Grupo 12** para o **Hack2Hire 2026** (Escola da Nuvem + AWS), atualmente em evolução para um produto comercializável.
 
 ---
 
-## 📑 Sumário
+## Sumário
 
-- [Sobre o Evento](#-sobre-o-evento)
-- [Equipe — Grupo 12](#-equipe--grupo-12)
-- [O Desafio (Case A)](#-o-desafio-case-a)
-- [A Solução](#-a-solução)
+- [Sobre o Projeto](#-sobre-o-projeto)
 - [Arquitetura](#️-arquitetura)
-- [Frontend — UX Moderna](#-frontend--experiência-de-usuário-moderna)
-- [Fluxo de Processamento](#️-fluxo-de-processamento-automático)
-- [Impacto Mensurável](#-impacto-mensurável)
+- [Decisões Técnicas](#-decisões-técnicas)
+- [Stack Completa](#-stack-completa)
 - [Estrutura do Repositório](#-estrutura-do-repositório)
-- [Como Executar / Deploy](#-como-executar--deploy)
-- [Segurança & Observabilidade](#-segurança--observabilidade---produção-ready)
-- [Implementado no Hack2Hire](#-hack2hire-2026--o-que-foi-implementado-vs-futuro)
-- [Limitações Conhecidas](#️-limitações-conhecidas--em-desenvolvimento)
-- [Roadmap](#-roadmap--evolução-da-solução)
-- [Estimativa de Custos](#-estimativa-de-custos)
-- [Licença](#-licença)
-- [Agradecimentos](#-agradecimentos)
+- [Como Executar](#-como-executar)
+- [Segurança e Observabilidade](#-segurança-e-observabilidade)
+- [Roadmap Pós-Hackathon](#-roadmap-pós-hackathon)
+- [Equipe](#-equipe)
 
 ---
 
-## 🏆 Sobre o Evento
+## 🎯 Sobre o Projeto
 
-O **Hack2Hire** é um hackathon promovido pela **Escola da Nuvem** em parceria com a **AWS**, com o objetivo de conectar talentos a oportunidades de mercado através da resolução de desafios reais de negócio usando a nuvem AWS. Este repositório contém a solução desenvolvida pelo **Grupo 12** para o **Case A**.
+### O Problema
 
-## 👥 Equipe — Grupo 12
+Operações de crédito processam diariamente centenas de solicitações de empréstimo com garantia imobiliária, cada uma composta por múltiplos documentos (identidade, comprovante de renda, extrato bancário, matrícula do imóvel) analisados manualmente — processo lento, sujeito a erro humano e sem escala.
 
-| Integrantes |
+### A Solução
+
+O **CrediFácil IDP** automatiza ponta a ponta a leitura, classificação, extração e consolidação de um dossiê de crédito, entregando em aproximadamente 2 minutos o que levaria 20 a 30 minutos de triagem manual:
+
+- **JSON estruturado** com todos os dados extraídos e validados
+- **Planilha Excel consolidada** pronta para auditoria
+- **Score de crédito determinístico** (300 a 1000 pontos), 100% calculado em código e auditável
+- **Alerta de revisão humana** quando campos críticos têm baixa confiança de extração
+
+O produto é voltado ao mercado **B2B de acesso restrito**: correspondentes bancários, cooperativas de crédito e fintechs que já operam com crédito imobiliário.
+
+---
+
+## 🏗️ Arquitetura
+
+![Arquitetura da Solução CrediFácil](docs/architecture-diagram.png)
+
+A solução é **100% serverless** em `us-east-1`, organizada em três camadas:
+
+### Camada de Ingestão e Autenticação
+
+O fluxo começa com o usuário autenticado via **Amazon Cognito** (acesso restrito, sem auto-cadastro). A API Gateway valida o token JWT antes de qualquer invocação. O frontend solicita URLs pré-assinadas (Presigned POST com `content-length-range`) e faz o upload **diretamente ao S3**, sem passar por nenhuma Lambda no caminho crítico. Isso mantém custo baixo e evita gargalos.
+
+Quando todos os arquivos de um pacote chegam, o `s3_upload_tracker` detecta a conclusão do lote via contador atômico com lock condicional no DynamoDB, evitando disparos duplicados, e inicia a execução do Step Functions.
+
+### Camada de Orquestração (Step Functions)
+
+O pipeline principal é uma máquina de estados que coordena:
+
+1. **BDA Invoker:** dispara um `invoke_data_automation_async` por documento, em paralelo, cada um com sua subpasta isolada de saída no S3.
+2. **BDA Status Poller:** aguarda a conclusão de todos os jobs do Bedrock Data Automation.
+3. **Confidence Checker:** avalia os campos críticos de cada documento contra um limiar de 80% de confiança. Campos abaixo do limiar disparam um evento `LowConfidenceFieldsDetected` no EventBridge customizado, que roteia para a fila de revisão humana (SQS) com DLQ e alarme no CloudWatch.
+4. **Nova Structurer:** usa `amazon.nova-lite-v1:0` com tool calling forçado (`toolChoice`) para estruturar os dados brutos do BDA em JSON tipado por documento.
+5. **Excel Generator:** gera planilhas estilizadas por documento via `Map` state paralelo.
+6. **Customer Consolidator (opcional):** chama `amazon.nova-pro-v1:0` para validação cruzada de KYC entre documentos (consistência de nome, data de nascimento, tipo de documento), depois calcula o score determinístico em código Python puro.
+7. **Result Writer:** persiste o resultado final no DynamoDB (tabela de pacotes e CRM de clientes).
+8. **Notification:** publica no SNS de conclusão ou de erro.
+
+### Camada de Observabilidade e Segurança
+
+Transversal a todo o sistema: Lambda Powertools com logs estruturados em JSON, X-Ray ativo em todas as funções, métricas customizadas de tokens consumidos e custo estimado via Embedded Metric Format (EMF), e AWS Budgets com alarme de billing.
+
+---
+
+## 🧠 Decisões Técnicas
+
+### Por que Presigned POST em vez de PUT?
+
+O frontend usa `generate_presigned_post` com a condição `content-length-range`. Isso faz o **próprio S3** rejeitar uploads que excedam 10 MB, sem depender da Lambda para checar o tamanho declarado pelo cliente. Uma presigned PUT padrão não impõe essa barreira fisicamente.
+
+### Por que tool calling em vez de prompt de texto livre?
+
+O `nova_structurer` usa `converse()` com `toolConfig` e `toolChoice` forçado em vez de pedir JSON em texto livre. Com tool calling, o Bedrock garante estruturalmente que a resposta seja um objeto válido conforme o schema definido — sem parsing manual de markdown fences ou risco de texto extra na resposta.
+
+### Por que Nova Lite para estruturação por documento e Nova Pro para consolidação?
+
+A estruturação por documento é uma tarefa de extração com schema definido: o tool calling remove a necessidade de raciocínio livre. Nova Lite resolve bem e custa 13 vezes menos que o Pro. A consolidação cruzada de KYC envolve comparação entre múltiplos documentos e classificação de risco, onde o modelo mais capaz justifica o custo marginal. O score final, porém, é sempre calculado em código determinístico, nunca decidido pela IA.
+
+### Por que acesso B2B restrito?
+
+Cada pacote processado tem custo real de Bedrock. Acesso público e auto-cadastrado significaria que qualquer pessoa geraria custo sem ser um cliente pagante. Além disso, o CrediFácil processa documentos sensíveis (identidade e renda) para uma decisão que afeta acesso a crédito — isso só faz sentido dentro de uma relação contratual com uma empresa que tem base legal (LGPD) para coletar esses dados dos próprios clientes dela.
+
+---
+
+## 📦 Stack Completa
+
+| Camada | Tecnologia | Papel |
+|---|---|---|
+| Frontend | React 19.2, Vite 8.0 | Interface web com drag-and-drop, terminal de logs em tempo real e dashboard de score |
+| CDN | Amazon CloudFront + OAC | Distribuição do frontend via HTTPS com cache e invalidação automatizada no CI/CD |
+| Autenticação | Amazon Cognito User Pools | Autenticação B2B restrita (sem auto-cadastro), com verificação de e-mail |
+| API | Amazon API Gateway (REST) | Ponto único de entrada com Cognito Authorizer, throttling e CORS |
+| Ingestão | AWS Lambda, Amazon S3 | Geração de URLs Presigned POST + upload direto pelo navegador |
+| Orquestração | AWS Step Functions | Pipeline de estados com Map state para geração paralela de Excel |
+| Extração (IA) | Amazon Bedrock Data Automation | OCR, classificação e extração bruta por documento |
+| Estruturação (IA) | Amazon Bedrock, Nova Lite | Estruturação JSON via tool calling forçado |
+| Consolidação (IA) | Amazon Bedrock, Nova Pro | Validação cruzada de KYC entre documentos |
+| Score de crédito | Python determinístico | Scorecard de 300 a 1000 pontos, 100% auditável, nunca decidido pela IA |
+| Relatórios | AWS Lambda, openpyxl | Planilhas Excel estilizadas por documento |
+| Armazenamento | Amazon DynamoDB (PAY_PER_REQUEST) | Status de pacotes e CRM de clientes |
+| Armazenamento | Amazon S3 | Documentos de entrada, saídas do BDA, JSONs e planilhas |
+| Mensageria | Amazon SNS | Notificações de conclusão e erro |
+| Revisão humana | Amazon EventBridge, SQS, DLQ | Roteamento de campos de baixa confiança para fila de revisão com alarme |
+| Observabilidade | Lambda Powertools, CloudWatch, X-Ray | Logs JSON estruturados, métricas de custo e tracing distribuído |
+| FinOps | AWS Budgets + CloudWatch Alarm | Alertas de billing antes de qualquer surpresa de fatura |
+| IaC | AWS SAM / CloudFormation | 100% da infraestrutura reprodutível via código |
+| CI/CD | GitHub Actions + OIDC | Deploy sem credenciais estáticas; invalidação de cache CloudFront automatizada |
+| Runtime | Python 3.12, arm64 (Graviton) | ~20% mais barato que x86 para a mesma carga |
+
+---
+
+## 📁 Estrutura do Repositório
+
+```
+.
+├── .github/
+│   └── workflows/
+│       ├── deploy-dev.yml          # Deploy para o ambiente de desenvolvimento (branch: develop)
+│       └── destroy-dev.yml         # Teardown completo do ambiente (purga buckets antes de deletar a stack)
+│
+├── docs/
+│   ├── architecture-diagram.png   # Diagrama da arquitetura
+│   └── samples/                   # PDFs de amostra para testes locais
+│       ├── lending_package_check.pdf
+│       └── lending_package_pay_stub.pdf
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/            # Componentes React (ResultPanel, StatusTerminal, ScoreExplainPanel, …)
+│   │   ├── hooks/
+│   │   │   └── useDocumentPipeline.js  # Hook principal de polling de status e upload
+│   │   └── utils/
+│   │       └── resultHelpers.js
+│   ├── index.html
+│   ├── vite.config.js
+│   └── package.json
+│
+├── infrastructure/
+│   └── template.yaml              # Infraestrutura como código (AWS SAM)
+│
+├── scripts/
+│   └── bootstrap-dev.sh           # Provisionamento local de usuário Cognito pós-deploy (lê .env)
+│
+├── src/
+│   ├── lambdas/
+│   │   ├── bda_invoker/           # Dispara jobs paralelos no Bedrock Data Automation
+│   │   ├── bda_status_poller/     # Verifica status dos jobs do BDA
+│   │   ├── confidence_checker/    # Avalia confiança dos campos críticos, emite evento de revisão
+│   │   ├── customer_consolidator/ # Validação cruzada de KYC + scorecard determinístico
+│   │   ├── excel_generator/       # Gera planilhas estilizadas com openpyxl
+│   │   ├── notification/          # Publica resultado no SNS (conclusão ou erro)
+│   │   ├── nova_structurer/       # Estrutura saída bruta do BDA via tool calling (Nova Lite)
+│   │   ├── pipeline_trigger/      # Endpoint manual de disparo do pipeline com idempotência
+│   │   ├── pre_signed_url/        # Gera Presigned POST com barreiras de tamanho no S3
+│   │   ├── query_handler/         # Consulta status e gera URLs de download assinadas
+│   │   ├── result_writer/         # Persiste resultado no DynamoDB (pacotes e CRM de clientes)
+│   │   └── s3_upload_tracker/     # Detecta conclusão do lote via contador atômico
+│   ├── layers/
+│   │   └── dependencies/          # Lambda Layer compartilhada (boto3, Powertools, pydantic, openpyxl)
+│   └── shared/
+│       ├── models.py              # Modelos Pydantic de domínio
+│       ├── tools.py               # Especificação das tools do Bedrock (tool calling)
+│       └── schemas/
+│           └── loan_packages_schema.json
+│
+├── state_machines/
+│   └── idp_pipeline.json          # Definição do Step Functions (ASL)
+│
+├── tests/
+│   └── unit/                      # 30 testes unitários com pytest + moto (100% passando)
+│
+├── .gitignore
+├── pytest.ini
+├── requirements.txt               # Dependências de desenvolvimento e testes
+└── README.md
+```
+
+---
+
+## 🚀 Como Executar
+
+### Pré-requisitos
+
+- AWS CLI configurado com credenciais e permissões adequadas
+- AWS SAM CLI instalado
+- Python 3.12
+- Node.js 20+ (para o frontend)
+- Acesso habilitado ao **Amazon Bedrock** na conta (Data Automation + Nova Lite + Nova Pro)
+- Um **BDA Project** criado no Bedrock Data Automation com os blueprints configurados
+
+### 1. Deploy da infraestrutura
+
+```bash
+# Build da aplicação (empacota Lambdas e Layers)
+sam build --template-file infrastructure/template.yaml
+
+# Deploy no ambiente de desenvolvimento
+sam deploy \
+  --stack-name credifacil-idp-dev \
+  --resolve-s3 \
+  --no-confirm-changeset \
+  --parameter-overrides \
+    Environment=dev \
+    BdaProjectId=<SEU_BDA_PROJECT_ID> \
+  --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+```
+
+> O deploy contínuo está automatizado via GitHub Actions com autenticação OIDC (sem chaves de acesso estáticas). O push para `develop` aciona o deploy completo incluindo build e publicação do frontend.
+
+### 2. Provisionar o usuário de acesso
+
+Após o deploy, crie um arquivo `.env` na raiz do projeto (nunca versionado):
+
+```env
+USER_POOL_ID=us-east-1_XXXXXXXXX
+ANALYST_EMAIL=seu-email@exemplo.com
+ANALYST_PASSWORD=SuaSenha@Forte2026
+```
+
+Execute o script de bootstrap:
+
+```bash
+chmod +x scripts/bootstrap-dev.sh
+./scripts/bootstrap-dev.sh
+```
+
+> O `USER_POOL_ID` está disponível no output da stack via `aws cloudformation describe-stacks --stack-name credifacil-idp-dev --query "Stacks[0].Outputs"`.
+
+### 3. Acessar o frontend
+
+A URL do frontend é gerada automaticamente no deploy. Para obtê-la:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name credifacil-idp-dev \
+  --query "Stacks[0].Outputs[?OutputKey=='FrontendCloudFrontUrl'].OutputValue" \
+  --output text
+```
+
+### 4. Destruir o ambiente
+
+```bash
+# Via workflow (recomendado): dispara destroy-dev.yml manualmente no GitHub Actions
+# Ou localmente:
+aws s3 rm s3://credifacil-docs-entrada-<ACCOUNT_ID>-dev --recursive
+aws s3 rm s3://credifacil-docs-saida-<ACCOUNT_ID>-dev --recursive
+aws s3 rm s3://credifacil-idp-frontend-<ACCOUNT_ID>-dev --recursive
+sam delete --stack-name credifacil-idp-dev --no-prompts
+```
+
+### 5. Executar os testes
+
+```bash
+pip install -r requirements.txt
+AWS_DEFAULT_REGION=us-east-1 pytest tests/unit -v
+```
+
+---
+
+## 🔐 Segurança e Observabilidade
+
+### Segurança
+
+| Item | Implementação |
+|---|---|
+| Autenticação B2B | Amazon Cognito com `AllowAdminCreateUserOnly: true` — sem auto-cadastro público |
+| Autorização de API | `CognitoAuthorizer` como default authorizer em todos os endpoints sensíveis |
+| Upload seguro | Presigned POST com `content-length-range` — o S3 rejeita arquivos acima de 10 MB na borda |
+| Credenciais no CI/CD | OIDC (GitHub Actions assume role temporária via `aws-actions/configure-aws-credentials@v4`) — sem chaves estáticas |
+| IAM com privilégio mínimo | Roles escopadas por recurso em cada Lambda |
+| Criptografia em repouso | AES-256 (SSE-S3) em todos os buckets |
+| Throttling de API | `ThrottlingRateLimit: 5 req/s`, `ThrottlingBurstLimit: 10` |
+| Segredos locais | Credenciais de desenvolvimento via `.env` (nunca versionado) |
+
+### Observabilidade
+
+- **AWS Lambda Powertools:** logs estruturados em JSON com `service`, `package_id` e nível de severidade em todas as funções
+- **AWS X-Ray:** tracing distribuído ativo (mapa de serviços + latência ponta a ponta)
+- **CloudWatch Metrics (EMF):** `BedrockInputTokens`, `BedrockOutputTokens` e `EstimatedGenAiCostUSD` por `package_id`, emitidos pelo `nova_structurer`
+- **AWS Budgets + CloudWatch Alarm:** alerta de billing configurado para a conta — proteção contra surpresas de fatura em conta pessoal de desenvolvimento
+- **DLQ Alarm:** alarme no CloudWatch disparado quando mensagens chegam à DLQ de revisão humana
+
+---
+
+## 🛣️ Roadmap Pós-Hackathon
+
+Este projeto segue um SRS detalhado com fases priorizadas por custo e risco. O estado atual:
+
+### ✅ Concluído (Fase -1 e Fase 0 parcial)
+
+- ✅ **Cognito B2B** com acesso restrito e autorização em todos os endpoints
+- ✅ **Presigned POST** com barreiras físicas de tamanho no S3
+- ✅ **Métricas de custo** via EMF (tokens e custo estimado por pacote)
+- ✅ **AWS Budgets + alarme de billing** para conta pessoal de desenvolvimento
+- ✅ **Notificações SNS** de conclusão e erro com `NotifySuccess`/`NotifyError`
+- ✅ **Fila de revisão humana** (SQS + DLQ + EventBridge + alarme) para campos de baixa confiança
+- ✅ **`bootstrap-dev.sh`** para provisionamento seguro de usuário local pós-deploy
+- ✅ **Remoção de exposição de dados sensíveis** (`cfn_error_trace.json`, senha hardcoded no CI)
+- ✅ **`BDA_PROFILE_ARN` via CloudFormation** eliminando chamada STS em runtime
+- ✅ **30/30 testes unitários** passando
+
+### 🔄 Em andamento (Fase 1 — Paralelismo e Eventos)
+
+- 🔄 **Task Token + EventBridge para o BDA:** eliminar o polling do `bda_status_poller` usando a notificação nativa do Bedrock Data Automation — cada documento retoma individualmente quando seu job termina, sem custo de polling
+- ⏳ **Map state por documento no `nova_structurer`:** isolar a falha por documento em vez de abortar o lote inteiro
+- ⏳ **Retry/Catch padronizados:** backoff exponencial e captura de erros em todos os `Task` da state machine
+- ⏳ **Fechamento do loop de revisão humana:** a pipeline deve pausar (Task Token) quando há campos de baixa confiança, aguardando confirmação humana antes de continuar
+- ⏳ **Migração do `customer_consolidator` para Nova Lite + tool calling** (redução de custo de ~13×)
+- ⏳ **Bedrock Guardrails (Prompt Attack):** proteção contra prompt injection via conteúdo de PDFs maliciosos
+
+### 🔜 Fase 2 (Compliance e Hardening)
+
+- WAF básico, CloudTrail, Cognito com MFA
+- Blueprints para documentos brasileiros (RG/CNH, holerite CLT, extrato bancário BR)
+- Documentação formal de LGPD e postura frente ao Marco Legal da IA
+
+---
+
+## 👥 Equipe
+
+| Integrante |
 |---|
 | [Weriton Petreca](https://github.com/weritonpetreca) |
 | [Mikael Kobama](https://github.com/Mikael-Kobama) |
@@ -52,235 +344,15 @@ O **Hack2Hire** é um hackathon promovido pela **Escola da Nuvem** em parceria c
 
 ---
 
-## 🎯 O Desafio (Case A)
-
-A operação de crédito processa, diariamente, **centenas de solicitações de empréstimo com garantia imobiliária**, cada uma composta por múltiplos documentos (identidade, comprovante de renda, extrato bancário, matrícula do imóvel) que precisam ser analisados manualmente.
-
-Essa dependência total de intervenção humana em todas as etapas gera:
-- 🐌 Gargalo operacional e lentidão na resposta ao cliente;
-- 💸 Aumento de custo por solicitação processada;
-- 🔁 Retrabalho na conferência campo a campo;
-- 📉 Limitação de escala da operação.
-
-## 💡 A Solução
-
-O **CrediFácil IDP** automatiza ponta a ponta a leitura, classificação, extração e consolidação dos documentos de um dossiê de crédito, usando serviços nativos de IA da AWS, entregando:
-
-- Um **JSON estruturado e padronizado** com todos os dados extraídos do dossiê;
-- Uma **planilha Excel consolidada**, pronta para auditoria humana;
-- Opcionalmente, um **score de crédito** calculado por regra determinística, com classificação de risco e justificativa técnica.
-
-O analista interage com tudo isso por uma única interface web, sem precisar abrir documento por documento.
-
----
-
-## 🏗️ Arquitetura
-
-![Arquitetura da Solução CrediFácil](docs/architecture-diagram.png)
-
-
-A solução é **100% serverless**, na região `us-east-1`, dividida em duas frentes: o **fluxo principal** de processamento e uma camada transversal de **segurança e observabilidade**.
-
-| Camada | Serviço AWS | Papel |
-|---|---|---|
-| Frontend | **Amazon S3** (Website Hosting) | Interface web moderna (React + Vite) para upload e visualização de resultados |
-| API | **Amazon API Gateway** (REST) | Ponto único de entrada HTTP |
-| Ingestão | **AWS Lambda** | Geração de URLs pré-assinadas para upload direto |
-| Armazenamento (entrada) | **Amazon S3** | Recebe os documentos originais via upload direto do navegador |
-| Gatilho automático | **AWS Lambda** | Detecta upload completo e dispara o pipeline |
-| Orquestração | **AWS Step Functions** | Máquina de estados `credifacil-idp-pipeline` |
-| Extração (IDP) | **Amazon Bedrock Data Automation** | OCR, classificação e extração bruta por documento |
-| Estruturação (IA) | **Amazon Bedrock — Nova Pro** | Estrutura os dados em JSON tipado (tool calling) |
-| Consolidação (IA) | **Amazon Bedrock — Nova Pro** | Validação cruzada de KYC entre documentos |
-| Regra de negócio | Código Python determinístico | Cálculo do score de crédito (auditável, não decidido pela IA) |
-| Relatórios | **AWS Lambda** (openpyxl) | Geração de planilhas Excel estilizadas |
-| Persistência | **Amazon DynamoDB** | Status do processamento + CRM consolidado do proponente |
-| Armazenamento (saída) | **Amazon S3** | Resultados do BDA, JSON estruturado e planilhas |
-| Consulta | **AWS Lambda** | Consulta de status e geração de URLs assinadas de download |
-| Observabilidade | **AWS Lambda Powertools**, **Amazon CloudWatch**, **AWS X-Ray** | Logs estruturados, métricas e tracing distribuído |
-| Segurança | **AWS IAM** (Roles + Permission Boundary) + **OIDC** | Privilégio mínimo, sem credenciais estáticas no CI/CD |
-| IaC | **AWS SAM** / CloudFormation | Toda a infraestrutura é reprodutível via código |
-
-## 💻 Frontend — Experiência de Usuário Moderna
-
-O **CrediFácil IDP** conta com uma interface web construída em **React 19** com **Vite** como bundler, oferecendo uma experiência fluida e responsiva:
-
-- **🎯 Upload por Drag-and-Drop:** O usuário arrasta os documentos diretamente na interface, sem complexidade. Upload seguro e direto ao S3 via URLs pré-assinadas.
-- **📺 Terminal de Logs em Tempo Real:** Acompanhamento ao vivo de cada etapa do processamento (OCR, validação, extração, score) através de um terminal interativo estilizado, mostrando fase ativa, tempo decorrido e status (LIVE, CONCLUÍDO, ERRO).
-- **📊 Dashboard de Score de Crédito:** Visualização instantânea do score calculado (300 a 1000 pontos), classificação de risco (baixo/médio/alto) com cores visuais intuitivas, e explicação estruturada de cada fator avaliado.
-- **📥 Download Seguro:** Links assinados para download de planilhas Excel consolidadas e JSON estruturados, com auditoria completa integrada.
-- **🌓 Dark Mode:** Tema escuro nativo otimizado para ambientes de análise operacional.
-
-**Stack Frontend:** React 19.2 | Vite 8.0 | Componentes funcionais | Hooks customizados | CSS modular
-
----
-
-## ⚙️ Fluxo de Processamento Automático
-
-1. **Upload Seguro:** O usuário arrasta os documentos para o drag-and-drop → a API gera URLs pré-assinadas → o navegador faz o upload **direto para o S3**, sem exposição de credenciais.
-2. **Disparo Automático:** Quando todos os arquivos do lote chegam ao S3, uma Lambda detecta o evento e inicia automaticamente a execução do Step Functions.
-3. **Extração Inteligente:** O **Amazon Bedrock Data Automation** realiza OCR, classificação e extração bruta de cada documento em paralelo.
-4. **Estruturação de Dados:** O **Amazon Nova Pro** transforma a extração bruta em JSON estruturado e tipado, por documento, com validações.
-5. **Cálculo de Score (Opcional):** Se solicitado, uma segunda chamada ao Nova Pro realiza validação cruzada de KYC entre documentos (consistência de nome, data de nascimento, tipos de documento), e uma **regra determinística em código** (100% auditável) calcula o score final (300 a 1000 pontos) com base em análise de risco, renda e liquidez.
-6. **Persistência Imediata:** O resultado é salvo no **DynamoDB** (metadados) e no **S3** (JSON estruturado + Excel consolidado).
-7. **Consulta em Tempo Real:** A interface consulta o status continuamente; quando concluído, exibe o relatório completo com links de download seguros (URLs assinadas com validade limitada).
-
-**📊 Impacto Mensurável**
-
-Em aproximadamente **2 minutos**, o CrediFácil IDP processa um pacote com **6 documentos distintos**, classifica cada arquivo e entrega os resultados em JSON estruturado e Excel — uma etapa que, manualmente, levaria entre **20 e 30 minutos** de triagem operador a operador.
-
-Com a automação, o operador deixa de fazer a conferência campo a campo e passa a atuar de forma estratégica: revisando os dados já estruturados e sendo alertado apenas quando algum campo essencial não atingir um nível de confiabilidade adequado.
-
----
-
-## 📁 Estrutura do Repositório
-
-```bash
-.
-├── .github/workflows/         # Pipeline de CI/CD (GitHub Actions + OIDC)
-│   ├── deploy-dev.yml         # Deploy automático para o ambiente de desenvolvimento
-│   └── destroy-dev.yml        # Workflow para desprovisionar o ambiente de dev
-├── docs/                      # Documentação e diagramas da arquitetura
-│   └── architecture-diagram.png
-├── frontend/                  # Interface web — React 19 + Vite
-│   ├── src/
-│   │   # ...
-│   ├── index.html
-│   ├── vite.config.js
-│   └── package.json
-├── infrastructure/
-│   └── template.yaml          # Infraestrutura como código (AWS SAM)
-├── src/
-│   ├── lambdas/               # Código-fonte de cada função Lambda
-│   │   ├── bda_invoker/
-│   │   ├── bda_status_poller/
-│   │   ├── confidence_checker/
-│   │   ├── customer_consolidator/
-│   │   ├── excel_generator/
-│   │   ├── nova_structurer/
-│   │   ├── pipeline_trigger/
-│   │   ├── pre_signed_url/
-│   │   ├── query_handler/
-│   │   ├── result_writer/
-│   │   ├── s3_upload_tracker/
-│   │   └── notification/
-│   ├── layers/dependencies/   # Layer compartilhada (boto3, pydantic, powertools, openpyxl)
-│   └── shared/                # Modelos Pydantic, schemas JSON e tools do Bedrock
-├── state_machines/
-│   └── idp_pipeline.json      # Definição da máquina de estados (Step Functions)
-├── tests/                     # Testes automatizados (unitários, integração)
-│   └── unit/                  # Testes unitários para as funções Lambda
-├── requirements.txt           # Dependências Python do backend
-└── LICENSE                    # Licença de uso do projeto (MIT)
-```
-
-## 🚀 Como Executar / Deploy
-
-**Pré-requisitos:** AWS CLI configurado, [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html), Python 3.12, acesso habilitado ao **Amazon Bedrock** (Data Automation + Nova Pro) na conta AWS de destino.
-
-```bash
-# Build da aplicação
-sam build --template-file infrastructure/template.yaml
-
-# Deploy (ambiente de desenvolvimento)
-sam deploy \
-  --stack-name credifacil-idp-dev \
-  --resolve-s3 \
-  --no-confirm-changeset \
-  --parameter-overrides Environment=dev BdaProjectId=<SEU_BDA_PROJECT_ID> \
-  --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
-```
-
-> O deploy contínuo está automatizado via **GitHub Actions** (`.github/workflows/deploy-dev.yml`), autenticando na AWS por **OIDC** — sem chaves de acesso estáticas armazenadas no repositório.
-
----
-
-## 🔐 Segurança & Observabilidade — Produção-Ready
-
-Implementado de forma transversal a todas as Lambdas, ao Step Functions e à API Gateway:
-
-### 🔍 Observabilidade em Tempo Real
-
-- **AWS Lambda Powertools** — Logger estruturado em todas as Lambdas (JSON), com serviços identificados e contexto de execução completo;
-- **Amazon CloudWatch** — Logs centralizados com buscas por package_id, tempo de execução e status de processamento; métricas customizadas para custo por requisição;
-- **AWS X-Ray** — Tracing distribuído ativo em todas as funções (Tracing: Active nos Globals do SAM template), com mapa de serviços visual e latência ponta-a-ponta.
-- **Dashboard Operacional** — Terminal em tempo real no frontend com atualizações contínuas do status de cada etapa.
-
-### 🛡️ Segurança
-
-- **AWS IAM** — Roles com privilégio mínimo, escopadas por recurso, sob *Permission Boundary* obrigatório;
-- **OIDC (GitHub Actions)** — Deploy sem credenciais de longa duração (assumindo roles temporárias);
-- **S3 Bucket Encryption** — Criptografia AES-256 ativada em todos os buckets;
-- **Signed URLs** — Arquivos entram e saem do S3 apenas via URLs pré-assinadas de curta duração (nunca acesso público).
-
----
-
-## 🏆 Hack2Hire 2026 — O que foi Implementado vs Futuro
-
-### ✅ Implementado Durante o Evento
-
-Tudo funcionando e em produção:
-
-- ✅ **Pipeline IDP Completo:** Extração com Bedrock Data Automation, estruturação com Nova Pro, cálculo de score determinístico;
-- ✅ **Frontend React + Vite:** Interface moderna com drag-and-drop, terminal de logs em tempo real, dashboard de score com dark mode;
-- ✅ **Observabilidade:** CloudWatch logs estruturados (AWS Lambda Powertools) + X-Ray tracing distribuído em todas as funções;
-- ✅ **Upload Seguro:** URLs pré-assinadas, S3 com criptografia AES-256, sem credenciais expostas;
-- ✅ **CI/CD via OIDC:** GitHub Actions com autenticação segura na AWS (sem secrets estáticos);
-- ✅ **IaC Reprodutível:** 100% da infraestrutura via AWS SAM / CloudFormation;
-- ✅ **Tratamento de Confiança:** Validação granular de acurácia do BDA, com alertas para campos críticos;
-- ✅ **Relatórios Excel:** Geração automática de planilhas estilizadas com openpyxl;
-- ✅ **Testes Unitários:** Base de testes unitários com `pytest` para as principais funções Lambda, garantindo a lógica de negócio;
-- ✅ **DynamoDB CRM:** Persistência de dados consolidados do cliente para auditoria e consultas futuras.
-
-## ⚠️ Limitações Conhecidas & Em Desenvolvimento
-
-### Em Desenvolvimento Pós-Hackathon
-
-- 🔄 **Amazon SNS & SQS** — Estrutura desenhada no SAM template, implementação de notificações assíncronas e fila de revisão humana em validação;
-- 🔑 **Amazon Cognito** — Autenticação de usuários integrada à API (claims já mapeados nos eventos de exemplo, integração backend em progresso).
-
-### Limitações do MVP
-
-- O endpoint manual `/v1/packages/{packageId}/process` existe na infraestrutura mas não é utilizado pelo fluxo atual (disparo é 100% automático via evento de S3).
-
-## 🛣️ Roadmap — Evolução da Solução
-
-### 🔜 Próximas Iterações (Curto Prazo)
-
-- 🔔 **SNS/SQS Completo** — Ativar notificações de conclusão e fila de revisão humana (estrutura já existe);
-- 🔐 **Cognito com MFA** — Integração de autenticação de usuários com multi-factor authentication;
-- 🔄 **WebSocket / AppSync** — Atualização real-time de status em vez de polling;
-- 🧪 **Testes Automatizados** — Suite de testes com `pytest` + `moto` para Lambdas e Step Functions.
-
-### 🚀 Médio Prazo — Escalabilidade & Performance
-
-- 🌐 **Amazon CloudFront** — CDN na frente do frontend e downloads (cache, HTTPS, WAF integrado);
-- ⚡ **Paralelismo Real** — Migração de BDA para *Map state* nativo do Step Functions (sem risco de timeout);
-- 📊 **Batching Automático** — Processamento agrupado de múltiplos pacotes (reduz custos de API);
-- 💾 **PITR + Backups** — Point-in-Time Recovery e backup automático no DynamoDB.
-
-### 🔒 Longo Prazo — Compliance & Segurança Avançada
-
-- 🛡️ **AWS Shield / WAF** — Proteção contra DDoS e ataques web;
-- 🔍 **GuardDuty** — Detecção de ameaças e comportamentos anômalos;
-- 🔐 **KMS Customizado** — Chaves de criptografia gerenciadas pelo cliente para S3 e DynamoDB;
-- 📋 **Compliance Audit Trail** — Log imutável de todas as operações sensíveis (CloudTrail + S3 Object Lock).
-
 ## 💰 Estimativa de Custos
 
-Considerando um cenário de aproximadamente **750 solicitações diárias**, foi realizada uma estimativa de custos com base nos serviços utilizados (Lambda, API Gateway, DynamoDB, S3, Bedrock, IAM, Step Functions e EventBridge).
-
-🔗 [Confira a estimativa completa na Calculadora de Preços da AWS](https://calculator.aws/#/estimate?id=c0c37981b850386fe457dbaa52513264ab875d16)
+Para referência, a estimativa original do hackathon para 750 solicitações diárias está disponível na [Calculadora de Preços da AWS](https://calculator.aws/#/estimate?id=c0c37981b850386fe457dbaa52513264ab875d16). O custo por pacote individual gira em torno de US$ 0,64 só de Bedrock Data Automation (~8 documentos × 2 páginas × US$ 0,040/página), mais os tokens de Nova Lite/Pro medidos via EMF.
 
 ---
 
 ## 📜 Licença
 
-Este projeto é distribuído sob a **Licença MIT**. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
-
-## 🙏 Agradecimentos
-
-À **Escola da Nuvem** e à **AWS** pela organização do Hack2Hire e pela oportunidade de aplicar serviços de nuvem e IA generativa em um desafio real de negócio.
+Distribuído sob a **Licença MIT**. Veja [LICENSE](LICENSE) para mais detalhes.
 
 ---
 
