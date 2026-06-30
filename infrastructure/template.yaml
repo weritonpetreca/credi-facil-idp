@@ -464,7 +464,7 @@ Resources:
       Environment:
         Variables:
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
-          BDA_PROFILE_ARN: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:data-automation-profile/credifacil-bda-profile"
+          BDA_PROFILE_ARN: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:data-automation-profile/us.data-automation-v1"
           BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Policies:
