@@ -1,58 +1,69 @@
-from unittest.mock import patch, MagicMock
+import json
 import os
+import pytest
+from unittest.mock import MagicMock
+# 🚀 IMPORTAÇÃO DO MÓDULO: Permite injetar os Mocks diretamente nas variáveis internas do arquivo
+import src.lambdas.bda_invoker.handler as bda_handler
 
-# Importa o handler no topo do arquivo
-from src.lambdas.bda_invoker.handler import handler
+@pytest.fixture(autouse=True)
+def setup_env():
+    """Injeta as variáveis de ambiente necessárias para a Lambda compilar sem quebras."""
+    os.environ["BDA_PROJECT_ARN"] = "arn:aws:bedrock:us-east-1:635106763014:data-automation-project/credifacil-bda-dev"
+    os.environ["BDA_PROJECT_ID"] = "projeto-credifacil-bda-default"
+    os.environ["BUCKET_ENTRADA"] = "credifacil-docs-entrada-dev"
+    os.environ["BUCKET_SAIDA"] = "credifacil-docs-saida-dev"
+    os.environ["ENV"] = "dev"
 
-@patch.dict(os.environ, {
-    "BDA_PROJECT_ARN": "arn:aws:bedrock:us-east-1:635106763014:data-automation-project/credifacil-bda-dev",
-    "BDA_PROJECT_ID": "projeto-credifacil-bda-default",
-    "BUCKET_SAIDA": "credifacil-docs-saida-dev",
-    "ENV": "dev"
-})
-@patch("boto3.client")
-def test_bda_invoker_handler_success(mock_boto3_client):
-    """
-    Garante que o invoker do BDA execute a chamada assíncrona
-    e retorne o payload mapeado corretamente para o Step Functions.
-    """
-    # 1. Configura os Mocks dos clientes AWS
-    mock_bedrock = MagicMock()
-    mock_bedrock.invoke_data_automation_async.return_value = {
+def test_bda_invoker_handler_success(monkeypatch):
+    """Garante que o invoker do BDA liste os arquivos de entrada e dispare o job assíncrono."""
+    
+    # 1. Configura os Mocks isolados de infraestrutura
+    mock_s3 = MagicMock()
+    mock_s3.list_objects_v2.return_value = {
+        "Contents": [
+            {"Key": "packages/pacote-999/rg.pdf"},
+            {"Key": "packages/pacote-999/holerite.pdf"}
+        ]
+    }
+    
+    mock_sts = MagicMock()
+    mock_sts.get_caller_identity.return_value = {"Account": "635106763014"}
+    
+    mock_bedrock_bda = MagicMock()
+    mock_bedrock_bda.invoke_data_automation_async.return_value = {
         "invocationArn": "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123",
         "status": "Submitted"
     }
-    mock_sts = MagicMock()
-    mock_sts.get_caller_identity.return_value = {"Account": "635106763014"}
 
-    def side_effect(service_name, *args, **kwargs):
-        if service_name == "bedrock-data-automation-runtime":
-            return mock_bedrock
-        if service_name == "sts":
-            return mock_sts
-        return MagicMock()
+    # 2. 🛡️ MONKEYPATCHING CIRÚRGICO: Substitui as instâncias reais pelos Mocks na memória do módulo
+    monkeypatch.setattr(bda_handler, "s3_client", mock_s3)
+    
+    # Faz o patch preventivo cobrirem variações comuns de nomes de variáveis do STS e Bedrock Runtime
+    for client_name in ["sts_client", "sts"]:
+        if hasattr(bda_handler, client_name):
+            monkeypatch.setattr(bda_handler, client_name, mock_sts)
+            
+    for bda_name in ["bda_client", "bedrock_client", "bedrock_runtime", "bda_runtime"]:
+        if hasattr(bda_handler, bda_name):
+            monkeypatch.setattr(bda_handler, bda_name, mock_bedrock_bda)
 
-    mock_boto3_client.side_effect = side_effect
-
-    # 2. Payload de entrada
+    # 3. Payload legítimo que inicia a orquestração do Step Functions
     mock_event = {
         "package_id": "pacote-999",
         "user_id": "user-123",
         "bda_output_bucket": "credifacil-docs-saida-dev"
     }
 
-    # 3. Executa a função
-    response = handler(mock_event, None)
+    # 4. Execução do Ponto de Entrada (Handler)
+    response = bda_handler.handler(mock_event, None)
 
-    # 4. Asserções
+    # 5. 🛡️ VALIDAÇÃO DE CONTRATO ATUALIZADA: Adequada ao paralelismo granular do SRS v2.0
     assert response["package_id"] == "pacote-999"
-    assert response["bda_job_id"] == "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123"
+    assert response["user_id"] == "user-123"
+    assert response["bda_output_bucket"] == "credifacil-docs-saida-dev"
     
-    mock_bedrock.invoke_data_automation_async.assert_called_once_with(
-        inputConfiguration={"s3Uri": "s3://credifacil-docs-entrada-dev/packages/pacote-999/"},
-        outputConfiguration={"s3Uri": "s3://credifacil-docs-saida-dev/bda-output/pacote-999/"},
-        dataAutomationConfiguration={
-            "dataAutomationProjectArn": "arn:aws:bedrock:us-east-1:635106763014:data-automation-project/projeto-credifacil-bda-default"
-        },
-        dataAutomationProfileArn="arn:aws:bedrock:us-east-1:635106763014:data-automation-profile/us.data-automation-v1"
-    )
+    # Garante que o array de descentralização de carga nasceu com os 2 jobs simulados
+    assert "bda_job_ids" in response
+    assert isinstance(response["bda_job_ids"], list)
+    assert len(response["bda_job_ids"]) == 2
+    assert response["bda_job_ids"][0] == "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123"

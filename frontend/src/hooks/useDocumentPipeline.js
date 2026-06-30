@@ -168,7 +168,10 @@ export function useDocumentPipeline() {
             "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({
-            documentos: files.map((f) => f.name),
+            documentos: files.map((f) => ({
+              nome: f.name,
+              tamanho: f.size
+          })),
             execute_score: scoreRequested,
           }),
         });
