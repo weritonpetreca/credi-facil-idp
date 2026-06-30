@@ -23,13 +23,21 @@ def api_gateway_event():
     }
 
 def test_deve_gerar_urls_pre_assinadas_com_sucesso(api_gateway_event, monkeypatch):
-    """Garante o fluxo feliz se os tamanhos e extensões forem válidos."""
-    # 🛡️ ISOLAMENTO TOTAL: Moca o S3 para não fazer chamadas reais de rede
+    """Garante o fluxo feliz se os tamanhos e extensões forem válidos e retorna o layout POST."""
+    
+    # 🛡️ ALINHAMENTO DE MOCK: Agora implementa a assinatura do Presigned POST
     class MockS3Client:
-        def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
-            return f"https://mock-s3-bucket.s3.amazonaws.com/{Params['Key']}?token=mocked"
+        def generate_presigned_post(self, Bucket, Key, Fields=None, Conditions=None, ExpiresIn=3600):
+            return {
+                "url": f"https://{Bucket}.s3.amazonaws.com",
+                "fields": {
+                    "key": Key,
+                    "AWSAccessKeyId": "mock-access-key",
+                    "policy": "mock-cryptographic-policy",
+                    "signature": "mock-signature"
+                }
+            }
 
-    # 🛡️ ISOLAMENTO TOTAL: Moca o DynamoDB para evitar side-effects em tabelas reais
     class MockDynamoClient:
         def put_item(self, TableName, Item):
             return {"ResponseMetadata": {"HTTPStatusCode": 200}}
@@ -44,8 +52,13 @@ def test_deve_gerar_urls_pre_assinadas_com_sucesso(api_gateway_event, monkeypatc
     assert "package_id" in body
     assert "uploads" in body
     assert "contrato_locacao.pdf" in body["uploads"]
-    assert "uploadUrl" in body["uploads"]["contrato_locacao.pdf"]
-    assert "s3Key" in body["uploads"]["contrato_locacao.pdf"]
+    
+    # 🚀 AS SERÇÕES ATUALIZADAS: Valida o novo contrato multipart exigido pelo S3
+    doc_upload_config = body["uploads"]["contrato_locacao.pdf"]
+    assert "url" in doc_upload_config
+    assert "fields" in doc_upload_config
+    assert "s3Key" in doc_upload_config
+    assert doc_upload_config["fields"]["key"] == doc_upload_config["s3Key"]
 
 def test_deve_rejeitar_se_o_arquivo_ultrapassar_dez_megabytes(api_gateway_event, monkeypatch):
     """Proteção FinOps: Bloqueia uploads gigantes na borda da API."""

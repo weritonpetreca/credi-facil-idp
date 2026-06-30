@@ -25,24 +25,21 @@ def mapear_content_type(doc_name: str) -> str:
         raise ValueError(f"Extensão .{ext} inválida para o arquivo {doc_name}. Permitidos: PDF, PNG, JPG, JPEG e WEBP.")
     return extensoes_suportadas[ext]
 
-# 🛠️ REFATORAÇÃO SÊNIOR: Ajustada a assinatura para receber a lista de objetos estruturados
 def gerar_urls_upload(lista_documentos: list[dict], package_id: str) -> dict:
     if len(lista_documentos) > 8:
         raise ValueError("O limite máximo permitido é de 8 documentos por pacote.")
         
-    # 🛡️ DEFINE TETOS DE SEGURANÇA (10 MB em Bytes)
+    # Tetos de segurança (10 MB em Bytes)
     LIMITE_MAX_BYTES = 10 * 1024 * 1024 
     urls_geradas = {}
     
     for doc in lista_documentos:
-        # Validação defensiva do contrato interno do payload
         if not isinstance(doc, dict) or "nome" not in doc or "tamanho" not in doc:
             raise ValueError("Contrato inválido. Cada documento deve conter os campos 'nome' e 'tamanho'.")
             
         doc_name = doc["nome"]
         doc_size = doc["tamanho"]
         
-        # 📈 REQUISITO [RF-07]: Bloqueio imediato na borda para proteção FinOps
         if doc_size > LIMITE_MAX_BYTES:
             raise ValueError(f"O arquivo {doc_name} ultrapassa o tamanho máximo permitido de 10 MB.")
             
@@ -50,21 +47,28 @@ def gerar_urls_upload(lista_documentos: list[dict], package_id: str) -> dict:
         s3_key = f"packages/{package_id}/{uuid.uuid4()}-{doc_name}"
         
         try:
-            url = s3_client.generate_presigned_url(
-                ClientMethod="put_object",
-                Params={
-                    "Bucket": os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev"),
-                    "Key": s3_key,
-                    "ContentType": content_type_dinamico
+            # 🛡️ REQUISITO [RF-24]: Migração para Presigned POST com barreiras rígidas na nuvem
+            post_config = s3_client.generate_presigned_post(
+                Bucket=os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev"),
+                Key=s3_key,
+                Fields={
+                    "Content-Type": content_type_dinamico
                 },
+                Conditions=[
+                    {"Content-Type": content_type_dinamico},
+                    ["content-length-range", 1, LIMITE_MAX_BYTES] # Garante barreira física de tamanho no S3
+                ],
                 ExpiresIn=900
             )
+            
+            # Alinha o retorno para que o front-end saiba separar a URL base dos campos de autenticação
             urls_geradas[doc_name] = {
                 "s3Key": s3_key,
-                "uploadUrl": url
+                "url": post_config["url"],
+                "fields": post_config["fields"]
             }
         except ClientError as e:
-            logger.error(f"Erro do SDK S3 ao gerar URL pré-assinada para {doc_name}: {str(e)}")
+            logger.error(f"Erro do SDK S3 ao gerar política POST para {doc_name}: {str(e)}")
             raise e
             
     return urls_geradas
@@ -96,7 +100,7 @@ def handler(event, context):
         package_id = str(uuid.uuid4())
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         
-        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} com execute_score={execute_score} no DynamoDB")
+        logger.info(f"Gravando expectativa de {len(documentos)} documentos para o pacote {package_id} no DynamoDB")
         
         db_client.put_item(
             TableName=TABLE_NAME,
@@ -113,7 +117,6 @@ def handler(event, context):
             }
         )
         
-        # Repassa a lista estruturada para o motor de geração de links
         links = gerar_urls_upload(documentos, package_id)
         
         return {
@@ -136,7 +139,7 @@ def handler(event, context):
             "body": json.dumps({"erro": str(val_err)})
         }
     except Exception as e:
-        logger.exception(f"Falha não tratada na geração de URLs pré-assinadas: {str(e)}")
+        logger.exception(f"Falha não tratada na geração de parâmetros POST: {str(e)}")
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},

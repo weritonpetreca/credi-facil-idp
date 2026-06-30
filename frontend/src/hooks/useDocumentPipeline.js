@@ -61,7 +61,6 @@ export function useDocumentPipeline() {
     setFinishedAt(null);
   }, [stopPolling]);
 
-  // 🛠️ ATUALIZAÇÃO: pollUntilDone agora recebe o token para conseguir furar o API Gateway
   const pollUntilDone = useCallback(
     (packageId, scoreRequested, token) => {
       pollDeadline.current = Date.now() + POLL_TIMEOUT_MS;
@@ -78,7 +77,6 @@ export function useDocumentPipeline() {
         }
 
         try {
-          // 🛡️ Injeta o cabeçalho Authorization também na busca de status do lote
           const response = await fetch(`${API_URL}v1/packages/${packageId}`, {
             headers: {
               "Authorization": `Bearer ${token}`
@@ -171,7 +169,7 @@ export function useDocumentPipeline() {
             documentos: files.map((f) => ({
               nome: f.name,
               tamanho: f.size
-          })),
+            })),
             execute_score: scoreRequested,
           }),
         });
@@ -198,25 +196,35 @@ export function useDocumentPipeline() {
             throw new Error(`Instrução de upload não encontrada para o arquivo: ${file.name}`);
           }
 
-          const putResponse = await fetch(instruction.uploadUrl, {
-            method: "PUT",
-            headers: {
-              "Content-Type": file.type || "application/octet-stream",
-            },
-            body: file,
+          // ==========================================================================
+          // 🛡️ ATUALIZAÇÃO [RF-24]: CONSTRUÇÃO DO PAYLOAD MULTIPART PARA PRESIGNED POST
+          // ==========================================================================
+          const formData = new FormData();
+
+          // Regra de Ouro 1: Anexa todas as chaves de autenticação/tokens ANTES do arquivo
+          Object.entries(instruction.fields).forEach(([key, value]) => {
+            formData.append(key, value);
           });
 
-          if (!putResponse.ok) {
-            throw new Error(`Erro ao transmitir o binário do arquivo: ${file.name}`);
+          // Regra de Ouro 1 (Continuação): O arquivo físico DEVE ser o último parâmetro
+          formData.append("file", file);
+
+          // Regra de Ouro 2: Chamada POST sem passar Content-Type manual nos headers
+          const postResponse = await fetch(instruction.url, {
+            method: "POST",
+            body: formData, 
+          });
+
+          if (!postResponse.ok) {
+            throw new Error(`Erro ao transmitir o binário do arquivo via POST: ${file.name}`);
           }
 
-          pushLog(`${file.name} (${formatFileSize(file.size)}) enviado.`, "success");
+          pushLog(`${file.name} (${formatFileSize(file.size)}) enviado via canal seguro POST.`, "success");
         }
 
         pushLog("Lote enviado. Monitorando progresso do IDP...", "success");
         setPhase("waiting");
 
-        // 🚀 O SEGREDO: Passa o token adiante para o loop de monitoramento
         pollUntilDone(prepData.package_id, scoreRequested, token);
         return true;
       } catch (err) {
