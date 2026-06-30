@@ -27,8 +27,7 @@ def handler(event, context):
             raise FileNotFoundError(f"Nenhum documento encontrado na pasta {prefix_entrada}")
 
         project_arn = os.environ.get("BDA_PROJECT_ARN")
-        account_id = boto3.client('sts').get_caller_identity()['Account']
-        profile_arn = f"arn:aws:bedrock:us-east-1:{account_id}:data-automation-profile/us.data-automation-v1"
+        profile_arn = os.environ.get("BDA_PROFILE_ARN")
 
         bda_job_ids = []
 

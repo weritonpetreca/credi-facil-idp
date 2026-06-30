@@ -30,6 +30,8 @@ wheels/
 # 🐳 AWS SAM CLI & CloudFormation
 .aws-sam/
 samconfig.toml
+cfn_error_trace.json
+*_trace.json
 
 # 🟢 Node.js & Front-end (React/Vite)
 node_modules/
