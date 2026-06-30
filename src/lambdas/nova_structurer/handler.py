@@ -2,10 +2,11 @@ import json
 import os
 import boto3
 from datetime import datetime, timezone
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Metrics
 from src.shared.tools import obter_especificacao_ferramenta_loan
 
 logger = Logger(service="nova-structurer")
+metrics = Metrics(namespace="CrediFacilIDP", service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 db_client = boto3.client("dynamodb", region_name="us-east-1")
@@ -266,6 +267,7 @@ def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metri
         "documentos_analisados": documentos_analisados
     }
 
+@metrics.log_metrics(capture_cold_start=True)
 def handler(event, context):
     try:
         package_id = event.get("package_id")
@@ -393,6 +395,20 @@ def handler(event, context):
 
         metricas = {"input": total_input_tokens, "output": total_output_tokens}
         json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
+
+        # ==========================================================================
+        # 📈 REQUISITO [RF-09]: PUBLICAÇÃO ASSÍNCRONA DE MÉTRICAS VIA EMF
+        # ==========================================================================
+        logger.info(f"Publicando métricas EMF de consumo do Bedrock para o pacote {package_id}")
+        metrics.add_metric(name="BedrockInputTokens", unit="Count", value=total_input_tokens)
+        metrics.add_metric(name="BedrockOutputTokens", unit="Count", value=total_output_tokens)
+        
+        # Executa o cálculo FinOps baseado na tabela oficial do Nova Lite em us-east-1
+        custo_estimado_usd = ((total_input_tokens * 0.06) + (total_output_tokens * 0.24)) / 1000000
+        metrics.add_metric(name="EstimatedGenAiCostUSD", unit="None", value=custo_estimado_usd)
+        
+        # Adiciona metadados contextuais para facilitar filtros nos dashboards
+        metrics.add_metadata(key="package_id", value=package_id)
 
         if not execute_score:
             logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/packages/{package_id}/output.json")
