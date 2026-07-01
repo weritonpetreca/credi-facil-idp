@@ -337,6 +337,31 @@ Resources:
             Resource: !GetAtt CrediFacilReviewQueue.Arn
 
   # ==========================================================================
+  # 🚀 REGRA DO EVENTBRIDGE PARA CAPTURAR EVENTOS DO BEDROCK DATA AUTOMATION
+  # ==========================================================================
+  BdaEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Intercepta de forma assíncrona o status de conclusão dos Jobs do BDA para o CrediFácil"
+      State: "ENABLED"
+      EventPattern:
+        source:
+          - "aws.bedrock"
+        detail-type:
+          - "Bedrock Data Automation Job Status Change"
+      Targets:
+        - Arn: !GetAtt BdaCallbackHandlerFunction.Arn
+          Id: "BdaCallbackTarget"
+
+  PermissionForEventBridgeToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BdaCallbackHandlerFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt BdaEventRule.Arn
+
+  # ==========================================================================
   # 🌐 CAMADA DE EXPOSIÇÃO DA API REST (PROTEGIDA POR PADRÃO) - SCHEMA FINAL
   # ==========================================================================
   CrediFacilRestApi:
@@ -501,6 +526,26 @@ Resources:
             - Sid: AllowGetAutomationStatus
               Effect: Allow
               Action: "bedrock:GetDataAutomationStatus"
+              Resource: "*"
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
+  BdaCallbackHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.bda_callback_handler.handler.handler
+      Description: "Gatilho reativo que consome o EventBridge e acorda a State Machine via Task Token"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+        - Statement:
+            - Sid: AllowStepFunctionsCallback
+              Effect: "Allow"
+              Action:
+                - "states:SendTaskSuccess"
+                - "states:SendTaskFailure"
               Resource: "*"
     Tags:
       Project: CrediFacil-IDP
