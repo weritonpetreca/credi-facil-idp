@@ -140,26 +140,30 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
-# 🚀 ATUALIZAÇÃO DA FUNÇÃO ORIGINAL: Incorpora o tratamento de payloads planos e mesclagem humana
-def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None) -> dict:
-    # 🎯 CORREÇÃO DO GAP 1: Tenta coletar do nó anidado. Se vier plano na raiz, clona e remove chaves de controle da IA
-    raw_fields = payload_ia.get("campos_extraidos_brutos")
-    if raw_fields is None:
-        CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
-        raw_fields = {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    elif isinstance(raw_fields, str):
-        raw_fields = json.loads(raw_fields)
+def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
+    # 🎯 CORREÇÃO DE NESTING: Extrai de forma plana eliminando ruídos da IA
+    CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
+    raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
+    if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
-    # 🎯 CORREÇÃO DO GAP 2: Se houver correções da mesa de revisão, esmaga o valor da IA pelo valor humano verificado
+    # 🎯 PROCESSAMENTO ISOLADO DAS CORREÇÕES HUMANAS POR ARQUIVO
     is_human_override = False
     if correcoes_humanas:
-        for campo, valor_corrigido in correcoes_humanas.items():
-            raw_fields[campo] = valor_corrigido
-            is_human_override = True
+        for composite_key, valor_corrigido in correcoes_humanas.items():
+            if "__" in composite_key:
+                file_part, field_part = composite_key.split("__", 1)
+                if file_part == arquivo:
+                    raw_fields[field_part] = valor_corrigido
+                    is_human_override = True
+
+    # 🎯 TELEMETRIA REAL: Calcula a média real de acurácia extraída do BDA para o documento
+    bda_fields = bda_json.get("extractedFields", {}) if bda_json else {}
+    confiancas = [float(f.get("confidenceScore") or f.get("confidence") or 1.0) for f in bda_fields.values()]
+    media_bda_real = sum(confiancas) / len(confiancas) if confiancas else 0.95
 
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     if is_human_override:
-        alertas_observacoes.append("Metadados homologados e retificados manualmente via Mesa de Revisão Humana.")
+        alertas_observacoes.append("Metadados retificados e auditados manualmente pelo operador.")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -176,10 +180,9 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
-            # 🎯 CORREÇÃO DO GAP 3: Se houver auditoria humana, força status para sucesso e confiança em 100% (1.0)
-            "status_extracao": "sucesso" if is_human_override or payload_ia.get("confianca_extracao", 1.0) >= 0.8 else "parcial",
-            "confianca_media": "1.0" if is_human_override else str(payload_ia.get("confianca_extracao", 1.0)),
-            "fonte_confiabilidade": "human_audit_override" if is_human_override else "matched_blueprint.confidence",
+            "status_extracao": "sucesso" if is_human_override or media_bda_real >= 0.8 else "parcial",
+            "confianca_media": "1.0" if is_human_override else f"{media_bda_real:.4f}",
+            "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
             "observacoes": alertas_observacoes
         }
     }
@@ -192,7 +195,7 @@ def handler(event, context):
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
 
-        logger.info(f"Iniciando estruturação isolada via Nova Lite para: {nome_pdf_original}")
+        logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
 
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -233,23 +236,19 @@ def handler(event, context):
         achado = tool_use_block.get("input", {})
         if isinstance(achado, str): achado = json.loads(achado)
 
-        # 🚀 BUSCA ATIVA DE REVISÃO NO DYNAMODB: Extrai as correções salvas pela API
+        # 🚀 RECOVERY: Busca ativa e higienização das correções da tabela Dynamo
         correcoes_humanas = {}
         try:
             rev_response = db_client.get_item(
                 TableName=TABLE_NAME,
-                Key={
-                    "PK": {"S": package_id},
-                    "SK": {"S": "REVISION"}
-                }
+                Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}}
             )
             rev_item = rev_response.get("Item")
             if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
                 correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
                 correcoes_humanas = json.loads(correcoes_json)
-                logger.info(f"Mesa de revisão identificada para o pacote {package_id}. Mesclando correções do analista.")
         except Exception as db_err:
-            logger.warning(f"Não foi possível ler barreira de revisão humana para mesclagem de dados: {str(db_err)}")
+            logger.warning(f"Falha ao conectar com mesa de revisão para mesclagem: {str(db_err)}")
 
         tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
         subtipo_detectado = "pay_stub"
@@ -277,12 +276,12 @@ def handler(event, context):
             "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
-        # Injeta as correções humanas coletadas de volta na função blueprint original atualizada
+        # 🚀 Passa o json_bruto original para computação da acurácia real do BDA
         blueprint_json = formatar_conforme_blueprint(
-            tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas
+            tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas, json_bruto
         )
         
-        logger.info(f"Gravando arquivo individual estruturado com integridade de dados em: {s3_target_key}")
+        logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
         s3_client.put_object(
             Bucket=bucket_saida, Key=s3_target_key,
             Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"

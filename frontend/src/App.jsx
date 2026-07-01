@@ -198,7 +198,6 @@ export default function App() {
                     {revisionFields.map((field, idx) => (
                       <div key={idx} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ffe0b2", background: "rgba(255, 224, 178, 0.15)" }}>
                         
-                        {/* 🚀 O link foi embutido diretamente aqui dentro do span original */}
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--text-muted)", marginBottom: "6px" }}>
                           <span>
                             📄 {field.arquivo} ({field.subtipo})
@@ -213,18 +212,20 @@ export default function App() {
                               </a>
                             )}
                           </span>
-                          <span style={{ color: "#d84315", fontWeight: "600" }}>Confiança: {(field.confidence_score * 100).toFixed(0)}%</span>
+                          {/* 🚀 EXIBIÇÃO DA PORCENTAGEM REAL DO BDA */}
+                          <span style={{ color: "#d84315", fontWeight: "600" }}>Confiança Real: {(field.confidence_score * 100).toFixed(0)}%</span>
                         </div>
 
                         <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px", textTransform: "capitalize" }}>
                           {field.campo_afetado.replace(/_/g, " ")}
                         </label>
                         
+                        {/* 🚀 CHAVE COMPOSTA ISOLADA POR ARQUIVO E CAMPO */}
                         <input
                           type="text"
                           required
-                          value={correctionsForm[field.campo_afetado] || ""}
-                          onChange={(e) => setCorrectionsForm({ ...correctionsForm, [field.campo_afetado]: e.target.value })}
+                          value={correctionsForm[`${field.arquivo}__${field.campo_afetado}`] || ""}
+                          onChange={(e) => setCorrectionsForm({ ...correctionsForm, [`${field.arquivo}__${field.campo_afetado}`]: e.target.value })}
                           style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #b26a00", background: "var(--bg-input)", color: "var(--text-main)" }}
                         />
                       </div>

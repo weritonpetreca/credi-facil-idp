@@ -65,7 +65,7 @@ def handler(event, context):
 
             for campo in campos_criticos:
                 dados_campo = extracted_fields.get(campo, {})
-                confidence = float(dados_campo.get("confidence", 0.0))
+                confidence = float(dados_campo.get("confidenceScore") or dados_campo.get("confidence", 0.0))
 
                 if confidence < THRESHOLD:
                     needs_human_review = True
