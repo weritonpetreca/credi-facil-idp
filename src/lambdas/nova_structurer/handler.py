@@ -7,8 +7,11 @@ from src.shared.tools import obter_especificacao_ferramenta_loan
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+# 🚀 ADICIONADO: Inicialização do cliente DynamoDB para suportar o Human-in-the-Loop
+db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-lite-v1:0"
+TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
 TEMPLATE_PAYROLL_CHECK = {
     "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
@@ -137,8 +140,27 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
-def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict) -> dict:
-    raw_fields = payload_ia.get("campos_extraidos_brutos", {})
+# 🚀 ATUALIZAÇÃO DA FUNÇÃO ORIGINAL: Incorpora o tratamento de payloads planos e mesclagem humana
+def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None) -> dict:
+    # 🎯 CORREÇÃO DO GAP 1: Tenta coletar do nó anidado. Se vier plano na raiz, clona e remove chaves de controle da IA
+    raw_fields = payload_ia.get("campos_extraidos_brutos")
+    if raw_fields is None:
+        CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
+        raw_fields = {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
+    elif isinstance(raw_fields, str):
+        raw_fields = json.loads(raw_fields)
+        
+    # 🎯 CORREÇÃO DO GAP 2: Se houver correções da mesa de revisão, esmaga o valor da IA pelo valor humano verificado
+    is_human_override = False
+    if correcoes_humanas:
+        for campo, valor_corrigido in correcoes_humanas.items():
+            raw_fields[campo] = valor_corrigido
+            is_human_override = True
+
+    alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
+    if is_human_override:
+        alertas_observacoes.append("Metadados homologados e retificados manualmente via Mesa de Revisão Humana.")
+
     return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
@@ -154,10 +176,11 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
-            "status_extracao": "sucesso" if payload_ia.get("confianca_extracao", 1.0) >= 0.8 else "parcial",
-            "confianca_media": str(payload_ia.get("confianca_extracao", 1.0)),
-            "fonte_confiabilidade": "matched_blueprint.confidence",
-            "observacoes": payload_ia.get("alertas_inconsistencias", [])
+            # 🎯 CORREÇÃO DO GAP 3: Se houver auditoria humana, força status para sucesso e confiança em 100% (1.0)
+            "status_extracao": "sucesso" if is_human_override or payload_ia.get("confianca_extracao", 1.0) >= 0.8 else "parcial",
+            "confianca_media": "1.0" if is_human_override else str(payload_ia.get("confianca_extracao", 1.0)),
+            "fonte_confiabilidade": "human_audit_override" if is_human_override else "matched_blueprint.confidence",
+            "observacoes": alertas_observacoes
         }
     }
 
@@ -169,7 +192,7 @@ def handler(event, context):
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
 
-        logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
+        logger.info(f"Iniciando estruturação isolada via Nova Lite para: {nome_pdf_original}")
 
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -210,6 +233,24 @@ def handler(event, context):
         achado = tool_use_block.get("input", {})
         if isinstance(achado, str): achado = json.loads(achado)
 
+        # 🚀 BUSCA ATIVA DE REVISÃO NO DYNAMODB: Extrai as correções salvas pela API
+        correcoes_humanas = {}
+        try:
+            rev_response = db_client.get_item(
+                TableName=TABLE_NAME,
+                Key={
+                    "PK": {"S": package_id},
+                    "SK": {"S": "REVISION"}
+                }
+            )
+            rev_item = rev_response.get("Item")
+            if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
+                correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
+                correcoes_humanas = json.loads(correcoes_json)
+                logger.info(f"Mesa de revisão identificada para o pacote {package_id}. Mesclando correções do analista.")
+        except Exception as db_err:
+            logger.warning(f"Não foi possível ler barreira de revisão humana para mesclagem de dados: {str(db_err)}")
+
         tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
         subtipo_detectado = "pay_stub"
         
@@ -236,9 +277,12 @@ def handler(event, context):
             "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
-        blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
+        # Injeta as correções humanas coletadas de volta na função blueprint original atualizada
+        blueprint_json = formatar_conforme_blueprint(
+            tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas
+        )
         
-        logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
+        logger.info(f"Gravando arquivo individual estruturado com integridade de dados em: {s3_target_key}")
         s3_client.put_object(
             Bucket=bucket_saida, Key=s3_target_key,
             Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"

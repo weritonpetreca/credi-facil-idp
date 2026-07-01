@@ -53,11 +53,12 @@ def handler(event, context):
         db_client.update_item(
             TableName=TABLE_NAME,
             Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}},
-            UpdateExpression="SET status_revisao = :s, #st = :c",
+            UpdateExpression="SET status_revisao = :s, #st = :c, correcoes_humanas = :ch",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":s": {"S": "RESOLVIDO"},
-                ":c": {"S": "PROCESSING"} # Devolve o status do lote para processando
+                ":c": {"S": "PROCESSING"},
+                ":ch": {"S": json.dumps(correcoes, ensure_ascii=False)}
             }
         )
 
