@@ -754,12 +754,15 @@ Resources:
       Handler: src.lambdas.query_handler.handler.handler
       Environment:
         Variables:
+          BUCKET_ENTRADA: !Ref BucketEntrada
           BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrediFacilDynamoTable
         - DynamoDBReadPolicy:
             TableName: !Ref CrediFacilClientesTable
+        - S3ReadPolicy:
+            BucketName: !Ref BucketEntrada
         - S3ReadPolicy:
             BucketName: !Ref BucketSaida
       Events:

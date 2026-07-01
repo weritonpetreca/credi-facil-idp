@@ -10,6 +10,7 @@ db_client = boto3.client("dynamodb", region_name="us-east-1")
 s3_client = boto3.client("s3", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
+BUCKET_ENTRADA = os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev")
 BUCKET_SAIDA = os.environ.get("BUCKET_SAIDA", "credifacil-docs-saida-dev")
 
 def handler(event, context):
@@ -61,6 +62,21 @@ def handler(event, context):
                     status = "NEEDS_REVISION"
                     campos_json = rev_item.get("campos_reprovados_json", {}).get("S", "[]")
                     failed_fields_metadata = json.loads(campos_json)
+
+                    for field in failed_fields_metadata:
+                        nome_arquivo = field.get("arquivo")
+                        if nome_arquivo:
+                            s3_key_origem = f"packages/{package_id}/{nome_arquivo}"
+                            try:
+                                url_documento = s3_client.generate_presigned_url(
+                                    'get_object',
+                                    Params={'Bucket': BUCKET_ENTRADA, 'Key': s3_key_origem},
+                                    ExpiresIn=900 # 15 minutos de expiração segura
+                                )
+                                field["s3_url_documento_original"] = url_documento
+                            except Exception as url_err:
+                                logger.warning(f"Não foi possível assinar o documento de origem {nome_arquivo}: {str(url_err)}")
+
                     logger.info(f"Barreira detectada! Retornando status {status} com {len(failed_fields_metadata)} campos falhos.")
             except Exception as rev_err:
                 logger.warning(f"Não foi possível verificar barreira de revisão humana: {str(rev_err)}")

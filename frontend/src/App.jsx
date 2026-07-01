@@ -197,13 +197,29 @@ export default function App() {
                   <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginBottom: "20px" }}>
                     {revisionFields.map((field, idx) => (
                       <div key={idx} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #ffe0b2", background: "rgba(255, 224, 178, 0.15)" }}>
-                        <div style={{ display: "flex", justifyContent: "between", fontSize: "11px", color: "var(--text-muted)", marginBottom: "6px" }}>
-                          <span>📄 {field.arquivo} ({field.subtipo})</span>
+                        
+                        {/* 🚀 O link foi embutido diretamente aqui dentro do span original */}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--text-muted)", marginBottom: "6px" }}>
+                          <span>
+                            📄 {field.arquivo} ({field.subtipo})
+                            {field.s3_url_documento_original && (
+                              <a 
+                                href={field.s3_url_documento_original} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                style={{ marginLeft: "8px", color: "#e65100", fontWeight: "600", textDecoration: "underline" }}
+                              >
+                                🔗 Ver Arquivo Original
+                              </a>
+                            )}
+                          </span>
                           <span style={{ color: "#d84315", fontWeight: "600" }}>Confiança: {(field.confidence_score * 100).toFixed(0)}%</span>
                         </div>
+
                         <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px", textTransform: "capitalize" }}>
                           {field.campo_afetado.replace(/_/g, " ")}
                         </label>
+                        
                         <input
                           type="text"
                           required
