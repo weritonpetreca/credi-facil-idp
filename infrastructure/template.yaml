@@ -456,7 +456,7 @@ Resources:
       Environment:
         Variables:
           BUCKET_SAIDA: !Ref BucketSaida
-          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
@@ -465,7 +465,7 @@ Resources:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Ref CrediFacilStateMachine
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -487,7 +487,7 @@ Resources:
       Environment:
         Variables:
           BUCKET_SAIDA: !Ref BucketSaida
-          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
@@ -496,7 +496,7 @@ Resources:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Ref CrediFacilStateMachine
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
         - SQSSendMessagePolicy:
             QueueName: !GetAtt CrediFacilUploadTrackerDLQ.QueueName
       Events:
