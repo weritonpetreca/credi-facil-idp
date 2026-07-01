@@ -4,34 +4,18 @@
   "States": {
     "InvokeBDA": {
       "Type": "Task",
-      "Resource": "${BdaInvokerArn}",
-      "Next": "WaitForBDA"
-    },
-    "WaitForBDA": {
-      "Type": "Wait",
-      "Seconds": 10,
-      "Next": "GetBDAStatus"
-    },
-    "GetBDAStatus": {
-      "Type": "Task",
-      "Resource": "${BdaStatusPollerArn}",
-      "Next": "CheckBDAStatus"
-    },
-    "CheckBDAStatus": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.status",
-          "StringEquals": "SUCCESS",
-          "Next": "EvaluateConfidence"
-        },
-        {
-          "Variable": "$.status",
-          "StringEquals": "FAILED",
-          "Next": "NotifyError"
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${BdaInvokerArn}",
+        "Payload": {
+          "package_id.$": "$.package_id",
+          "user_id.$": "$.user_id",
+          "bda_output_bucket.$": "$.bda_output_bucket",
+          "task_token.$": "$$.Task.Token"
         }
-      ],
-      "Default": "WaitForBDA"
+      },
+      "ResultPath": "$",
+      "Next": "EvaluateConfidence"
     },
     "EvaluateConfidence": {
       "Type": "Task",

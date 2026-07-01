@@ -57,24 +57,38 @@ def handler(event, context):
         logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id} com status {bda_status}")
 
         if bda_status == "COMPLETED":
-            output_payload = {
-                "package_id": package_id,
-                "status": "SUCCESS",
-                "bda_output_bucket": output_config.get("s3Bucket"),
-                "bda_output_prefix": output_config.get("s3Prefix")
-            }
-            
-            logger.info(f"Disparando SendTaskSuccess para acordar o lote {package_id}")
-            sfn_client.send_task_success(
-                taskToken=task_token,
-                output=json.dumps(output_payload)
+            res = db_client.update_item(
+                TableName=TABLE_NAME,
+                Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
+                UpdateExpression="SET bda_pending_jobs = bda_pending_jobs - :one",
+                ExpressionAttributeValues={":one": {"N": "1"}},
+                ReturnValues="UPDATED_NEW"
             )
+            
+            jobs_restantes = int(res["Attributes"]["bda_pending_jobs"]["N"])
+            logger.info(f"Job concluído. Documentos restantes aguardando o BDA no lote {package_id}: {jobs_restantes}")
+            
+            # O pipeline só será acordado quando o último documento do lote aterrissar
+            if jobs_restantes == 0:
+                output_payload = {
+                    "package_id": package_id,
+                    "status": "SUCCESS",
+                    "bda_output_bucket": output_config.get("s3Bucket"),
+                    "bda_output_prefix": f"bda-output/{package_id}/" # Aponta para a raiz do pacote
+                }
+                
+                logger.info(f"🏁 Último arquivo processado. Acordando o Step Functions para o lote {package_id}")
+                sfn_client.send_task_success(
+                    taskToken=task_token,
+                    output=json.dumps(output_payload)
+                )
         else:
-            logger.warning(f"O Job do Bedrock falhou na nuvem. Notificando a quebra do lote {package_id}")
+            # Se um único arquivo falhar, mantemos a regra de fail-fast e abortamos o lote
+            logger.warning(f"O Job {job_id} falhou. Notificando a quebra imediata do lote {package_id}")
             sfn_client.send_task_failure(
                 taskToken=task_token,
                 error="BedrockDataAutomationFailure",
-                cause=f"O processamento assíncrono do BDA falhou com o status: {bda_status}"
+                cause=f"O sub-job {job_id} falhou com status {bda_status}"
             )
             
         return {
