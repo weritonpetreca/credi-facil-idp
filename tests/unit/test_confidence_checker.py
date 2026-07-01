@@ -2,7 +2,6 @@ import json
 import pytest
 from src.lambdas.confidence_checker.handler import handler
 
-# Criamos uma simulação de corpo de streaming para responder como se fosse o S3 real
 class MockS3Body:
     def __init__(self, content_dict):
         self.content_str = json.dumps(content_dict)
@@ -20,11 +19,9 @@ def base_event():
 def test_deve_marcar_como_clean_se_todos_os_campos_forem_confiaveis(base_event, monkeypatch):
     """Garante o fluxo feliz se a IA extraiu dados cadastrais com alta acurácia."""
     
-    # Moca a listagem do S3 simulando que encontrou 1 arquivo estruturado de uma CNH
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
         lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/driver_license.json"}]})
 
-    # Moca o download do JSON do S3 com confianças altas (CNH exige document_number e full_name)
     bda_output_perfeito = {
         "extractedFields": {
             "document_number": {"value": "1234567", "confidence": 0.95},
@@ -37,20 +34,20 @@ def test_deve_marcar_como_clean_se_todos_os_campos_forem_confiaveis(base_event, 
 
     response = handler(base_event, None)
     
-    # Asserte o contrato de saída: deve passar sem acionar alertas humanos
     assert response["audit_status"] == "CLEAN"
     assert response["failed_fields_count"] == 0
+    assert "failed_fields_metadata" in response
+    assert len(response["failed_fields_metadata"]) == 0
 
 def test_deve_exigir_revisao_humana_e_notificar_se_campo_critico_tiver_baixa_confianca(base_event, monkeypatch):
-    """Garante o Fail-Safe do SRS: Se um dado crucial falhar, tranca no Dynamo e avisa o EventBridge."""
+    """Garante o Fail-Safe do SRS: Se um dado crucial falhar, retorna os metadados estruturados para a State Machine."""
     
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
         lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/pay_stub.json"}]})
 
-    # Simula o cenário crítico: O nome do funcionário veio ilegível (confiança 0.45)
     bda_output_corrompido = {
         "extractedFields": {
-            "employee_name": {"value": "W#riton Lui%", "confidence": 0.45}, # Abaixo do THRESHOLD de 0.80
+            "employee_name": {"value": "W#riton Lui%", "confidence": 0.45},
             "pay_date": {"value": "2026-06-20", "confidence": 0.91},
             "employer_name": {"value": "CrediFacil Corp", "confidence": 0.88}
         }
@@ -58,21 +55,11 @@ def test_deve_exigir_revisao_humana_e_notificar_se_campo_critico_tiver_baixa_con
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.get_object",
         lambda Bucket, Key: {"Body": MockS3Body(bda_output_corrompido)})
 
-    # Capturadores de estado para validar se a Lambda realmente executou os side-effects de segurança
-    event_bridge_acionado = []
-    dynamo_atualizado = []
-
-    monkeypatch.setattr("src.lambdas.confidence_checker.handler.events_client.put_events",
-        lambda Entries: event_bridge_acionado.append(Entries) or {"FailedEntryCount": 0})
-        
-    monkeypatch.setattr("src.lambdas.confidence_checker.handler.db_client.update_item",
-        lambda TableName, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues: 
-            dynamo_atualizado.append(ExpressionAttributeValues))
-
     response = handler(base_event, None)
     
-    # Validações de Borda estritas
     assert response["audit_status"] == "NEEDS_REVISION"
     assert response["failed_fields_count"] == 1
-    assert len(event_bridge_acionado) == 1  # Provou o disparo do alerta assíncrono para o ecossistema
-    assert dynamo_atualizado[0][":s"]["S"] == "NEEDS_REVISION" # Provou a trava de segurança na tabela
+    assert "failed_fields_metadata" in response
+    assert len(response["failed_fields_metadata"]) == 1
+    assert response["failed_fields_metadata"][0]["campo_afetado"] == "employee_name"
+    assert response["failed_fields_metadata"][0]["confidence_score"] == 0.45

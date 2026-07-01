@@ -1,6 +1,7 @@
 import json
 import os
 import boto3
+from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="confidence-checker")
@@ -9,6 +10,7 @@ s3_client = boto3.client("s3", region_name="us-east-1")
 
 THRESHOLD = 0.80
 
+# 🎯 SLA DE COMPLIANCE: Apenas a oscilação destes campos críticos gerará alertas humanos
 CAMPOS_CRITICOS_POR_SUBTIPO = {
     "homeowners_insurance_application": ["policy_number", "effective_date", "named_insured", "insurance_company"],
     "driver_license": ["document_number", "full_name", "expiration_date"],
@@ -30,6 +32,7 @@ def handler(event, context):
         if "Contents" not in s3_objects:
             logger.warning(f"Nenhum output do BDA localizado para auditoria no prefixo {prefix_busca}")
             return {
+                **event,
                 "audit_status": "CLEAN",
                 "failed_fields_count": 0,
                 "failed_fields_metadata": []
@@ -66,7 +69,7 @@ def handler(event, context):
 
                 if confidence < THRESHOLD:
                     needs_human_review = True
-                    campos_com_falha_getal = campos_com_falha_geral.append({
+                    campos_com_falha_geral.append({
                         "arquivo": nome_pdf_original,
                         "subtipo": subtipo,
                         "campo_afetado": campo,
@@ -74,8 +77,8 @@ def handler(event, context):
                         "valor_bruto": dados_campo.get("value", "")
                     })
 
-        # 🚀 COMPLIANCE: Retorna o payload completo estruturado para o Step Functions tomar a decisão
         return {
+            **event,
             "audit_status": "NEEDS_REVISION" if needs_human_review else "CLEAN",
             "failed_fields_count": len(campos_com_falha_geral),
             "failed_fields_metadata": campos_com_falha_geral

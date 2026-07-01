@@ -50,7 +50,7 @@
     },
     "EscalateToHumanReview": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::eventbridge:putEvents.waitForTaskToken",
+      "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
       "Parameters": {
         "Entries": [
           {
