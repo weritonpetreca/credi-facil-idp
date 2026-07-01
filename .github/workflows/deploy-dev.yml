@@ -57,6 +57,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           BDA_ID: ${{ secrets.BDA_PROJECT_ID }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: |
           BDA_VAL="${BDA_ID:-e1a9e2ae3eb7}"
 
@@ -68,6 +69,7 @@ jobs:
             --parameter-overrides \
               Environment=dev \
               BdaProjectId="$BDA_VAL" \
+              NotificationEmail="$NOTIFICATION_EMAIL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
       - name: Build Front-End (Vite Compilation)

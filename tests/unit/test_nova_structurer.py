@@ -1,6 +1,11 @@
 import json
+import os
 import pytest
-from src.lambdas.nova_structurer.handler import handler
+from unittest.mock import MagicMock
+
+import src.lambdas.nova_structurer.lister as lister_module
+import src.lambdas.nova_structurer.handler as unit_handler_module
+import src.lambdas.nova_structurer.aggregator as aggregator_module
 
 class MockS3Body:
     def __init__(self, text):
@@ -8,64 +13,149 @@ class MockS3Body:
     def read(self):
         return self.text.encode("utf-8")
 
+@pytest.fixture(autouse=True)
+def setup_env():
+    """Injeta as variáveis de ambiente necessárias para a Lambda compilar sem quebras."""
+    os.environ["DYNAMODB_TABLE"] = "credifacil-pacotes-dev"
+    os.environ["BDA_PROJECT_ARN"] = "arn:aws:bedrock:us-east-1:635106763014:data-automation-project/credifacil-bda-dev"
+    os.environ["BDA_PROFILE_ARN"] = "arn:aws:bedrock:us-east-1:635106763014:data-automation-profile/us.data-automation-v1"
+    os.environ["BUCKET_ENTRADA"] = "credifacil-docs-entrada-dev"
+    os.environ["BUCKET_SAIDA"] = "credifacil-docs-saida-dev"
+    os.environ["ENV"] = "dev"
+    # 🚀 ADICIONADO: Variáveis de ambiente de segurança para emular a infraestrutura do CloudFormation
+    os.environ["GUARDRAIL_IDENTIFIER"] = "guardrail-idp-mock-123"
+    os.environ["GUARDRAIL_VERSION"] = "1"
+
+# ==========================================================================
+# 🔍 1. TESTES DO COMPONENTE: LISTER (Mantido estável)
+# ==========================================================================
+def test_lister_deve_mapear_documentos_e_buscar_flags_do_banco(base_event, monkeypatch):
+    mock_db = MagicMock()
+    mock_s3 = MagicMock()
+
+    mock_db.get_item.return_value = {
+        "Item": {
+            "execute_score": {"BOOL": True},
+            "uploadedBy": {"S": "analista-weriton"}
+        }
+    }
+    mock_s3.list_objects_v2.return_value = {
+        "Contents": [
+            {"Key": "bda-output/pkg-map-999/cnh_frente/custom_output.json"},
+            {"Key": "bda-output/pkg-map-999/holerite/standard_output.json"}
+        ]
+    }
+
+    monkeypatch.setattr(lister_module, "db_client", mock_db)
+    monkeypatch.setattr(lister_module, "s3_client", mock_s3)
+
+    response = lister_module.handler(base_event, None)
+
+    assert response["package_id"] == "pkg-map-999"
+    assert response["execute_score"] is True
+    assert response["user_id"] == "analista-weriton"
+    assert "documentos_para_estruturar" in response
+    assert len(response["documentos_para_estruturar"]) == 2
+
 @pytest.fixture
-def pipeline_event():
+def base_event():
     return {
-        "package_id": "pkg-struct-999",
+        "package_id": "pkg-map-999",
         "bda_output_bucket": "credifacil-outputs-dev"
     }
 
-def test_deve_estruturar_documento_via_bedrock_tool_calling_com_sucesso(pipeline_event, monkeypatch):
-    """Garante que a orquestração Nova captura a resposta estruturada da IA e persiste o blueprint no S3."""
+# ==========================================================================
+# 🧠 2. TESTES DO COMPONENTE: UNIT STRUCTURER (HANDLER VALIDA COMPLIANCE)
+# ==========================================================================
+def test_handler_unitario_deve_estruturar_um_unico_documento_via_tool_calling(monkeypatch):
+    mock_s3 = MagicMock()
+    mock_bedrock = MagicMock()
+
+    mock_s3.get_object.return_value = {
+        "Body": MockS3Body('{"text": "Transcrição simulada OCR da CNH do cliente Weriton Luis Petreca"}')
+    }
     
-    # 1. Mock do DynamoDB para responder que a flag execute_score está falsa
-    monkeypatch.setattr("src.lambdas.nova_structurer.handler.db_client.get_item",
-        lambda TableName, Key: {"Item": {"execute_score": {"BOOL": False}}})
-
-    # 2. Mock do S3 listando um arquivo de saída do BDA pendente de estruturação
-    monkeypatch.setattr("src.lambdas.nova_structurer.handler.s3_client.list_objects_v2",
-        lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-struct-999/identidade.json"}]})
-
-    # 3. Mock do download do JSON bruto do S3
-    monkeypatch.setattr("src.lambdas.nova_structurer.handler.s3_client.get_object",
-        lambda Bucket, Key: {"Body": MockS3Body('{"text": "Simulação de transcrição OCR da CNH de Weriton Luis Petreca"}')})
-
-    # 4. Mock da chamada do Amazon Bedrock simulando a injeção nativa de Tool Calling do modelo Nova
-    def mock_converse(modelId, messages, system, toolConfig, inferenceConfig):
-        return {
-            "usage": {"inputTokens": 120, "outputTokens": 85},
-            "output": {
-                "message": {
-                    "content": [
-                        {
-                            "toolUse": {
-                                "input": {
-                                    "tipo_classificado": "identity_document",
-                                    "campos_extraidos_brutos": {
-                                        "full_name": "WERITON LUIS PETRECA",
-                                        "document_number": "MG-12.345.678"
-                                    },
-                                    "confianca_extracao": 0.95,
-                                    "alertas_inconsistencias": []
-                                }
+    mock_bedrock.converse.return_value = {
+        "usage": {"inputTokens": 150, "outputTokens": 90},
+        "output": {
+            "message": {
+                "content": [
+                    {
+                        "toolUse": {
+                            "input": {
+                                "tipo_classificado": "identity_document",
+                                "campos_extraidos_brutos": {
+                                    "full_name": "WERITON LUIS PETRECA",
+                                    "document_number": "MG-12.345.678"
+                                },
+                                "confianca_extracao": 0.98,
+                                "alertas_inconsistencias": []
                             }
                         }
-                    ]
-                }
+                    }
+                ]
             }
         }
-    monkeypatch.setattr("src.lambdas.nova_structurer.handler.bedrock_runtime.converse", mock_converse)
+    }
 
-    # 5. Capturador de escrita do S3 para provar que salvamos o blueprint final de resultados
-    arquivos_salvos_s3 = []
-    monkeypatch.setattr("src.lambdas.nova_structurer.handler.s3_client.put_object",
-        lambda Bucket, Key, Body, ContentType: arquivos_salvos_s3.append(Key))
+    monkeypatch.setattr(unit_handler_module, "s3_client", mock_s3)
+    monkeypatch.setattr(unit_handler_module, "bedrock_runtime", mock_bedrock)
 
-    response = handler(pipeline_event, None)
+    mock_map_item_event = {
+        "package_id": "pkg-map-999",
+        "bda_output_bucket": "credifacil-outputs-dev",
+        "nome_pdf_original": "cnh_frente.pdf",
+        "s3_key_bda": "bda-output/pkg-map-999/cnh_frente/custom_output.json"
+    }
 
-    # Asserções de conformidade de contrato
-    assert response["package_id"] == "pkg-struct-999"
-    assert response["execute_score"] is False
-    assert len(arquivos_salvos_s3) == 2
-    # Valida se a rota dinâmica de salvamento obedeceu a classificação taxonômica da IA
-    assert "results/documento_identificacao/driver_license/" in arquivos_salvos_s3[0]
+    response = unit_handler_module.handler(mock_map_item_event, None)
+
+    assert "blueprint" in response
+    assert response["blueprint"]["subtipo_documento"] == "driver_license"
+    assert response["blueprint"]["dados_extraidos_do_documento"]["full_name"] == "WERITON LUIS PETRECA"
+    
+    # 🚀 VALIDAÇÃO DEVSECOPS CRÍTICA: Assegura que o código acionou o Guardrail de segurança contra injeção de prompt
+    mock_bedrock.converse.assert_called_once()
+    _, kwargs = mock_bedrock.converse.call_args
+    assert "guardrailConfig" in kwargs
+    assert kwargs["guardrailConfig"]["guardrailIdentifier"] == "guardrail-idp-mock-123"
+    assert kwargs["guardrailConfig"]["guardrailVersion"] == "1"
+
+    assert mock_s3.put_object.call_count == 1
+
+# ==========================================================================
+# 📊 3. TESTES DO COMPONENTE: AGGREGATOR (Mantido estável)
+# ==========================================================================
+def test_aggregator_deve_consolidar_lote_e_emitir_metricas_emf(monkeypatch):
+    mock_s3 = MagicMock()
+    monkeypatch.setattr(aggregator_module, "s3_client", mock_s3)
+    monkeypatch.setattr(aggregator_module.metrics, "add_metric", lambda name, unit, value: None)
+
+    mock_aggregator_event = {
+        "package_id": "pkg-map-999",
+        "user_id": "analista-weriton",
+        "execute_score": False,
+        "bda_output_bucket": "credifacil-outputs-dev",
+        "map_results": [
+            {
+                "blueprint": {
+                    "tipo_documento": "documento_identificacao",
+                    "subtipo_documento": "driver_license",
+                    "arquivo_original": "cnh.pdf",
+                    "dados_extraidos_do_documento": {"full_name": "WERITON LUIS PETRECA"},
+                    "localizacao_documento_s3": {"s3_key_origem": "packages/pkg-map-999/cnh.pdf", "s3_key_resultado_bda": "k", "s3_key_resultado": "r"},
+                    "confiabilidade_extracao": {"status_extracao": "sucesso", "confianca_media": "0.98", "observacoes": []}
+                },
+                "raw_ia": {},
+                "input_tokens": 100,
+                "output_tokens": 50
+            }
+        ]
+    }
+
+    response = aggregator_module.handler(mock_aggregator_event, None)
+
+    assert response["package_id"] == "pkg-map-999"
+    json_estruturado_final = response["json_estruturado"]
+    assert len(json_estruturado_final["documentos_analisados"]) == 1
+    mock_s3.put_object.assert_called_once()

@@ -4,52 +4,116 @@
   "States": {
     "InvokeBDA": {
       "Type": "Task",
-      "Resource": "${BdaInvokerArn}",
-      "Next": "WaitForBDA"
-    },
-    "WaitForBDA": {
-      "Type": "Wait",
-      "Seconds": 10,
-      "Next": "GetBDAStatus"
-    },
-    "GetBDAStatus": {
-      "Type": "Task",
-      "Resource": "${BdaStatusPollerArn}",
-      "Next": "CheckBDAStatus"
-    },
-    "CheckBDAStatus": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.status",
-          "StringEquals": "SUCCESS",
-          "Next": "EvaluateConfidence"
-        },
-        {
-          "Variable": "$.status",
-          "StringEquals": "FAILED",
-          "Next": "NotifyError"
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${BdaInvokerArn}",
+        "Payload": {
+          "package_id.$": "$.package_id",
+          "user_id.$": "$.user_id",
+          "bda_output_bucket.$": "$.bda_output_bucket",
+          "task_token.$": "$$.Task.Token"
         }
-      ],
-      "Default": "WaitForBDA"
+      },
+      "ResultPath": "$",
+      "Next": "EvaluateConfidence",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "EvaluateConfidence": {
       "Type": "Task",
       "Resource": "${ConfidenceCheckerArn}",
-      "Next": "StructureWithNova"
+      "Next": "ListNovaDocuments",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
-    "StructureWithNova": {
+    "ListNovaDocuments": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${NovaStructurerArn}",
+        "FunctionName": "${NovaDocumentListerArn}",
         "Payload.$": "$"
       },
       "ResultSelector": {
         "Payload.$": "$.Payload"
       },
       "OutputPath": "$.Payload",
-      "Next": "GenerateExcelReports"
+      "Next": "StructureNovaDocumentsMap",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "StructureNovaDocumentsMap": {
+      "Type": "Map",
+      "ItemsPath": "$.documentos_para_estruturar",
+      "Parameters": {
+        "package_id.$": "$.package_id",
+        "user_id.$": "$.user_id",
+        "execute_score.$": "$.execute_score",
+        "bda_output_bucket.$": "$.bda_output_bucket",
+        "nome_pdf_original.$": "$$.Map.Item.Value.nome_pdf_original",
+        "s3_key_bda.$": "$$.Map.Item.Value.s3_key_bda"
+      },
+      "Iterator": {
+        "StartAt": "StructureSingleDocumentItem",
+        "States": {
+          "StructureSingleDocumentItem": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${NovaStructurerArn}",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "Payload.$": "$.Payload"
+            },
+            "OutputPath": "$.Payload",
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.map_results",
+      "Next": "AggregateNovaBatch",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "AggregateNovaBatch": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NovaBatchAggregatorArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "GenerateExcelReports",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "GenerateExcelReports": {
       "Type": "Map",
@@ -76,7 +140,14 @@
         }
       },
       "ResultPath": "$.excel_generation_results",
-      "Next": "CheckScoreExecution"
+      "Next": "CheckScoreExecution",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "CheckScoreExecution": {
       "Type": "Choice",
@@ -100,7 +171,14 @@
         "Payload.$": "$.Payload"
       },
       "OutputPath": "$.Payload",
-      "Next": "GenerateConsolidatedExcel"
+      "Next": "GenerateConsolidatedExcel",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "GenerateConsolidatedExcel": {
       "Type": "Task",
@@ -115,12 +193,26 @@
         }
       },
       "ResultPath": "$.consolidated_excel_result",
-      "Next": "WriteResult"
+      "Next": "WriteResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "WriteResult": {
       "Type": "Task",
       "Resource": "${ResultWriterArn}",
-      "Next": "NotifySuccess"
+      "Next": "NotifySuccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
     },
     "NotifySuccess": {
       "Type": "Task",

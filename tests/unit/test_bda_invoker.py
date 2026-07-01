@@ -8,8 +8,9 @@ import src.lambdas.bda_invoker.handler as bda_handler
 @pytest.fixture(autouse=True)
 def setup_env():
     """Injeta as variáveis de ambiente necessárias para a Lambda compilar sem quebras."""
+    os.environ["DYNAMODB_TABLE"] = "credifacil-pacotes-dev"
     os.environ["BDA_PROJECT_ARN"] = "arn:aws:bedrock:us-east-1:635106763014:data-automation-project/credifacil-bda-dev"
-    os.environ["BDA_PROJECT_ID"] = "projeto-credifacil-bda-default"
+    os.environ["BDA_PROFILE_ARN"] = "arn:aws:bedrock:us-east-1:635106763014:data-automation-profile/us.data-automation-v1"
     os.environ["BUCKET_ENTRADA"] = "credifacil-docs-entrada-dev"
     os.environ["BUCKET_SAIDA"] = "credifacil-docs-saida-dev"
     os.environ["ENV"] = "dev"
@@ -35,8 +36,14 @@ def test_bda_invoker_handler_success(monkeypatch):
         "status": "Submitted"
     }
 
+    # 🚀 ADICIONADO: Mock do DynamoDB para engolir os registros e updates atômicos de concorrência
+    mock_db = MagicMock()
+    mock_db.put_item.return_value = {}
+    mock_db.update_item.return_value = {}
+
     # 2. 🛡️ MONKEYPATCHING CIRÚRGICO: Substitui as instâncias reais pelos Mocks na memória do módulo
     monkeypatch.setattr(bda_handler, "s3_client", mock_s3)
+    monkeypatch.setattr(bda_handler, "db_client", mock_db) # Acopla o interceptador do banco
     
     # Faz o patch preventivo cobrirem variações comuns de nomes de variáveis do STS e Bedrock Runtime
     for client_name in ["sts_client", "sts"]:
@@ -47,11 +54,12 @@ def test_bda_invoker_handler_success(monkeypatch):
         if hasattr(bda_handler, bda_name):
             monkeypatch.setattr(bda_handler, bda_name, mock_bedrock_bda)
 
-    # 3. Payload legítimo que inicia a orquestração do Step Functions
+    # 3. Payload legítimo atualizado contendo o token de reativação injetado pelo Step Functions
     mock_event = {
         "package_id": "pacote-999",
         "user_id": "user-123",
-        "bda_output_bucket": "credifacil-docs-saida-dev"
+        "bda_output_bucket": "credifacil-docs-saida-dev",
+        "task_token": "AAAApZW5jb2RlZHRva2VuAAA=" # 🚀 Correção do contrato de entrada
     }
 
     # 4. Execução do Ponto de Entrada (Handler)
@@ -67,3 +75,7 @@ def test_bda_invoker_handler_success(monkeypatch):
     assert isinstance(response["bda_job_ids"], list)
     assert len(response["bda_job_ids"]) == 2
     assert response["bda_job_ids"][0] == "arn:aws:bedrock:us-east-1:635106763014:data-automation-invocation/mock-123"
+
+    # 🚀 AS SERÇÕES ADICIONAIS DE GOVERNANÇA: Garante o isolamento físico das chamadas de banco
+    assert mock_db.put_item.call_count == 2
+    assert mock_db.update_item.call_count == 1
