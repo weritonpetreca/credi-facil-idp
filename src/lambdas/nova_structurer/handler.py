@@ -192,6 +192,11 @@ def handler(event, context):
             messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
             system=[{"text": PROMPT_SISTEMA}],
             toolConfig=tool_config,
+            guardrailConfig={
+                "guardrailIdentifier": os.environ.get("GUARDRAIL_IDENTIFIER"),
+                "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "1"),
+                "trace": "disabled"
+            },
             inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
         )
 

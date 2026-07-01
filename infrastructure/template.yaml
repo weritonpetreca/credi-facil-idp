@@ -642,6 +642,8 @@ Resources:
           BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
+          GUARDRAIL_IDENTIFIER: !Ref CrediFacilIdpGuardrail
+          GUARDRAIL_VERSION: !GetAtt CrediFacilIdpGuardrailVersion.Version
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
@@ -650,6 +652,10 @@ Resources:
               Effect: Allow
               Action: "bedrock:InvokeModel"
               Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+            - Sid: AllowBedrockGuardrailApply
+              Effect: Allow
+              Action: "bedrock:ApplyGuardrail"
+              Resource: !GetAtt CrediFacilIdpGuardrail.GuardrailArn
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -850,6 +856,38 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ==========================================================================
+  # 🛡️ SEGURANÇA GENAI: AMAZON BEDROCK GUARDRAILS ([RF-19])
+  # ==========================================================================
+  CrediFacilIdpGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: !Sub "credifacil-idp-guardrail-${Environment}"
+      Description: "Firewall de IA contra Prompt Injection e vazamento de dados no CrediFácil"
+      BlockedInputMessaging: "Rejeitado pelas políticas de segurança cadastral do CrediFácil IDP."
+      BlockedOutputsMessaging: "A resposta gerada violou as diretrizes de compliance do CrediFácil IDP."
+      ContextualGroundingFilterConfig:
+        FiltersConfig:
+          - Type: PROMPT_ATTACK
+            Threshold: 0.85 
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: HATE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: INSULT
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: VIOLENCE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+
+  CrediFacilIdpGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !Ref CrediFacilIdpGuardrail
+      Description: "Versão estática v1 para uso em tempo de execução nas Lambdas"
 
   # ==========================================================================
   # 👥 PROVISIONAMENTO DE USUÁRIO DE TESTE (Seed Data para Dev)
