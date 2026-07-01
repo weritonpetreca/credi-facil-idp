@@ -589,6 +589,10 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: src.lambdas.bda_callback_handler.handler.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
+          BUCKET_SAIDA: !Ref BucketSaida
       Description: "Gatilho reativo que consome o EventBridge e acorda a State Machine via Task Token"
       Policies:
         - DynamoDBCrudPolicy:
@@ -800,6 +804,7 @@ Resources:
         CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
+        EventBusName: !Ref CrediFacilEventBus
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -833,6 +838,10 @@ Resources:
                   - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
+              - Sid: AllowEventBridgePutEvents
+                Effect: Allow
+                Action: "events:PutEvents"
+                Resource: !GetAtt CrediFacilEventBus.Arn                        
       Tags:
         - Key: Project
           Value: CrediFacil-IDP
