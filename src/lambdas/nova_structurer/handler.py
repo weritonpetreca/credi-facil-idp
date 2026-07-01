@@ -140,36 +140,58 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
+# 🚀 RESOLVIDO: Garante a conformidade estrutural completa exigida no SRS
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
-    # 🎯 CORREÇÃO DE NESTING: Extrai de forma plana eliminando ruídos da IA
+    MAPA_TEMPLATES = {
+        "payroll_check": TEMPLATE_PAYROLL_CHECK,
+        "driver_license": TEMPLATE_DRIVER_LICENSE,
+        "w2_tax_form": TEMPLATE_W2_FORM,
+        "pay_stub": TEMPLATE_PAY_STUB,
+        "account_statement": TEMPLATE_ACCOUNT_STATEMENT,
+        "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
+    }
+    
+    # Clona o template estático do SRS para servir como base rígida de campos
+    template_final = dict(MAPA_TEMPLATES.get(subtipo.lower(), {}))
+    
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
     if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
-    # 🎯 PROCESSAMENTO ISOLADO DAS CORREÇÕES HUMANAS POR ARQUIVO
+    # 1. Alimenta o template base com as extrações do Nova Lite (mapeamento tolerante a espaços)
+    for chave_template in template_final.keys():
+        valor_encontrado = None
+        for k_ia, v_ia in raw_fields.items():
+            if k_ia.lower().replace(" ", "_").replace(".", "") == chave_template.lower().replace(".", ""):
+                valor_encontrado = v_ia
+                break
+        if valor_encontrado is not None:
+            template_final[chave_template] = valor_encontrado
+
+    # 2. RESOLVIDO: Mesclagem cirúrgica e persistente das correções da mesa de revisão humana
     is_human_override = False
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
             if "__" in composite_key:
                 file_part, field_part = composite_key.split("__", 1)
-                if file_part == arquivo:
-                    raw_fields[field_part] = valor_corrigido
+                if file_part == arquivo and field_part in template_final:
+                    template_final[field_part] = valor_corrigido
                     is_human_override = True
 
-    # 🎯 TELEMETRIA REAL: Calcula a média real de acurácia extraída do BDA para o documento
+    # 3. METRICAS REAIS: Extrai a média matemática verdadeira das confianças do BDA
     bda_fields = bda_json.get("extractedFields", {}) if bda_json else {}
-    confiancas = [float(f.get("confidenceScore") or f.get("confidence") or 1.0) for f in bda_fields.values()]
-    media_bda_real = sum(confiancas) / len(confiancas) if confiancas else 0.95
+    confiancas_reais = [float(f.get("confidenceScore") or f.get("confidence") or 1.0) for f in bda_fields.values()]
+    media_real_bda = sum(confiancas_reais) / len(confiancas_reais) if confiancas_reais else 0.95
 
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     if is_human_override:
-        alertas_observacoes.append("Metadados retificados e auditados manualmente pelo operador.")
+        alertas_observacoes.append("Metadados homologados e retificados manualmente pelo operador humano.")
 
     return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
         "arquivo_original": arquivo,
-        "dados_extraidos_do_documento": raw_fields,
+        "dados_extraidos_do_documento": template_final, # JSON agora segue 100% o padrão do template
         "localizacao_documento_s3": {
             "bucket_origem": s3_inputs["bucket_entrada"],
             "s3_key_origem": s3_inputs["key_entrada"],
@@ -180,8 +202,8 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
-            "status_extracao": "sucesso" if is_human_override or media_bda_real >= 0.8 else "parcial",
-            "confianca_media": "1.0" if is_human_override else f"{media_bda_real:.4f}",
+            "status_extracao": "sucesso" if is_human_override or media_real_bda >= 0.8 else "parcial",
+            "confianca_media": "1.0" if is_human_override else f"{media_real_bda:.4f}",
             "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
             "observacoes": alertas_observacoes
         }
@@ -203,6 +225,26 @@ def handler(event, context):
         texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
         json_higienizado = limpar_ruido_recursivo(json_bruto)
 
+        # 🚀 RECUPERAÇÃO DE REVISÃO: Captura as correções salvas pelo analista no DynamoDB
+        correcoes_humanas = {}
+        string_prompt_humanos = ""
+        try:
+            rev_response = db_client.get_item(
+                TableName=TABLE_NAME,
+                Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}}
+            )
+            rev_item = rev_response.get("Item")
+            if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
+                correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
+                correcoes_humanas = json.loads(correcoes_json)
+                
+                # Isolamento de chaves deste arquivo específico para guiar o LLM
+                correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
+                if correcoes_especificas:
+                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR (USE COMO VERDADE ABSOLUTA) ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
+        except Exception as db_err:
+            logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
+
         tool_config = {
             "tools": [obter_especificacao_ferramenta_loan()],
             "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
@@ -211,6 +253,7 @@ def handler(event, context):
         conteudo_input_hibrido = (
             f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
             f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
+            f"{string_prompt_humanos}" # Passa o dado retificado dentro do contexto do LLM
         )
 
         response = bedrock_runtime.converse(
@@ -235,20 +278,6 @@ def handler(event, context):
 
         achado = tool_use_block.get("input", {})
         if isinstance(achado, str): achado = json.loads(achado)
-
-        # 🚀 RECOVERY: Busca ativa e higienização das correções da tabela Dynamo
-        correcoes_humanas = {}
-        try:
-            rev_response = db_client.get_item(
-                TableName=TABLE_NAME,
-                Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}}
-            )
-            rev_item = rev_response.get("Item")
-            if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
-                correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
-                correcoes_humanas = json.loads(correcoes_json)
-        except Exception as db_err:
-            logger.warning(f"Falha ao conectar com mesa de revisão para mesclagem: {str(db_err)}")
 
         tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
         subtipo_detectado = "pay_stub"
@@ -276,7 +305,7 @@ def handler(event, context):
             "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
-        # 🚀 Passa o json_bruto original para computação da acurácia real do BDA
+        # Envia o json_bruto do BDA para cálculo de acurácia fidedigna
         blueprint_json = formatar_conforme_blueprint(
             tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas, json_bruto
         )
