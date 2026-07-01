@@ -89,7 +89,8 @@ def handler(event, context):
             "human_review": item.get("humanReview", {}).get("BOOL", False) or (status == "NEEDS_REVISION"),
             "confidence_score": float(item.get("confidenceScore", {}).get("N", "0.0")),
             "tokens_consumidos": item.get("tokens_consumidos", {}).get("S", "Não computado"),
-            "failed_fields_metadata": failed_fields_metadata # 🚀 Alimenta o useDocumentPipeline.js
+            "failed_fields_metadata": failed_fields_metadata,
+            "bda_output_bucket": item.get("bda_output_bucket", {}).get("S") or BUCKET_SAIDA
         }
 
         if status == "COMPLETED" and "resultS3Key" in item:

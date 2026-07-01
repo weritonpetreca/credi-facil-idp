@@ -117,7 +117,6 @@ export function useDocumentPipeline() {
             pushLog("Análise estrutural finalizada.", "success");
             setResult(data.dados_extraidos || null);
             setOutputBucket(data.bda_output_bucket || null);
-            setExecuteScoreFlag(scoreRequested);
             setFinishedAt(Date.now());
             setPhase("done");
             return;
@@ -191,6 +190,7 @@ export function useDocumentPipeline() {
       setFinishedAt(null);
       setCurrentPackageId(null);
       setRevisionFields([]);
+      setExecuteScoreFlag(scoreRequested);
 
       if (!files || files.length < MIN_FILES) {
         setPhase("error");
