@@ -647,7 +647,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-        - Statement:
+        - Version: "2012-10-17"
+          Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
               Action: "bedrock:InvokeModel"
@@ -867,16 +868,15 @@ Resources:
       Description: "Firewall de IA contra Prompt Injection e vazamento de dados no CrediFácil"
       BlockedInputMessaging: "Rejeitado pelas políticas de segurança cadastral do CrediFácil IDP."
       BlockedOutputsMessaging: "A resposta gerada violou as diretrizes de compliance do CrediFácil IDP."
-      ContextualGroundingFilterConfig:
-        FiltersConfig:
-          - Type: PROMPT_ATTACK
-            Threshold: 0.85 
       ContentPolicyConfig:
         FiltersConfig:
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
           - Type: HATE
             InputStrength: HIGH
             OutputStrength: HIGH
-          - Type: INSULT
+          - Type: INSULTS
             InputStrength: HIGH
             OutputStrength: HIGH
           - Type: VIOLENCE
