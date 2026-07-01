@@ -21,6 +21,11 @@ Parameters:
     Type: String
     Default: "e1a9e2ae3eb7"
 
+  NotificationEmail:
+    Type: String
+    Default: "analista@credifacil.com"
+    Description: "Endereço de e-mail real para receber alertas operacionais e relatórios do IDP"
+
 Globals:
   Function:
     Runtime: python3.12
@@ -248,6 +253,23 @@ Resources:
           Value: CrediFacil-IDP
         - Key: Environment
           Value: !Ref Environment
+
+  # ==========================================================================
+  # 📢 INSCRIÇÕES DE TELEMETRIA OPERACIONAL (ALERTAS COMPLIANT)
+  # ==========================================================================
+  SnsInscricaoConclusaoEmail:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SnsTopicoConclusao
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  SnsInscricaoErrosEmail:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SnsTopicoErros
+      Protocol: email
+      Endpoint: !Ref NotificationEmail 
 
   # ==========================================================================
   # 🌐 INFRAESTRUTURA ORIENTADA A EVENTOS (EVENTBRIDGE & SQS)
