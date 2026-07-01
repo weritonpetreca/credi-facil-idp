@@ -381,7 +381,7 @@ Resources:
         source:
           - "aws.bedrock"
         detail-type:
-          - "Data Automation Job Succeeded"
+          - "Bedrock Data Automation Job Succeeded"
           - "Bedrock Data Automation Job Failed With Client Error"
           - "Bedrock Data Automation Job Failed With Service Error"
       Targets:

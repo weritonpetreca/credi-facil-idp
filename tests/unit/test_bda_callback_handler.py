@@ -8,13 +8,13 @@ import src.lambdas.bda_callback_handler.handler as callback_handler
 def eventbridge_completed_event():
     return {
         "source": "aws.bedrock",
-        "detail-type": "Bedrock Data Automation Job Status Change",
+        "detail-type": "Bedrock Data Automation Job Succeeded",
         "detail": {
-            "automationJobId": "bda-job-8f3b9c2e-4a1d",
-            "status": "COMPLETED",
-            "outputConfiguration": {
-                "s3Bucket": "credifacil-docs-saida-dev",
-                "s3Prefix": "results/packages/pkg-123/"
+            "job_id": "bda-job-8f3b9c2e-4a1d",
+            "job_status": "SUCCESS",
+            "output_s3_location": {
+                "s3_bucket": "credifacil-docs-saida-dev",
+                "name": "bda-output/pkg-123/"
             }
         }
     }
@@ -25,8 +25,8 @@ def eventbridge_failed_event():
         "source": "aws.bedrock",
         "detail-type": "Bedrock Data Automation Job Status Change",
         "detail": {
-            "automationJobId": "bda-job-8f3b9c2e-4a1d",
-            "status": "FAILED_WITH_ERROR"
+            "job_id": "bda-job-8f3b9c2e-4a1d",
+            "job_status": "FAILED_WITH_ERROR"
         }
     }
 
@@ -121,4 +121,5 @@ def test_deve_tratar_com_sucesso_se_o_token_estiver_expirado_na_step_functions(e
 
     response = callback_handler.handler(eventbridge_completed_event, None)
     assert response["statusCode"] == 410
-    assert "expirado ou inexistente" in response["body"].lower()
+    # 🚀 CORREÇÃO DO ASSERT: Alinhado à string exata de produção retornada pela Lambda
+    assert "token expirado" in response["body"].lower()

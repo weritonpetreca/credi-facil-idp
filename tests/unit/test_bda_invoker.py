@@ -79,3 +79,11 @@ def test_bda_invoker_handler_success(monkeypatch):
     # 🚀 AS SERÇÕES ADICIONAIS DE GOVERNANÇA: Garante o isolamento físico das chamadas de banco
     assert mock_db.put_item.call_count == 2
     assert mock_db.update_item.call_count == 1
+
+    # 🚀 VALIDAÇÃO ANTI-REGRESSÃO DO EVENTBRIDGE (Tarefa 4): 
+    # Garante que a chamada ao Bedrock incluiu a configuração de opt-in exigida
+    assert mock_bedrock_bda.invoke_data_automation_async.call_count == 2
+    
+    last_call_kwargs = mock_bedrock_bda.invoke_data_automation_async.call_args.kwargs
+    assert "notificationConfiguration" in last_call_kwargs
+    assert last_call_kwargs["notificationConfiguration"]["eventBridgeConfiguration"]["eventBridgeEnabled"] is True
