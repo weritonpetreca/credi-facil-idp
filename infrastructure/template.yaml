@@ -286,6 +286,17 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  CrediFacilUploadTrackerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "credifacil-upload-tracker-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600 
+      Tags:
+        - Key: Project
+          Value: CrediFacil-IDP
+        - Key: Environment
+          Value: !Ref Environment
+
   CrediFacilDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -462,6 +473,8 @@ Resources:
               Effect: Allow
               Action: "states:StartExecution"
               Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt CrediFacilUploadTrackerDLQ.QueueName
       Events:
         S3ObjectCreatedEvent:
           Type: S3
@@ -476,6 +489,15 @@ Resources:
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
+
+  S3UploadTrackerEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref S3UploadTrackerFunction
+      Qualifier: "$LATEST" 
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt CrediFacilUploadTrackerDLQ.Arn
 
   # ==========================================================================
   # 💡 COMPONENTES INTERNOS DO WORKFLOW
