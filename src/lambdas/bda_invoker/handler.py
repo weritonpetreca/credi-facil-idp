@@ -51,7 +51,12 @@ def handler(event, context):
                 inputConfiguration={"s3Uri": input_s3_uri},
                 outputConfiguration={"s3Uri": f"s3://{bucket_saida}/{subprefixo_saida}"},
                 dataAutomationConfiguration={"dataAutomationProjectArn": project_arn},
-                dataAutomationProfileArn=profile_arn
+                dataAutomationProfileArn=profile_arn,
+                notificationConfiguration={
+                    "eventBridgeConfiguration": {
+                        "eventBridgeEnabled": True
+                    }
+                }
             )
             
             invocation_arn = response["invocationArn"]

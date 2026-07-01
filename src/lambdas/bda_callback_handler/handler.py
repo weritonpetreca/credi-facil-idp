@@ -40,9 +40,11 @@ def handler(event, context):
         
         detail_type = event.get("detail-type", "")
         detail = event.get("detail", {})
-        job_id = detail.get("automationJobId") or detail.get("invocationArn")
+        raw_job_id = detail.get("automationJobId") or detail.get("invocationArn", "")
         bda_status = detail.get("status", "")
         output_config = detail.get("outputConfiguration", {})
+
+        job_id = raw_job_id.split("/")[-1] if "/" in raw_job_id else raw_job_id
         
         if not job_id:
             logger.warning("Payload do EventBridge fora do contrato esperado. Abortando execução.")
