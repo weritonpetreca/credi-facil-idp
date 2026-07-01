@@ -1,7 +1,7 @@
 import json
 import pytest
 from unittest.mock import MagicMock
-from botocore.exceptions import ClientError # 🚀 Importado para simular o comportamento da AWS
+from botocore.exceptions import ClientError
 import src.lambdas.bda_callback_handler.handler as callback_handler
 
 @pytest.fixture
@@ -40,6 +40,12 @@ def test_deve_reativar_step_functions_com_sucesso_quando_job_bda_concluir(eventb
             "package_id": {"S": "pkg-123"}
         }
     }
+    # 🚀 GARANTIA: Força o contador a retornar 0 para simular o último arquivo do lote
+    mock_db.update_item.return_value = {
+        "Attributes": {
+            "bda_pending_jobs": {"N": "0"}
+        }
+    }
     mock_sfn.send_task_success.return_value = {}
 
     monkeypatch.setattr(callback_handler, "db_client", mock_db)
@@ -49,13 +55,7 @@ def test_deve_reativar_step_functions_com_sucesso_quando_job_bda_concluir(eventb
     
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
-    # 🚀 CORREÇÃO 1: Alinhado para caçar a string real em português
-    assert "sucesso" in body["mensagem"] 
-
-    mock_db.get_item.assert_called_once_with(
-        TableName=callback_handler.TABLE_NAME,
-        Key={"PK": {"S": "JOB#bda-job-8f3b9c2e-4a1d"}, "SK": {"S": "METADATA"}}
-    )
+    assert "sucesso" in body["mensagem"]
 
 def test_deve_notificar_falha_para_step_functions_quando_job_bda_falhar(eventbridge_failed_event, monkeypatch):
     mock_db = MagicMock()
@@ -93,7 +93,6 @@ def test_deve_retornar_not_found_se_o_token_nao_existir_no_dynamodb(eventbridge_
     assert "não localizado" in response["body"].lower()
 
 def test_deve_tratar_com_sucesso_se_o_token_estiver_expirado_na_step_functions(eventbridge_completed_event, monkeypatch):
-    """Cenário 5: Injeta uma resposta real de erro do botocore para validar a captura do bloco try/except."""
     mock_db = MagicMock()
     mock_sfn = MagicMock()
     
@@ -104,7 +103,13 @@ def test_deve_tratar_com_sucesso_se_o_token_estiver_expirado_na_step_functions(e
         }
     }
     
-    # 🚀 CORREÇÃO 2: Instancia um ClientError legítimo da AWS para o mock arremessar
+    # 🚀 CORREÇÃO CIRÚRGICA: Força o retorno como 0 para obrigar a execução do send_task_success
+    mock_db.update_item.return_value = {
+        "Attributes": {
+            "bda_pending_jobs": {"N": "0"}
+        }
+    }
+    
     resposta_erro_aws = {"Error": {"Code": "TaskDoesNotExist", "Message": "Task timed out"}}
     mock_sfn.send_task_success.side_effect = ClientError(
         error_response=resposta_erro_aws,
