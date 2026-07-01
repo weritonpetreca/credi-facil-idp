@@ -14,7 +14,7 @@
           "task_token.$": "$$.Task.Token"
         }
       },
-      "ResultPath": "$",
+      "ResultPath": "$.bda_callback_result",
       "Next": "EvaluateConfidence",
       "Catch": [
         {
@@ -27,7 +27,7 @@
     "EvaluateConfidence": {
       "Type": "Task",
       "Resource": "${ConfidenceCheckerArn}",
-      "ResultPath": "$.confidence_results",
+      "ResultPath": "$",
       "Next": "CheckAuditStatus",
       "Catch": [
         {
@@ -41,7 +41,7 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.confidence_results.audit_status",
+          "Variable": "$.audit_status",
           "StringEquals": "NEEDS_REVISION",
           "Next": "EscalateToHumanReview"
         }
@@ -63,8 +63,8 @@
               "bda_output_bucket.$": "$.bda_output_bucket",
               "execute_score.$": "$.execute_score",
               "status_esteira": "NEEDS_REVISION",
-              "total_failed_fields.$": "$.confidence_results.failed_fields_count",
-              "failed_fields_metadata.$": "$.confidence_results.failed_fields_metadata",
+              "total_failed_fields.$": "$.failed_fields_count",
+              "failed_fields_metadata.$": "$.failed_fields_metadata",
               "task_token.$": "$$.Task.Token"
             }
           }
