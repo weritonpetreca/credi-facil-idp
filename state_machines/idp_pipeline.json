@@ -14,7 +14,7 @@
           "task_token.$": "$$.Task.Token"
         }
       },
-      "ResultPath": "$",
+      "ResultPath": "$.bda_callback_result",
       "Next": "EvaluateConfidence",
       "Catch": [
         {
@@ -27,6 +27,50 @@
     "EvaluateConfidence": {
       "Type": "Task",
       "Resource": "${ConfidenceCheckerArn}",
+      "ResultPath": "$",
+      "Next": "CheckAuditStatus",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "CheckAuditStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.audit_status",
+          "StringEquals": "NEEDS_REVISION",
+          "Next": "EscalateToHumanReview"
+        }
+      ],
+      "Default": "ListNovaDocuments"
+    },
+    "EscalateToHumanReview": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
+      "Parameters": {
+        "Entries": [
+          {
+            "EventBusName": "${EventBusName}",
+            "Source": "credifacil.idp",
+            "DetailType": "LowConfidenceFieldsDetected",
+            "Detail": {
+              "package_id.$": "$.package_id",
+              "user_id.$": "$.user_id",
+              "bda_output_bucket.$": "$.bda_output_bucket",
+              "execute_score.$": "$.execute_score",
+              "status_esteira": "NEEDS_REVISION",
+              "total_failed_fields.$": "$.failed_fields_count",
+              "failed_fields_metadata.$": "$.failed_fields_metadata",
+              "task_token.$": "$$.Task.Token"
+            }
+          }
+        ]
+      },
+      "ResultPath": "$.human_review_output",
       "Next": "ListNovaDocuments",
       "Catch": [
         {
@@ -58,6 +102,7 @@
     },
     "StructureNovaDocumentsMap": {
       "Type": "Map",
+      "MaxConcurrency": 5,
       "ItemsPath": "$.documentos_para_estruturar",
       "Parameters": {
         "package_id.$": "$.package_id",
@@ -81,6 +126,34 @@
               "Payload.$": "$.Payload"
             },
             "OutputPath": "$.Payload",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Bedrock.ThrottlingException",
+                  "Lambda.Unknown",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 4,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error_context",
+                "Next": "HandleSingleDocumentFailure"
+              }
+            ],
+            "End": true
+          },
+          "HandleSingleDocumentFailure": {
+            "Type": "Pass",
+            "Parameters": {
+              "status": "FAILED",
+              "nome_pdf_original.$": "$.nome_pdf_original",
+              "error_cause.$": "$.error_context.Cause"
+            },
             "End": true
           }
         }

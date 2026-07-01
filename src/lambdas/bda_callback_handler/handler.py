@@ -10,7 +10,7 @@ db_client = boto3.client("dynamodb", region_name="us-east-1")
 sfn_client = boto3.client("stepfunctions", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE")
-
+BUCKET_SAIDA = os.environ.get("BUCKET_SAIDA")
 def buscar_contexto_token(job_id: str) -> dict:
     """Busca o Task Token e o Package ID associados ao Job ID do Bedrock no DynamoDB."""
     try:
@@ -80,7 +80,7 @@ def handler(event, context):
             
             if jobs_restantes == 0:
                 # Extrai o nome limpo do bucket do contrato real do log
-                bucket_saida = output_s3_location.get("s3_bucket") or "credifacil-docs-saida-635106763014-dev"
+                bucket_saida = output_s3_location.get("s3_bucket") or BUCKET_SAIDA
 
                 output_payload = {
                     "package_id": package_id,

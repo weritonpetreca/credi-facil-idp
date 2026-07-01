@@ -99,7 +99,8 @@ def handler(event, context):
 
             for doc in documentos_analisados:
                 tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-                campos = doc.get("campos_extraidos", {})
+                # 🚀 RESOLVIDO: Alinhamento de contrato com a saída do Structurer
+                campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
                 
                 if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "TAX_DOCUMENT", "W2_TAX_FORM"]:
                     v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation") or campos.get("gross_pay_year_to_date") or campos.get("renda_bruta_informada")

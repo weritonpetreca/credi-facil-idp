@@ -589,6 +589,10 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: src.lambdas.bda_callback_handler.handler.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
+          BUCKET_SAIDA: !Ref BucketSaida
       Description: "Gatilho reativo que consome o EventBridge e acorda a State Machine via Task Token"
       Policies:
         - DynamoDBCrudPolicy:
@@ -750,12 +754,15 @@ Resources:
       Handler: src.lambdas.query_handler.handler.handler
       Environment:
         Variables:
+          BUCKET_ENTRADA: !Ref BucketEntrada
           BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrediFacilDynamoTable
         - DynamoDBReadPolicy:
             TableName: !Ref CrediFacilClientesTable
+        - S3ReadPolicy:
+            BucketName: !Ref BucketEntrada
         - S3ReadPolicy:
             BucketName: !Ref BucketSaida
       Events:
@@ -783,6 +790,53 @@ Resources:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
 
+  HumanReviewConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.human_review_consumer.handler.handler
+      Description: "Consumidor assíncrono que retira pendências da SQS e disponibiliza os tokens no DynamoDB"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+      Events:
+        ReviewQueueTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CrediFacilReviewQueue.Arn
+            BatchSize: 10
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
+  HumanReviewSubmitFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.human_review_submit.handler.handler
+      Description: "Endpoint REST que o front-end aciona para submeter correções analíticas e destravar o workflow"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: AllowStepFunctionsCallbackFromApi
+              Effect: "Allow"
+              Action:
+                - "states:SendTaskSuccess"
+                - "states:SendTaskFailure"
+              Resource: "*"
+      Events:
+        ApiGatewayTrigger:
+          Type: Api
+          Properties:
+            Path: /v1/packages/{packageId}/review
+            Method: post
+            RestApiId: !Ref CrediFacilRestApi
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -800,6 +854,7 @@ Resources:
         CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
         NotificationArn: !GetAtt NotificationFunction.Arn
+        EventBusName: !Ref CrediFacilEventBus
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -833,6 +888,10 @@ Resources:
                   - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
                   - !GetAtt NotificationFunction.Arn
+              - Sid: AllowEventBridgePutEvents
+                Effect: Allow
+                Action: "events:PutEvents"
+                Resource: !GetAtt CrediFacilEventBus.Arn                        
       Tags:
         - Key: Project
           Value: CrediFacil-IDP

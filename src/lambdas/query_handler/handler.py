@@ -10,6 +10,7 @@ db_client = boto3.client("dynamodb", region_name="us-east-1")
 s3_client = boto3.client("s3", region_name="us-east-1")
 
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
+BUCKET_ENTRADA = os.environ.get("BUCKET_ENTRADA", "credifacil-docs-entrada-dev")
 BUCKET_SAIDA = os.environ.get("BUCKET_SAIDA", "credifacil-docs-saida-dev")
 
 def handler(event, context):
@@ -45,14 +46,51 @@ def handler(event, context):
         uploaded_by = item.get("uploadedBy", {}).get("S", "sistema")
         uploaded_at = item.get("uploadedAt", {}).get("S", "")
         
+        # 🚀 REQUISITO [RF-16]: Se o lote estiver em PROCESSING, checa se há uma auditoria travando o fluxo
+        failed_fields_metadata = []
+        if status == "PROCESSING":
+            try:
+                rev_response = db_client.get_item(
+                    TableName=TABLE_NAME,
+                    Key={
+                        "PK": {"S": package_id},
+                        "SK": {"S": "REVISION"}
+                    }
+                )
+                rev_item = rev_response.get("Item")
+                if rev_item and rev_item.get("status_revisao", {}).get("S") == "PENDENTE":
+                    status = "NEEDS_REVISION"
+                    campos_json = rev_item.get("campos_reprovados_json", {}).get("S", "[]")
+                    failed_fields_metadata = json.loads(campos_json)
+
+                    for field in failed_fields_metadata:
+                        nome_arquivo = field.get("arquivo")
+                        if nome_arquivo:
+                            s3_key_origem = f"packages/{package_id}/{nome_arquivo}"
+                            try:
+                                url_documento = s3_client.generate_presigned_url(
+                                    'get_object',
+                                    Params={'Bucket': BUCKET_ENTRADA, 'Key': s3_key_origem},
+                                    ExpiresIn=900 # 15 minutos de expiração segura
+                                )
+                                field["s3_url_documento_original"] = url_documento
+                            except Exception as url_err:
+                                logger.warning(f"Não foi possível assinar o documento de origem {nome_arquivo}: {str(url_err)}")
+
+                    logger.info(f"Barreira detectada! Retornando status {status} com {len(failed_fields_metadata)} campos falhos.")
+            except Exception as rev_err:
+                logger.warning(f"Não foi possível verificar barreira de revisão humana: {str(rev_err)}")
+        
         resposta_base = {
             "package_id": package_id,
             "status": status,
             "uploaded_by": uploaded_by,
             "uploaded_at": uploaded_at,
-            "human_review": item.get("humanReview", {}).get("BOOL", False),
+            "human_review": item.get("humanReview", {}).get("BOOL", False) or (status == "NEEDS_REVISION"),
             "confidence_score": float(item.get("confidenceScore", {}).get("N", "0.0")),
-            "tokens_consumidos": item.get("tokens_consumidos", {}).get("S", "Não computado")
+            "tokens_consumidos": item.get("tokens_consumidos", {}).get("S", "Não computado"),
+            "failed_fields_metadata": failed_fields_metadata,
+            "bda_output_bucket": item.get("bda_output_bucket", {}).get("S") or BUCKET_SAIDA
         }
 
         if status == "COMPLETED" and "resultS3Key" in item:
@@ -64,7 +102,6 @@ def handler(event, context):
                 json_completo_content = s3_response["Body"].read().decode("utf-8")
                 dados_extraidos = json.loads(json_completo_content)
                 
-                # 🚀 ASSINATURA DO COMPONENTE MESTRE: Assina o próprio arquivo consolidado final do lote
                 try:
                     presigned_url_mestre = s3_client.generate_presigned_url(
                         'get_object',
@@ -75,7 +112,6 @@ def handler(event, context):
                 except Exception as mestre_url_err:
                     logger.warning(f"Não foi possível assinar a URL mestre do lote: {str(mestre_url_err)}")
                 
-                # 🎯 COMPONENTE ADICIONADO: Se for um fluxo com score, gera a assinatura para a planilha executiva mestre (.xlsx)
                 if "clientes" in s3_key:
                     s3_key_excel_mestre = f"results/planilhas/{package_id}/excel_metadados_customer_consolidated.xlsx"
                     try:
@@ -88,9 +124,6 @@ def handler(event, context):
                     except Exception as mestre_excel_err:
                         logger.warning(f"Não foi possível assinar o Excel consolidado mestre: {str(mestre_excel_err)}")
 
-                # ==========================================================================
-                # 🔒 GERAÇÃO DE PRE-SIGNED URLS INDIVIDUAIS (Mata o erro 403 do S3)
-                # ==========================================================================
                 if "documentos_analisados" in dados_extraidos:
                     for doc in dados_extraidos["documentos_analisados"]:
                         s3_key_res = doc.get("s3_key_resultado")
@@ -120,7 +153,7 @@ def handler(event, context):
                 resposta_base["dados_extraidos"] = dados_extraidos
                 
             except ClientError as s3_err:
-                logger.error(f"Falha de consistência: registro concluído no Dynamo mas ausente no S3: {str(s3_err)}")
+                logger.error(f"Falha de Autism: registro concluído no Dynamo mas ausente no S3: {str(s3_err)}")
                 return {
                     "statusCode": 500,
                     "body": json.dumps({"erro": "Erro de consistência ao recuperar os dados finais do storage."})
