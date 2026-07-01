@@ -787,6 +787,25 @@ Resources:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
 
+  HumanReviewConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.human_review_consumer.handler.handler
+      Description: "Consumidor assíncrono que retira pendências da SQS e disponibiliza os tokens no DynamoDB"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+      Events:
+        ReviewQueueTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CrediFacilReviewQueue.Arn
+            BatchSize: 10
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
