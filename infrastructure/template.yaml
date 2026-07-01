@@ -806,6 +806,34 @@ Resources:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
 
+  HumanReviewSubmitFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.human_review_submit.handler.handler
+      Description: "Endpoint REST que o front-end aciona para submeter correções analíticas e destravar o workflow"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: AllowStepFunctionsCallbackFromApi
+              Effect: "Allow"
+              Action:
+                - "states:SendTaskSuccess"
+                - "states:SendTaskFailure"
+              Resource: "*"
+      Events:
+        ApiGatewayTrigger:
+          Type: Api
+          Properties:
+            Path: /v1/packages/{packageId}/review
+            Method: post
+            RestApiId: !Ref CrediFacilRestApi
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
   CrediFacilStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
