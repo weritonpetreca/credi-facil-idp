@@ -381,7 +381,7 @@ Resources:
         source:
           - "aws.bedrock"
         detail-type:
-          - "Bedrock Data Automation Job Status Change"
+          - "Data Automation Job Status Change"
       Targets:
         - Arn: !GetAtt BdaCallbackHandlerFunction.Arn
           Id: "BdaCallbackTarget"
@@ -431,12 +431,12 @@ Resources:
       Handler: src.lambdas.pre_signed_url.handler.handler
       Environment:
         Variables:
-          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+          BUCKET_ENTRADA: !Ref BucketEntrada
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketEntrada
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
+            TableName: !Ref CrediFacilDynamoTable
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -455,16 +455,17 @@ Resources:
       Handler: src.lambdas.pipeline_trigger.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
+          BUCKET_SAIDA: !Ref BucketSaida
+          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
-        - Statement:
+            TableName: !Ref CrediFacilDynamoTable
+        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+          Statement:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
+              Resource: !Ref CrediFacilStateMachine
       Events:
         ApiGatewayTrigger:
           Type: Api
@@ -485,16 +486,17 @@ Resources:
       Timeout: 15
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
+          BUCKET_SAIDA: !Ref BucketSaida
+          STATE_MACHINE_ARN: !Ref CrediFacilStateMachine
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
-        - Statement:
+            TableName: !Ref CrediFacilDynamoTable
+        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+          Statement:
             - Sid: AllowStepFunctionsExecution
               Effect: Allow
               Action: "states:StartExecution"
-              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:credifacil-idp-pipeline-${Environment}"
+              Resource: !Ref CrediFacilStateMachine
         - SQSSendMessagePolicy:
             QueueName: !GetAtt CrediFacilUploadTrackerDLQ.QueueName
       Events:
@@ -532,17 +534,18 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
+          DYNAMODB_TABLE: !Ref CrediFacilDynamoTable
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
           BDA_PROFILE_ARN: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:data-automation-profile/us.data-automation-v1"
-          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+          BUCKET_ENTRADA: !Ref BucketEntrada
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketEntrada
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
         - Version: "2012-10-17"
           Statement:
             - Sid: PermissaoListagemParaPastasS3 
@@ -569,7 +572,8 @@ Resources:
       CodeUri: ../
       Handler: src.lambdas.bda_status_poller.handler.handler
       Policies:
-        - Statement:
+        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+          Statement:
             - Sid: AllowGetAutomationStatus
               Effect: Allow
               Action: "bedrock:GetDataAutomationStatus"
@@ -587,7 +591,8 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
-        - Statement:
+        - Version: "2012-10-17" # 🚀 CORREÇÃO CRÍTICA: Enforçado encapsulamento IAM para destravar EventBridge
+          Statement:
             - Sid: AllowStepFunctionsCallback
               Effect: "Allow"
               Action:
@@ -608,10 +613,11 @@ Resources:
           EVENT_BUS_NAME: !Ref CrediFacilEventBus
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
-        - Statement:
+            TableName: !Ref CrediFacilDynamoTable
+        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+          Statement:
             - Effect: Allow
               Action: "events:PutEvents"
               Resource: !GetAtt CrediFacilEventBus.Arn
@@ -628,7 +634,7 @@ Resources:
         - DynamoDBReadPolicy:
             TableName: !Ref CrediFacilDynamoTable
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -642,14 +648,14 @@ Resources:
       Timeout: 45     
       Environment:
         Variables:
-          BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+          BUCKET_ENTRADA: !Ref BucketEntrada
+          BUCKET_SAIDA: !Ref BucketSaida
           BDA_PROJECT_ARN: !Sub "arn:aws:bedrock:us-east-1:${AWS::AccountId}:data-automation-project/${BdaProjectId}"
           GUARDRAIL_IDENTIFIER: !Ref CrediFacilIdpGuardrail
           GUARDRAIL_VERSION: !GetAtt CrediFacilIdpGuardrailVersion.Version
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
         - Version: "2012-10-17"
           Statement:
             - Sid: AllowBedrockNovaInvoke
@@ -671,7 +677,7 @@ Resources:
       Handler: src.lambdas.nova_structurer.aggregator.handler
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -706,8 +712,9 @@ Resources:
       Handler: src.lambdas.customer_consolidator.handler.handler
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-        - Statement:
+            BucketName: !Ref BucketSaida
+        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+          Statement:
             - Effect: Allow
               Action: "bedrock:InvokeModel"
               Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
@@ -722,14 +729,14 @@ Resources:
       Handler: src.lambdas.result_writer.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - S3CrudPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
+            TableName: !Ref CrediFacilDynamoTable
         - DynamoDBCrudPolicy:
-            TableName: !Sub "credifacil-clientes-${Environment}"
+            TableName: !Ref CrediFacilClientesTable
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -741,14 +748,14 @@ Resources:
       Handler: src.lambdas.query_handler.handler.handler
       Environment:
         Variables:
-          BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+          BUCKET_SAIDA: !Ref BucketSaida
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
+            TableName: !Ref CrediFacilDynamoTable
         - DynamoDBReadPolicy:
-            TableName: !Sub "credifacil-clientes-${Environment}"
+            TableName: !Ref CrediFacilClientesTable
         - S3ReadPolicy:
-            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+            BucketName: !Ref BucketSaida
       Events:
         ApiGatewayTrigger:
           Type: Api

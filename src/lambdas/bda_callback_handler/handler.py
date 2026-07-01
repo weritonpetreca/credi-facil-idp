@@ -1,7 +1,7 @@
 import json
 import os
 import boto3
-from botocore.exceptions import ClientError # 🚀 ADICIONADO: Importação estável para tratamento de erros
+from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="bda-callback-handler")
@@ -39,8 +39,9 @@ def handler(event, context):
         logger.info(f"Evento do EventBridge interceptado com sucesso: {json.dumps(event)}")
         
         detail = event.get("detail", {})
-        job_id = detail.get("automationJobId")
-        bda_status = detail.get("status")
+        # Suporta tanto o mapeamento de evento quanto o fallback de invocationArn
+        job_id = detail.get("automationJobId") or detail.get("invocationArn")
+        bda_status = detail.get("status", "")
         output_config = detail.get("outputConfiguration", {})
         
         if not job_id or not bda_status:
@@ -56,7 +57,10 @@ def handler(event, context):
         
         logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id} com status {bda_status}")
 
-        if bda_status == "COMPLETED":
+        # 🚀 CORREÇÃO: Converte para maiúsculo para unificar "Success" (Runtime) e "COMPLETED" (EventBridge)
+        status_normalizado = bda_status.upper()
+
+        if status_normalizado in ["COMPLETED", "SUCCESS"]:
             res = db_client.update_item(
                 TableName=TABLE_NAME,
                 Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
@@ -70,11 +74,15 @@ def handler(event, context):
             
             # O pipeline só será acordado quando o último documento do lote aterrissar
             if jobs_restantes == 0:
+                # 🚀 CORREÇÃO: Extrai de forma segura o nome do bucket a partir do s3Uri nativo da AWS
+                s3_uri = output_config.get("s3Uri", "")
+                bucket_extraido = s3_uri.split("/")[2] if "s3://" in s3_uri else "credifacil-docs-saida-635106763014-dev"
+
                 output_payload = {
                     "package_id": package_id,
                     "status": "SUCCESS",
-                    "bda_output_bucket": output_config.get("s3Bucket"),
-                    "bda_output_prefix": f"bda-output/{package_id}/" # Aponta para a raiz do pacote
+                    "bda_output_bucket": bucket_extraido,
+                    "bda_output_prefix": f"bda-output/{package_id}/"
                 }
                 
                 logger.info(f"🏁 Último arquivo processado. Acordando o Step Functions para o lote {package_id}")
@@ -83,7 +91,7 @@ def handler(event, context):
                     output=json.dumps(output_payload)
                 )
         else:
-            # Se um único arquivo falhar, mantemos a regra de fail-fast e abortamos o lote
+            # Se um único arquivo falhar de verdade, aplica o fail-fast
             logger.warning(f"O Job {job_id} falhou. Notificando a quebra imediata do lote {package_id}")
             sfn_client.send_task_failure(
                 taskToken=task_token,
@@ -96,7 +104,6 @@ def handler(event, context):
             "body": json.dumps({"mensagem": "Callback processado e retransmitido com sucesso."})
         }
         
-    # 🛡️ CORREÇÃO DA ARMADILHA: Captura via ClientError estável e analisa o código interno da AWS
     except ClientError as e:
         codigo_erro = e.response.get("Error", {}).get("Code")
         if codigo_erro == "TaskDoesNotExist":
@@ -104,7 +111,7 @@ def handler(event, context):
             return {"statusCode": 410, "body": "Task Token expirado ou inexistente."}
         
         logger.exception(f"Erro de infraestrutura gerado pelo SDK da AWS: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de integração corporativa."}
+        return {"statusCode": 500, "body": "Erro interno de integration corporativa."}
         
     except Exception as e:
         logger.exception(f"Erro crítico não tratado no barramento de Callback: {str(e)}")
