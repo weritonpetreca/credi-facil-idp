@@ -38,13 +38,13 @@ def handler(event, context):
     try:
         logger.info(f"Evento do EventBridge interceptado com sucesso: {json.dumps(event)}")
         
+        detail_type = event.get("detail-type", "")
         detail = event.get("detail", {})
-        # Suporta tanto o mapeamento de evento quanto o fallback de invocationArn
         job_id = detail.get("automationJobId") or detail.get("invocationArn")
         bda_status = detail.get("status", "")
         output_config = detail.get("outputConfiguration", {})
         
-        if not job_id or not bda_status:
+        if not job_id:
             logger.warning("Payload do EventBridge fora do contrato esperado. Abortando execução.")
             return {"statusCode": 400, "body": "Contrato inválido."}
             
@@ -55,12 +55,12 @@ def handler(event, context):
         task_token = contexto["task_token"]
         package_id = contexto["package_id"]
         
-        logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id} com status {bda_status}")
+        logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id}")
 
-        # 🚀 CORREÇÃO: Converte para maiúsculo para unificar "Success" (Runtime) e "COMPLETED" (EventBridge)
-        status_normalizado = bda_status.upper()
+        # 🚀 NORMALIZAÇÃO DE SUCESSO: Checa o tipo do evento ou o status interno do payload
+        is_job_success = (detail_type == "Data Automation Job Succeeded") or (bda_status.upper() in ["COMPLETED", "SUCCESS"])
 
-        if status_normalizado in ["COMPLETED", "SUCCESS"]:
+        if is_job_success:
             res = db_client.update_item(
                 TableName=TABLE_NAME,
                 Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
@@ -74,7 +74,6 @@ def handler(event, context):
             
             # O pipeline só será acordado quando o último documento do lote aterrissar
             if jobs_restantes == 0:
-                # 🚀 CORREÇÃO: Extrai de forma segura o nome do bucket a partir do s3Uri nativo da AWS
                 s3_uri = output_config.get("s3Uri", "")
                 bucket_extraido = s3_uri.split("/")[2] if "s3://" in s3_uri else "credifacil-docs-saida-635106763014-dev"
 
@@ -91,12 +90,12 @@ def handler(event, context):
                     output=json.dumps(output_payload)
                 )
         else:
-            # Se um único arquivo falhar de verdade, aplica o fail-fast
-            logger.warning(f"O Job {job_id} falhou. Notificando a quebra imediata do lote {package_id}")
+            # Se disparar os eventos de Failed com Client ou Service Error, executa o fail-fast
+            logger.warning(f"O Job {job_id} falhou via EventBridge. Notificando a quebra imediata do lote {package_id}")
             sfn_client.send_task_failure(
                 taskToken=task_token,
                 error="BedrockDataAutomationFailure",
-                cause=f"O sub-job {job_id} falhou com status {bda_status}"
+                cause=f"O sub-job {job_id} falhou com o evento {detail_type}"
             )
             
         return {
@@ -111,8 +110,8 @@ def handler(event, context):
             return {"statusCode": 410, "body": "Task Token expirado ou inexistente."}
         
         logger.exception(f"Erro de infraestrutura gerado pelo SDK da AWS: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de integration corporativa."}
+        return {"statusCode": 500, "body": "Erro interno de integração corporativa."}
         
     except Exception as e:
         logger.exception(f"Erro crítico não tratado no barramento de Callback: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de processamento."}
+        return {"statusCode": 500, "body": "Erro interno de processing."}
