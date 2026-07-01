@@ -537,12 +537,15 @@ Resources:
           BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
           BUCKET_SAIDA: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
       Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
         - S3ReadPolicy:
             BucketName: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-        - Statement:
-            - Sid: PermissaoListagemParaPastasS3
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: PermissaoListagemParaPastasS3 
               Effect: Allow
               Action:
                 - "s3:ListBucket"
@@ -550,7 +553,7 @@ Resources:
               Resource:
                 - !Sub "arn:aws:s3:::credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
                 - !Sub "arn:aws:s3:::credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-            - Sid: AllowBedrockAutomationAsync
+            - Sid: AllowBedrockAutomationAsync 
               Effect: Allow
               Action: 
                 - "bedrock:InvokeDataAutomationAsync"
