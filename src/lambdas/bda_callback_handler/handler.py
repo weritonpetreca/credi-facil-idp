@@ -40,29 +40,33 @@ def handler(event, context):
         
         detail_type = event.get("detail-type", "")
         detail = event.get("detail", {})
-        raw_job_id = detail.get("automationJobId") or detail.get("invocationArn", "")
-        bda_status = detail.get("status", "")
-        output_config = detail.get("outputConfiguration", {})
-
+        
+        # 🚀 EXTRAÇÃO BLINDADA: Suporta tanto o contrato oficial quanto fallbacks
+        raw_job_id = detail.get("job_id") or detail.get("automationJobId") or detail.get("invocationArn", "")
+        bda_status = detail.get("job_status") or detail.get("status", "")
+        output_s3_location = detail.get("output_s3_location", {})
+        
+        # Normaliza o ID eliminando paths de ARNs se vier completo
         job_id = raw_job_id.split("/")[-1] if "/" in raw_job_id else raw_job_id
         
-        if not job_id:
-            logger.warning("Payload do EventBridge fora do contrato esperado. Abortando execução.")
+        # Linha 50 Corrigida: Agora as variáveis estarão devidamente preenchidas com o log real
+        if not job_id or not bda_status:
+            logger.warning(f"Payload fora do contrato esperado. job_id: {job_id}, bda_status: {bda_status}. Abortando.")
             return {"statusCode": 400, "body": "Contrato inválido."}
             
         contexto = buscar_contexto_token(job_id)
         if not contexto:
+            logger.warning(f"Task Token não localizado no DynamoDB para o job_id: {job_id}")
             return {"statusCode": 404, "body": "Task Token não localizado."}
             
         task_token = contexto["task_token"]
         package_id = contexto["package_id"]
         
-        logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id}")
+        logger.info(f"Contexto localizado. Vinculando Job {job_id} ao Pacote {package_id} com status {bda_status}")
 
-        # 🚀 NORMALIZAÇÃO DE SUCESSO: Checa o tipo do evento ou o status interno do payload
-        is_job_success = (detail_type == "Data Automation Job Succeeded") or (bda_status.upper() in ["COMPLETED", "SUCCESS"])
+        status_normalizado = bda_status.upper()
 
-        if is_job_success:
+        if detail_type == "Bedrock Data Automation Job Succeeded" or status_normalizado in ["SUCCESS", "COMPLETED"]:
             res = db_client.update_item(
                 TableName=TABLE_NAME,
                 Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
@@ -72,48 +76,46 @@ def handler(event, context):
             )
             
             jobs_restantes = int(res["Attributes"]["bda_pending_jobs"]["N"])
-            logger.info(f"Job concluído. Documentos restantes aguardando o BDA no lote {package_id}: {jobs_restantes}")
+            logger.info(f"Sub-job processado. Pendentes para o lote {package_id}: {jobs_restantes}")
             
-            # O pipeline só será acordado quando o último documento do lote aterrissar
             if jobs_restantes == 0:
-                s3_uri = output_config.get("s3Uri", "")
-                bucket_extraido = s3_uri.split("/")[2] if "s3://" in s3_uri else "credifacil-docs-saida-635106763014-dev"
+                # Extrai o nome limpo do bucket do contrato real do log
+                bucket_saida = output_s3_location.get("s3_bucket") or "credifacil-docs-saida-635106763014-dev"
 
                 output_payload = {
                     "package_id": package_id,
                     "status": "SUCCESS",
-                    "bda_output_bucket": bucket_extraido,
+                    "bda_output_bucket": bucket_saida,
                     "bda_output_prefix": f"bda-output/{package_id}/"
                 }
                 
-                logger.info(f"🏁 Último arquivo processado. Acordando o Step Functions para o lote {package_id}")
+                logger.info(f"🏁 Lote {package_id} concluído por completo! Acordando a State Machine.")
                 sfn_client.send_task_success(
                     taskToken=task_token,
                     output=json.dumps(output_payload)
                 )
         else:
-            # Se disparar os eventos de Failed com Client ou Service Error, executa o fail-fast
-            logger.warning(f"O Job {job_id} falhou via EventBridge. Notificando a quebra imediata do lote {package_id}")
+            logger.warning(f"O Job {job_id} reportou falha operacional. Abortando lote {package_id}.")
             sfn_client.send_task_failure(
                 taskToken=task_token,
                 error="BedrockDataAutomationFailure",
-                cause=f"O sub-job {job_id} falhou com o evento {detail_type}"
+                cause=f"O sub-job {job_id} falhou com status {bda_status}"
             )
             
         return {
             "statusCode": 200,
-            "body": json.dumps({"mensagem": "Callback processado e retransmitido com sucesso."})
+            "body": json.dumps({"mensagem": "Callback processado com sucesso."})
         }
         
     except ClientError as e:
         codigo_erro = e.response.get("Error", {}).get("Code")
         if codigo_erro == "TaskDoesNotExist":
-            logger.warning("O token fornecido já expirou, foi cancelado ou a execução já avançou na AWS.")
-            return {"statusCode": 410, "body": "Task Token expirado ou inexistente."}
+            logger.warning("O token fornecido já foi processado ou a execução expirou.")
+            return {"statusCode": 410, "body": "Task Token expirado."}
         
-        logger.exception(f"Erro de infraestrutura gerado pelo SDK da AWS: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de integração corporativa."}
+        logger.exception(f"Erro de SDK na AWS: {str(e)}")
+        return {"statusCode": 500, "body": "Erro interno de infraestrutura."}
         
     except Exception as e:
-        logger.exception(f"Erro crítico não tratado no barramento de Callback: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de processing."}
+        logger.exception(f"Erro crítico não tratado no barramento: {str(e)}")
+        return {"statusCode": 500, "body": "Erro interno."}

@@ -1,119 +1,124 @@
 import json
-import os
-import boto3
+import pytest
+from unittest.mock import MagicMock
 from botocore.exceptions import ClientError
-from aws_lambda_powertools import Logger
+import src.lambdas.bda_callback_handler.handler as callback_handler
 
-logger = Logger(service="bda-callback-handler")
-
-db_client = boto3.client("dynamodb", region_name="us-east-1")
-sfn_client = boto3.client("stepfunctions", region_name="us-east-1")
-
-TABLE_NAME = os.environ.get("DYNAMODB_TABLE")
-
-def buscar_contexto_token(job_id: str) -> dict:
-    """Busca o Task Token e o Package ID associados ao Job ID do Bedrock no DynamoDB."""
-    try:
-        response = db_client.get_item(
-            TableName=TABLE_NAME,
-            Key={
-                "PK": {"S": f"JOB#{job_id}"},
-                "SK": {"S": "METADATA"}
+@pytest.fixture
+def eventbridge_completed_event():
+    return {
+        "source": "aws.bedrock",
+        "detail-type": "Bedrock Data Automation Job Status Change",
+        "detail": {
+            "automationJobId": "bda-job-8f3b9c2e-4a1d",
+            "status": "COMPLETED",
+            "outputConfiguration": {
+                "s3Bucket": "credifacil-docs-saida-dev",
+                "s3Prefix": "results/packages/pkg-123/"
             }
-        )
-        item = response.get("Item")
-        if not item:
-            logger.error(f"Nenhum Task Token localizado para o Job ID: {job_id}")
-            return {}
-            
-        return {
-            "task_token": item["task_token"]["S"],
-            "package_id": item["package_id"]["S"]
         }
-    except Exception as e:
-        logger.exception(f"Falha de I/O ao interrogar a tabela do DynamoDB: {str(e)}")
-        raise e
+    }
 
-def handler(event, context):
-    try:
-        logger.info(f"Evento do EventBridge interceptado com sucesso: {json.dumps(event)}")
-        
-        detail_type = event.get("detail-type", "")
-        detail = event.get("detail", {})
-        
-        # 🚀 ALINHAMENTO DE CONTRATO REAL REVELADO PELO CLOUDWATCH
-        raw_job_id = detail.get("job_id") or detail.get("invocationArn", "")
-        bda_status = detail.get("job_status", "")
-        output_s3_location = detail.get("output_s3_location", {})
-        
-        # Normaliza caso venha como ARN completo
-        job_id = raw_job_id.split("/")[-1] if "/" in raw_job_id else raw_job_id
-        
-        if not job_id or not bda_status:
-            logger.warning("Payload do EventBridge fora do contrato esperado. Abortando execução.")
-            return {"statusCode": 400, "body": "Contrato inválido."}
-            
-        contexto = buscar_contexto_token(job_id)
-        if not contexto:
-            return {"statusCode": 404, "body": "Task Token não localizado no DynamoDB."}
-            
-        task_token = contexto["task_token"]
-        package_id = contexto["package_id"]
-        
-        logger.info(f"Contexto recuperado. Vinculando Job {job_id} ao Lote {package_id} com status {bda_status}")
-
-        status_normalizado = bda_status.upper()
-
-        if detail_type == "Bedrock Data Automation Job Succeeded" or status_normalizado in ["SUCCESS", "COMPLETED"]:
-            res = db_client.update_item(
-                TableName=TABLE_NAME,
-                Key={"PK": {"S": package_id}, "SK": {"S": "METADATA"}},
-                UpdateExpression="SET bda_pending_jobs = bda_pending_jobs - :one",
-                ExpressionAttributeValues={":one": {"N": "1"}},
-                ReturnValues="UPDATED_NEW"
-            )
-            
-            jobs_restantes = int(res["Attributes"]["bda_pending_jobs"]["N"])
-            logger.info(f"Job concluído. Documentos restantes aguardando o BDA no lote {package_id}: {jobs_restantes}")
-            
-            if jobs_restantes == 0:
-                # Captura o bucket dinamicamente do contrato real
-                bucket_saida = output_s3_location.get("s3_bucket", "credifacil-docs-saida-635106763014-dev")
-
-                output_payload = {
-                    "package_id": package_id,
-                    "status": "SUCCESS",
-                    "bda_output_bucket": bucket_saida,
-                    "bda_output_prefix": f"bda-output/{package_id}/"
-                }
-                
-                logger.info(f"🏁 Último arquivo processado. Acordando o Step Functions para o lote {package_id}")
-                sfn_client.send_task_success(
-                    taskToken=task_token,
-                    output=json.dumps(output_payload)
-                )
-        else:
-            logger.warning(f"O Job {job_id} falhou. Notificando a quebra imediata do lote {package_id}")
-            sfn_client.send_task_failure(
-                taskToken=task_token,
-                error="BedrockDataAutomationFailure",
-                cause=f"O sub-job {job_id} falhou com status {bda_status}"
-            )
-            
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"mensagem": "Callback processado e retransmitido com sucesso."})
+@pytest.fixture
+def eventbridge_failed_event():
+    return {
+        "source": "aws.bedrock",
+        "detail-type": "Bedrock Data Automation Job Status Change",
+        "detail": {
+            "automationJobId": "bda-job-8f3b9c2e-4a1d",
+            "status": "FAILED_WITH_ERROR"
         }
-        
-    except ClientError as e:
-        codigo_erro = e.response.get("Error", {}).get("Code")
-        if codigo_erro == "TaskDoesNotExist":
-            logger.warning("O token fornecido já expirou ou a execução já avançou na AWS.")
-            return {"statusCode": 410, "body": "Task Token expirado ou inexistente."}
-        
-        logger.exception(f"Erro de infraestrutura gerado pelo SDK da AWS: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de integração corporativa."}
-        
-    except Exception as e:
-        logger.exception(f"Erro crítico não tratado no barramento de Callback: {str(e)}")
-        return {"statusCode": 500, "body": "Erro interno de processamento."}
+    }
+
+def test_deve_reativar_step_functions_com_sucesso_quando_job_bda_concluir(eventbridge_completed_event, monkeypatch):
+    mock_db = MagicMock()
+    mock_sfn = MagicMock()
+    
+    mock_db.get_item.return_value = {
+        "Item": {
+            "task_token": {"S": "AAAApZW5jb2RlZHRva2VuAAA="},
+            "package_id": {"S": "pkg-123"}
+        }
+    }
+    # 🚀 GARANTIA: Força o contador a retornar 0 para simular o último arquivo do lote
+    mock_db.update_item.return_value = {
+        "Attributes": {
+            "bda_pending_jobs": {"N": "0"}
+        }
+    }
+    mock_sfn.send_task_success.return_value = {}
+
+    monkeypatch.setattr(callback_handler, "db_client", mock_db)
+    monkeypatch.setattr(callback_handler, "sfn_client", mock_sfn)
+
+    response = callback_handler.handler(eventbridge_completed_event, None)
+    
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert "sucesso" in body["mensagem"]
+
+def test_deve_notificar_falha_para_step_functions_quando_job_bda_falhar(eventbridge_failed_event, monkeypatch):
+    mock_db = MagicMock()
+    mock_sfn = MagicMock()
+    
+    mock_db.get_item.return_value = {
+        "Item": {
+            "task_token": {"S": "AAAApZW5jb2RlZHRva2VuAAA="},
+            "package_id": {"S": "pkg-123"}
+        }
+    }
+    mock_sfn.send_task_failure.return_value = {}
+
+    monkeypatch.setattr(callback_handler, "db_client", mock_db)
+    monkeypatch.setattr(callback_handler, "sfn_client", mock_sfn)
+
+    response = callback_handler.handler(eventbridge_failed_event, None)
+    
+    assert response["statusCode"] == 200
+    mock_sfn.send_task_failure.assert_called_once()
+
+def test_deve_retornar_bad_request_se_payload_do_eventbridge_for_invalido(monkeypatch):
+    payload_quebrado = {"source": "aws.bedrock", "detail": {}}
+    response = callback_handler.handler(payload_quebrado, None)
+    assert response["statusCode"] == 400
+    assert "Contrato inválido" in response["body"]
+
+def test_deve_retornar_not_found_se_o_token_nao_existir_no_dynamodb(eventbridge_completed_event, monkeypatch):
+    mock_db = MagicMock()
+    mock_db.get_item.return_value = {}
+    monkeypatch.setattr(callback_handler, "db_client", mock_db)
+
+    response = callback_handler.handler(eventbridge_completed_event, None)
+    assert response["statusCode"] == 404
+    assert "não localizado" in response["body"].lower()
+
+def test_deve_tratar_com_sucesso_se_o_token_estiver_expirado_na_step_functions(eventbridge_completed_event, monkeypatch):
+    mock_db = MagicMock()
+    mock_sfn = MagicMock()
+    
+    mock_db.get_item.return_value = {
+        "Item": {
+            "task_token": {"S": "TOKEN_EXPIRADO"},
+            "package_id": {"S": "pkg-123"}
+        }
+    }
+    
+    # 🚀 CORREÇÃO CIRÚRGICA: Força o retorno como 0 para obrigar a execução do send_task_success
+    mock_db.update_item.return_value = {
+        "Attributes": {
+            "bda_pending_jobs": {"N": "0"}
+        }
+    }
+    
+    resposta_erro_aws = {"Error": {"Code": "TaskDoesNotExist", "Message": "Task timed out"}}
+    mock_sfn.send_task_success.side_effect = ClientError(
+        error_response=resposta_erro_aws,
+        operation_name="SendTaskSuccess"
+    )
+
+    monkeypatch.setattr(callback_handler, "db_client", mock_db)
+    monkeypatch.setattr(callback_handler, "sfn_client", mock_sfn)
+
+    response = callback_handler.handler(eventbridge_completed_event, None)
+    assert response["statusCode"] == 410
+    assert "expirado ou inexistente" in response["body"].lower()
