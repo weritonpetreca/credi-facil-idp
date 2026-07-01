@@ -26,22 +26,29 @@ def safe_float(val) -> float:
     except:
         return 0.0
 
-def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> int:
-    """Aplica o algoritmo determinístico de Application Scorecard das instituições financeiras."""
-    # 🏦 Pontuação Base Mínima do Mercado
+def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
+    """Aplica o algoritmo determinístico de Application Scorecard retornando os motivos reais."""
     score_calculado = 300
+    motivos_detalhados = []
     
-    # 1. Pilar de KYC & Compliance Cadastral (Até 150 pontos)
-    if validacao.get("nome_consistente_entre_documentos") is True: score_calculado += 50
-    if validacao.get("data_nascimento_consistente") is True: score_calculado += 50
-    if validacao.get("documento_identificacao_presente") is True: score_calculado += 50
+    if validacao.get("nome_consistente_entre_documentos") is True: 
+        score_calculado += 50
+        motivos_detalhados.append("+50: Consistência nominal unificada entre toda a esteira documental.")
+    if validacao.get("data_nascimento_consistente") is True: 
+        score_calculado += 50
+        motivos_detalhados.append("+50: Data de nascimento validada e sem divergências cadastrais.")
+    if validacao.get("documento_identificacao_presente") is True: 
+        score_calculado += 50
+        motivos_detalhados.append("+50: Documento de identificação oficial regularizado presente.")
     
-    # Extração de Renda e Saldo para os pilares matemáticos
     renda_maxima = 0.0
     saldo_maximo = 0.0
+    
     for doc in docs_analisados:
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-        campos = doc.get("campos_extraidos", {})
+        # 🚀 CORREÇÃO CRÍTICA: Lê do contrato correto gerado pelo Nova Structurer
+        campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
+        
         if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"]:
             v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation")
             renda_maxima = max(renda_maxima, safe_float(v_renda))
@@ -49,19 +56,35 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> int
             v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
             saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
 
-    # 2. Pilar de Capacidade de Renda Líquida (Até 450 pontos)
-    if renda_maxima >= 5000.0: score_calculado += 450
-    elif renda_maxima >= 2500.0: score_calculado += 300
-    elif renda_maxima >= 1200.0: score_calculado += 150
-    else: score_calculado += 50
+    if renda_maxima >= 5000.0: 
+        score_calculado += 450
+        motivos_detalhados.append(f"+450: Capacidade de renda líquida elevada comprovada (US$ {renda_maxima:.2f}).")
+    elif renda_maxima >= 2500.0: 
+        score_calculado += 300
+        motivos_detalhados.append(f"+300: Capacidade de renda líquida média-alta (US$ {renda_maxima:.2f}).")
+    elif renda_maxima >= 1200.0: 
+        score_calculado += 150
+        motivos_detalhados.append(f"+150: Capacidade de renda líquida básica (US$ {renda_maxima:.2f}).")
+    else: 
+        score_calculado += 50
+        motivos_detalhados.append("+50: Capacidade de renda em faixa mínima de amortização.")
 
-    # 3. Pilar de Liquidez e Colchão de Amortização (Até 400 pontos)
-    if saldo_maximo >= 10000.0: score_calculado += 400
-    elif saldo_maximo >= 5000.0: score_calculado += 250 # Correção: Ordem ajustada
-    elif saldo_maximo >= 3000.0: score_calculado += 100
-    else: score_calculado += 0
+    if saldo_maximo >= 10000.0: 
+        score_calculado += 400
+        motivos_detalhados.append(f"+400: Excelente liquidez de fechamento patrimonial (US$ {saldo_maximo:.2f}).")
+    elif saldo_maximo >= 5000.0: 
+        score_calculado += 250
+        motivos_detalhados.append(f"+250: Liquidez de fechamento estável (US$ {saldo_maximo:.2f}).")
+    elif saldo_maximo >= 3000.0: 
+        score_calculado += 100
+        motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido.")
 
-    return min(1000, max(300, score_calculado))
+    return {
+        "valor": min(1000, max(300, score_calculado)),
+        "detalhes_calculo": motivos_detalhados,
+        "renda_apurada": renda_maxima,
+        "liquidez_apurada": saldo_maximo
+    }
 
 def handler(event, context):
     """Handler AWS Lambda focado exclusivamente na consolidação e cálculo de Score do Proponente."""
@@ -135,27 +158,39 @@ def handler(event, context):
 
         # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Subtrai automaticamente os 50 pontos caso a data caia como false)
         validacao_data = consolidado_json.get("validacao", {})
-        score_final_calculado = calcular_scorecard_financeiro(validacao_data, docs_analisados)
-        logger.info(f"Cálculo do Scorecard executado com sucesso: {score_final_calculado} pontos.")
-
-        if "cliente" not in consolidado_json: consolidado_json["cliente"] = {}
-        consolidado_json["cliente"]["score_credito"] = {"valor": score_final_calculado}
-
-        json_base_lote["cliente"] = consolidado_json.get("cliente")
-        json_base_lote["validacao"] = consolidado_json.get("validacao")
+        scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
+        
+        # Montagem do Dossiê de Auditoria Real unificado para o Front-end
+        report_final = {
+            "package_id": package_id,
+            "status": "COMPLETED",
+            "cliente": {
+                "nome": consolidado_json.get("cliente", {}).get("nome"),
+                "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+                "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
+                "score_credito": {
+                    "valor": scorecard_completo["valor"],
+                    "motivos": scorecard_completo["detalhes_calculo"],
+                    "renda_final": scorecard_completo["renda_apurada"],
+                    "liquidez_final": scorecard_completo["liquidez_apurada"]
+                }
+            },
+            "validacao": validacao_data,
+            "documentos_analisados": docs_analisados
+        }
 
         s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
-        logger.info(f"Gravando arquivo mestre único do cliente em: {s3_target_key}")
+        logger.info(f"Gravando Dossiê do Cliente estruturado em: {s3_target_key}")
         s3_client.put_object(
             Bucket=bucket, Key=s3_target_key,
-            Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
+            Body=json.dumps(report_final, ensure_ascii=False), ContentType="application/json"
         )
 
         return {
             **event,
-            "cliente": consolidado_json.get("cliente"),
-            "validacao": consolidado_json.get("validacao"),
-            "json_estruturado": json_base_lote
+            "cliente": report_final["cliente"],
+            "validacao": report_final["validacao"],
+            "json_estruturado": report_final
         }
 
     except Exception as e:

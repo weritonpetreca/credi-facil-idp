@@ -58,7 +58,7 @@ export default function App() {
     if (phase === "revision" && revisionFields.length > 0) {
       const initialValues = {};
       revisionFields.forEach((field) => {
-        initialValues[field.campo_afetado] = field.valor_bruto || "";
+        initialValues[`${field.arquivo}__${field.campo_afetado}`] = field.valor_bruto || "";
       });
       setCorrectionsForm(initialValues);
     }
