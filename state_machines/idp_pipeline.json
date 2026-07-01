@@ -22,11 +22,56 @@
       "Resource": "${ConfidenceCheckerArn}",
       "Next": "StructureWithNova"
     },
-    "StructureWithNova": {
+    "ListNovaDocuments": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${NovaStructurerArn}",
+        "FunctionName": "${NovaDocumentListerArn}",
+        "Payload.$": "$"
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "OutputPath": "$.Payload",
+      "Next": "StructureNovaDocumentsMap"
+    },
+    "StructureNovaDocumentsMap": {
+      "Type": "Map",
+      "ItemsPath": "$.documentos_para_estruturar",
+      "Parameters": {
+        "package_id.$": "$.package_id",
+        "user_id.$": "$.user_id",
+        "execute_score.$": "$.execute_score",
+        "bda_output_bucket.$": "$.bda_output_bucket",
+        "nome_pdf_original.$": "$$.Map.Item.Value.nome_pdf_original",
+        "s3_key_bda.$": "$$.Map.Item.Value.s3_key_bda"
+      },
+      "Iterator": {
+        "StartAt": "StructureSingleDocumentItem",
+        "States": {
+          "StructureSingleDocumentItem": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${NovaStructurerArn}",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "Payload.$": "$.Payload"
+            },
+            "OutputPath": "$.Payload",
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.map_results",
+      "Next": "AggregateNovaBatch"
+    },
+    "AggregateNovaBatch": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NovaBatchAggregatorArn}",
         "Payload.$": "$"
       },
       "ResultSelector": {

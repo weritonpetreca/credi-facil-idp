@@ -1,22 +1,14 @@
 import json
 import os
 import boto3
-from datetime import datetime, timezone
-from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools import Logger
 from src.shared.tools import obter_especificacao_ferramenta_loan
 
 logger = Logger(service="nova-structurer")
-metrics = Metrics(namespace="CrediFacilIDP", service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
-db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-lite-v1:0"
-TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
-
-# ==========================================================================
-# 📊 GABARITOS DE COMPLIANCE (ESPELHO FIEL DOS SEUS BLUEPRINTS EM INGLÊS)
-# ==========================================================================
 
 TEMPLATE_PAYROLL_CHECK = {
     "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
@@ -45,16 +37,10 @@ TEMPLATE_W2_FORM = {
     "social_security_wages": None, "social_security_tax_withheld": None, "medicare_wages_and_tips": None,
     "medicare_tax_withheld": None, "social_security_tips": None, "allocated_tips": None,
     "dependent_care_benefits": None, "nonqualified_plans": None, 
-    "box12_items": [
-        {
-            "code_a": None, "amount_a": None, "code_b": None, "amount_b": None,
-            "code_c": None, "amount_c": None, "code_d": None, "amount_d": None
-        }
-    ],
+    "box12_items": [{"code_a": None, "amount_a": None, "code_b": None, "amount_b": None, "code_c": None, "amount_c": None, "code_d": None, "amount_d": None}],
     "staturoty employee": None, "retirement plan": None, "third-party_sick_pay": None, 
     "other": None, "state": None, "employer's_state_id_number": None, "state_wages_tips_etc": None, 
-    "state_income_tax": None, "local_wages_tips_etc": None, "local_income_tax": None, 
-    "locality_name": None, "tax_year": None
+    "state_income_tax": None, "local_wages_tips_etc": None, "local_income_tax": None, "locality_name": None, "tax_year": None
 }
 
 TEMPLATE_PAY_STUB = {
@@ -89,10 +75,7 @@ TEMPLATE_PAY_STUB = {
         "adjustments": [{"description": "Life Insurance", "this_period": None}]
     },
     "net_pay": {"this_period": None},
-    "taxable_wages": {
-        "excluded_from_federal_taxable_wages_note": None,
-        "your_federal_taxable_wages_this_period_are": None
-    },
+    "taxable_wages": {"excluded_from_federal_taxable_wages_note": None, "your_federal_taxable_wages_this_period_are": None},
     "other_benefits_and_information": [
         {"description": "Group Term life", "this_period": None, "total_to_date": None},
         {"description": "Loan Amt Paid", "this_period": None, "total_to_date": None},
@@ -104,24 +87,14 @@ TEMPLATE_PAY_STUB = {
 }
 
 TEMPLATE_ACCOUNT_STATEMENT = {
-    "your_details": {
-        "account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None,
-        "statement_period": None, "account_number": None, "account_name": None, "email_address": None
-    },
+    "your_details": {"account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None, "statement_period": None, "account_number": None, "account_name": None, "email_address": None},
     "your_account_balance": {"opening_balance": None, "closing_balance": None},
     "your_account_valuation": [
-        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
-        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
-        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
         {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
         {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None}
     ],
     "account_value": {"value": None, "percentage": None},
-    "your_insurance_details": [
-        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None},
-        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None},
-        {"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None}
-    ]
+    "your_insurance_details": [{"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None}]
 }
 
 TEMPLATE_HOMEOWNERS_INSURANCE = {
@@ -129,48 +102,19 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
     "alternate_phone": None, "insurance_company": None, "insurance_company_address": None,
     "insured_property_address": None, "notice_of_insurance_information_practices": None,
     "notice": None, "policy_number": None, "purchase_date_time": None, "effective_date": None, "expiration_date": None,
-    "primary_applicant": {
-        "name": None, "date_of_birth": None, "gender": None, "marital_status": None,
-        "education_level": None, "existing_policy": None, "drivers_license_number": None,
-        "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None,
-        "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None
-    },
-    "co_applicant": {
-        "name": None, "date_of_birth": None, "gender": None, "marital_status": None,
-        "education_level": None, "relationship_to_primary_applicant": None, "drivers_license_number": None,
-        "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None
-    },
-    "total_auto_claims_accidents_violations_all_applicants": {
-        "number_auto_accidents": {"at_fault": None, "not_at_fault": None},
-        "number_violations": {"major": None, "minor": None},
-        "number_comp_claims": None
-    }
+    "primary_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "education_level": None, "existing_policy": None, "drivers_license_number": None, "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None}
 }
 
 PROMPT_SISTEMA = f"""
 Você é um agente IDP analítico sênior especialista em extração de dados e conformidade cadastral.
 Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
-
-DIRETRIZES OPERACIONAIS OBRIGATÓRIAS:
-1. Classifique o documento em um dos pares de tipo/subtipo aceitos.
-2. No campo 'campos_extraidos_brutos', você DEVE retornar obrigatoriamente um objeto que possua EXATAMENTE as mesmas chaves e a mesma hierarquia estrutural (aninhamento) do gabarito correspondente abaixo.
-3. NÃO altere o nome das chaves, NÃO mude a hierarquia e NÃO remova chaves. Se um campo do gabarito não for localizado no texto, mantenha a chave preenchendo o valor como null (None).
-4. Datas (effective_date, expiration_date, date_of_birth): Devem seguir estritamente formatos válidos de data (ex: MM/DD/YYYY ou YYYY-MM-DD). Se contiver apenas letras ou caracteres especiais aleatórios, force para null.
-5. Números de Apólice/Documento (policy_number, document_number): Não podem conter apenas caracteres especiais repetidos (ex: %()*, ###). Devem possuir caracteres alfanuméricos válidos.
-6. Valores Financeiros (wages, amounts): Devem conter números e pontuações monetárias coerentes. Textos corrompidos devem ser engenhosamente anulados.
-7. Classe da Habilitação (chave 'class'): Remova qualquer prefixo como 'CLASS', 'CLASSE' ou numerais extras gerados por tabelas de OCR. O valor deve ser estritamente restrito a letras isoladas ou combinações oficiais de categorias de condução (Exemplos válidos: 'D', 'B', 'A', 'E', 'C'). Se o valor visual não for uma letra limpa, force para null.
-
-⚠️ REGRA ESTRITA ANTI-ALUCINAÇÃO DE COMPACTAÇÃO:
-Se você identificar valores na transcrição original contendo ruídos visuais puros, strings corrompidas ou falhas de leitura de fontes (Exemplos: '&()*', 'SPSESS', '##88%', '#8SS UHila'), ignore esses caracteres completamente. Nunca repasse esses símbolos para o JSON final; marque o campo estritamente como null.
-
-GABARITOS DE COMPLIANCE (Siga estritamente a hierarquia destes blocos):
+GABARITOS DE COMPLIANCE:
 - Subtipo 'payroll_check': {json.dumps(TEMPLATE_PAYROLL_CHECK)}
 - Subtipo 'driver_license': {json.dumps(TEMPLATE_DRIVER_LICENSE)}
 - Subtipo 'w2_tax_form': {json.dumps(TEMPLATE_W2_FORM)}
 - Subtipo 'pay_stub': {json.dumps(TEMPLATE_PAY_STUB)}
 - Subtipo 'account_statement': {json.dumps(TEMPLATE_ACCOUNT_STATEMENT)}
 - Subtipo 'homeowners_insurance_application': {json.dumps(TEMPLATE_HOMEOWNERS_INSURANCE)}
-
 Identifique o nome completo do titular principal no campo 'nome_titular' em CAIXA ALTA.
 """
 
@@ -217,217 +161,90 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         }
     }
 
-def inicializar_estrutura_base_lote(package_id: str, intermediarios: list, metricas_tokens: dict) -> dict:
-    timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    documentos_analisados = []
-    presenca = {"identificacao": False, "renda": False, "extrato": False, "imovel": False}
-
-    for item in intermediarios:
-        bp = item["blueprint"]
-        tipo = bp["tipo_documento"]
-        
-        if tipo == "documento_identificacao": presenca["identificacao"] = True
-        elif tipo == "comprovante_renda": presenca["renda"] = True
-        elif tipo == "extrato_bancario": presenca["extrato"] = True
-        elif tipo == "documento_imovel": presenca["imovel"] = True
-
-        documentos_analisados.append({
-            "tipo_documento": tipo.upper(),
-            "subtipo_documento": bp.get("subtipo_documento", ""),
-            "arquivo_original": bp["arquivo_original"],
-            "s3_key_origem": bp["localizacao_documento_s3"]["s3_key_origem"],
-            "s3_key_resultado_bda": bp["localizacao_documento_s3"]["s3_key_resultado_bda"],
-            "s3_key_resultado": bp["localizacao_documento_s3"].get("s3_key_resultado"),
-            "status_extracao": bp["confiabilidade_extracao"]["status_extracao"],
-            "campos_extraidos": bp["dados_extraidos_do_documento"],
-            "confianca_media": float(bp["confiabilidade_extracao"]["confianca_media"]),
-            "observacoes": bp["confiabilidade_extracao"]["observacoes"]
-        })
-
-    return {
-        "sistema": {
-            "ultimo_package_vinculado": {
-                "package_id": package_id,
-                "client_folder": f"packages/{package_id}/",
-                "data_recebimento": timestamp_atual
-            },
-            "processamento": {
-                "status": "processado",
-                "modelo_utilizado": "Amazon Nova Pro",
-                "bda_project_arn": os.environ.get("BDA_PROJECT_ARN"),
-                "quantidade_tokens": {
-                    "input_tokens": metricas_tokens["input"],
-                    "output_tokens": metricas_tokens["output"],
-                    "total_tokens": metricas_tokens["input"] + metricas_tokens["output"]
-                },
-                "data_processamento": timestamp_atual
-            },
-            "tipos_documentos_analisados": [k for k, v in presenca.items() if v]
-        },
-        "documentos_analisados": documentos_analisados
-    }
-
-@metrics.log_metrics(capture_cold_start=True)
 def handler(event, context):
     try:
         package_id = event.get("package_id")
-        bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
+        bucket_saida = event.get("bda_output_bucket")
         bucket_entrada = os.environ.get("BUCKET_ENTRADA")
-        prefix_busca = f"bda-output/{package_id}/"
+        nome_pdf_original = event.get("nome_pdf_original")
+        s3_key_bda = event.get("s3_key_bda")
 
-        logger.info(f"Iniciando segmentação analítica pura de documentos para o lote {package_id}")
+        logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
 
-        # 🚀 SOLUÇÃO DO CONTRATO: Busca a real intenção diretamente na fonte de dados persistida
-        execute_score = False
-        try:
-            db_res = db_client.get_item(
-                TableName=TABLE_NAME,
-                Key={
-                    "PK": {"S": package_id},
-                    "SK": {"S": "METADATA"}
-                }
-            )
-            item_db = db_res.get("Item", {})
-            execute_score = item_db.get("execute_score", {}).get("BOOL", False)
-            logger.info(f"Sincronização offline realizada. Flag execute_score recuperada do banco: {execute_score}")
-        except Exception as db_err:
-            logger.warning(f"Falha de barreira ao ler DynamoDB, recorrendo ao payload: {str(db_err)}")
-            execute_score = event.get("execute_score", False)
-
-        s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
-        if "Contents" not in s3_objects or len(s3_objects["Contents"]) == 0:
-            raise FileNotFoundError(f"Nenhum arquivo BDA localizado sob o prefixo {prefix_busca}")
-
-        mapa_documentos = {}
-        for obj in s3_objects["Contents"]:
-            key = obj["Key"]
-            if not key.endswith(".json") or "manifest" in key.lower() or "job_metadata" in key.lower():
-                continue
-            partes = key.split("/")
-            if len(partes) < 3: continue
-            nome_pdf_original = partes[2]
-            
-            if nome_pdf_original not in mapa_documentos: mapa_documentos[nome_pdf_original] = []
-            mapa_documentos[nome_pdf_original].append(obj)
-
-        intermediarios_coletados = []
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        for nome_pdf_original, lista_objetos in mapa_documentos.items():
-            obj_selecionado = next((o for o in lista_objetos if "custom_output" in o["Key"]), None)
-            if not obj_selecionado:
-                obj_selecionado = next((o for o in lista_objetos if "standard_output" in o["Key"]), lista_objetos[0])
-
-            logger.info(f"Extraindo metadados sintáticos do arquivo original: {nome_pdf_original}")
-            
-            s3_response = s3_client.get_object(Bucket=bucket_saida, Key=obj_selecionado["Key"])
-            json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
-            
-            texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
-            json_higienizado = limpar_ruido_recursivo(json_bruto)
-
-            tool_config = {
-                "tools": [obter_especificacao_ferramenta_loan()],
-                "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
-            }
-            
-            conteudo_input_hibrido = (
-                f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
-                f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
-            )
-
-            response = bedrock_runtime.converse(
-                modelId=MODEL_ID,
-                messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
-                system=[{"text": PROMPT_SISTEMA}],
-                toolConfig=tool_config,
-                inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
-            )
-
-            usage = response.get("usage", {})
-            total_input_tokens += usage.get("inputTokens", 0)
-            total_output_tokens += usage.get("outputTokens", 0)
-
-            content_blocks = response.get("output", {}).get("message", {}).get("content", [])
-            tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
-            
-            if not tool_use_block: continue
-
-            achado = tool_use_block.get("input", {})
-            if isinstance(achado, str): achado = json.loads(achado)
-
-            tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
-            subtipo_detectado = "pay_stub"
-            
-            if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
-                tipo_detectado = "comprovante_renda"
-                subtipo_detectado = "w2_tax_form"
-            elif "check" in nome_pdf_original.lower() or tipo_detectado == "payroll_check":
-                tipo_detectado = "comprovante_complementar"
-                subtipo_detectado = "payroll_check"
-            elif "statement" in nome_pdf_original.lower() or tipo_detectado == "bank_statement":
-                tipo_detectado = "extrato_bancario"
-                subtipo_detectado = "account_statement"
-            elif "insurance" in nome_pdf_original.lower() or tipo_detectado == "property_document":
-                tipo_detectado = "documento_imovel"
-                subtipo_detectado = "homeowners_insurance_application"
-            elif "license" in nome_pdf_original.lower() or "id_card" in nome_pdf_original.lower() or tipo_detectado == "identity_document":
-                tipo_detectado = "documento_identificacao"
-                subtipo_detectado = "driver_license"
-
-            s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
-            
-            s3_meta_inputs = {
-                "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
-                "bucket_saida": bucket_saida, "key_bda": obj_selecionado["Key"], "key_resultado": s3_target_key
-            }
-
-            blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
-            
-            logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
-            s3_client.put_object(
-                Bucket=bucket_saida, Key=s3_target_key,
-                Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"
-            )
-
-            intermediarios_coletados.append({"blueprint": blueprint_json, "raw_ia": achado})
-
-        metricas = {"input": total_input_tokens, "output": total_output_tokens}
-        json_base_lote = inicializar_estrutura_base_lote(package_id, intermediarios_coletados, metricas)
-
-        # ==========================================================================
-        # 📈 REQUISITO [RF-09]: PUBLICAÇÃO ASSÍNCRONA DE MÉTRICAS VIA EMF
-        # ==========================================================================
-        logger.info(f"Publicando métricas EMF de consumo do Bedrock para o pacote {package_id}")
-        metrics.add_metric(name="BedrockInputTokens", unit="Count", value=total_input_tokens)
-        metrics.add_metric(name="BedrockOutputTokens", unit="Count", value=total_output_tokens)
+        s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
+        json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
         
-        # Executa o cálculo FinOps baseado na tabela oficial do Nova Lite em us-east-1
-        custo_estimado_usd = ((total_input_tokens * 0.06) + (total_output_tokens * 0.24)) / 1000000
-        metrics.add_metric(name="EstimatedGenAiCostUSD", unit="None", value=custo_estimado_usd)
+        texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
+        json_higienizado = limpar_ruido_recursivo(json_bruto)
+
+        tool_config = {
+            "tools": [obter_especificacao_ferramenta_loan()],
+            "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
+        }
         
-        # Adiciona metadados contextuais para facilitar filtros nos dashboards
-        metrics.add_metadata(key="package_id", value=package_id)
+        conteudo_input_hibrido = (
+            f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
+            f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
+        )
 
-        if not execute_score:
-            logger.info(f"Gate de Score inativo. Gravando payload final estruturado em results/packages/{package_id}/output.json")
-            s3_client.put_object(
-                Bucket=bucket_saida, Key=f"results/packages/{package_id}/output.json",
-                Body=json.dumps(json_base_lote, ensure_ascii=False), ContentType="application/json"
-            )
-        else:
-            logger.info("Gate de Score ativo. Adotando persistência sob demanda no Consolidador para mitigar arquivos fantasmas.")
+        response = bedrock_runtime.converse(
+            modelId=MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
+            system=[{"text": PROMPT_SISTEMA}],
+            toolConfig=tool_config,
+            inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
+        )
 
-        return {
-            "package_id": package_id,
-            "user_id": event.get("user_id", "sistema"),
-            "execute_score": execute_score,  # 🎯 AGORA VAI PREENCHIDO COM A VERDADE DO BANCO!
-            "bda_output_bucket": bucket_saida,
-            "confianca_general": round(1.0, 2),
-            "json_estruturado": json_base_lote
+        usage = response.get("usage", {})
+        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+        tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
+        
+        if not tool_use_block:
+            raise ValueError(f"O modelo não acionou a ferramenta de estruturação para {nome_pdf_original}")
+
+        achado = tool_use_block.get("input", {})
+        if isinstance(achado, str): achado = json.loads(achado)
+
+        tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
+        subtipo_detectado = "pay_stub"
+        
+        if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
+            tipo_detectado = "comprovante_renda"
+            subtipo_detectado = "w2_tax_form"
+        elif "check" in nome_pdf_original.lower() or tipo_detectado == "payroll_check":
+            tipo_detectado = "comprovante_complementar"
+            subtipo_detectado = "payroll_check"
+        elif "statement" in nome_pdf_original.lower() or tipo_detectado == "bank_statement":
+            tipo_detectado = "extrato_bancario"
+            subtipo_detectado = "account_statement"
+        elif "insurance" in nome_pdf_original.lower() or tipo_detectado == "property_document":
+            tipo_detectado = "documento_imovel"
+            subtipo_detectado = "homeowners_insurance_application"
+        elif "license" in nome_pdf_original.lower() or "id_card" in nome_pdf_original.lower() or tipo_detectado == "identity_document":
+            tipo_detectado = "documento_identificacao"
+            subtipo_detectado = "driver_license"
+
+        s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
+        
+        s3_meta_inputs = {
+            "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
+            "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
+        blueprint_json = formatar_conforme_blueprint(tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs)
+        
+        logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
+        s3_client.put_object(
+            Bucket=bucket_saida, Key=s3_target_key,
+            Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"
+        )
+
+        return {
+            "blueprint": blueprint_json,
+            "raw_ia": achado,
+            "input_tokens": usage.get("inputTokens", 0),
+            "output_tokens": usage.get("outputTokens", 0)
+        }
     except Exception as e:
-        logger.error(f"Falha catastrófica no processamento isolado do Structurer: {str(e)}")
+        logger.error(f"Falha na estruturação isolada de {event.get('nome_pdf_original')}: {str(e)}")
         raise e

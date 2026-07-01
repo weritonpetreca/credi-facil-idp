@@ -572,13 +572,27 @@ Resources:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
 
-  NovaStructurerFunction:
+  NovaDocumentListerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.nova_structurer.lister.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref CrediFacilDynamoTable
+        - S3ReadPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
+  NovaStructurerFunction: 
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../
       Handler: src.lambdas.nova_structurer.handler.handler
-      MemorySize: 1024
-      Timeout: 120
+      MemorySize: 512 
+      Timeout: 45     
       Environment:
         Variables:
           BUCKET_ENTRADA: !Sub "credifacil-docs-entrada-${AWS::AccountId}-${Environment}"
@@ -587,13 +601,23 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
-        - DynamoDBReadPolicy:
-            TableName: !Sub "credifacil-pacotes-${Environment}"
         - Statement:
             - Sid: AllowBedrockNovaInvoke
               Effect: Allow
               Action: "bedrock:InvokeModel"
               Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+    Tags:
+      Project: CrediFacil-IDP
+      Environment: !Ref Environment
+
+  NovaBatchAggregatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.nova_structurer.aggregator.handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "credifacil-docs-saida-${AWS::AccountId}-${Environment}"
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
@@ -706,7 +730,9 @@ Resources:
         BdaInvokerArn: !GetAtt BdaInvokerFunction.Arn
         BdaStatusPollerArn: !GetAtt BdaStatusPollerFunction.Arn
         ConfidenceCheckerArn: !GetAtt ConfidenceCheckerFunction.Arn
+        NovaDocumentListerArn: !GetAtt NovaDocumentListerFunction.Arn
         NovaStructurerArn: !GetAtt NovaStructurerFunction.Arn
+        NovaBatchAggregatorArn: !GetAtt NovaBatchAggregatorFunction.Arn
         ExcelGeneratorArn: !GetAtt ExcelGeneratorFunction.Arn
         CustomerConsolidatorArn: !GetAtt CustomerConsolidatorFunction.Arn
         ResultWriterArn: !GetAtt ResultWriterFunction.Arn
@@ -737,7 +763,9 @@ Resources:
                   - !GetAtt BdaInvokerFunction.Arn
                   - !GetAtt BdaStatusPollerFunction.Arn
                   - !GetAtt ConfidenceCheckerFunction.Arn
+                  - !GetAtt NovaDocumentListerFunction.Arn
                   - !GetAtt NovaStructurerFunction.Arn
+                  - !GetAtt NovaBatchAggregatorFunction.Arn
                   - !GetAtt ExcelGeneratorFunction.Arn
                   - !GetAtt CustomerConsolidatorFunction.Arn
                   - !GetAtt ResultWriterFunction.Arn
