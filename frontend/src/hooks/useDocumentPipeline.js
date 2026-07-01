@@ -33,6 +33,11 @@ export function useDocumentPipeline() {
   const [errorMessage, setErrorMessage] = useState("");
   const [startedAt, setStartedAt] = useState(null);
   const [finishedAt, setFinishedAt] = useState(null);
+  
+  // 🚀 NOVOS ESTADOS: Gerenciamento do ciclo de vida da Revisão Humana (RF-16)
+  const [currentPackageId, setCurrentPackageId] = useState(null);
+  const [revisionFields, setRevisionFields] = useState([]);
+
   const pollTimer = useRef(null);
   const pollDeadline = useRef(null);
 
@@ -59,6 +64,8 @@ export function useDocumentPipeline() {
     setErrorMessage("");
     setStartedAt(null);
     setFinishedAt(null);
+    setCurrentPackageId(null);
+    setRevisionFields([]);
   }, [stopPolling]);
 
   const pollUntilDone = useCallback(
@@ -89,6 +96,16 @@ export function useDocumentPipeline() {
           }
 
           const data = await response.json();
+
+          // 🚀 INTERCEPTAÇÃO REATIVA [RF-16]: Trava o pooling se a IA acusar baixa acurácia
+          if (data.status === "NEEDS_REVISION") {
+            pushLog("⚠️ Atenção: Baixa confiança detectada em campos críticos. Retendo para revisão manual.", "warn");
+            const fields = data.failed_fields_metadata || data.confidence_results?.failed_fields_metadata || [];
+            setRevisionFields(fields);
+            setPhase("revision");
+            stopPolling();
+            return;
+          }
 
           if (data.status === "PROCESSING") {
             pushLog("Em processamento na AWS. Extraindo metadados via Bedrock BDA...");
@@ -123,8 +140,46 @@ export function useDocumentPipeline() {
 
       tick();
     },
-    [pushLog],
+    [pushLog, stopPolling],
   );
+
+  // 🚀 NOVO MÉTODO [RF-20]: Submete as correções manuais do operador para a nossa API Gateway
+  const submitReview = useCallback(async (correcoes, token) => {
+    if (!currentPackageId) return false;
+    
+    try {
+      setPhase("preparing");
+      pushLog("Transmitindo correções analíticas para reativar o pipeline...");
+
+      const response = await fetch(`${API_URL}v1/packages/${currentPackageId}/review`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ correcoes })
+      });
+
+      const responseData = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(responseData?.erro || "Falha ao registrar correções manuais.");
+      }
+
+      pushLog("Revisão aceita pelo motor da AWS! Retomando pooling reativo.", "success");
+      setPhase("waiting");
+      setRevisionFields([]);
+      
+      // Acorda o polling na mesma hora para aguardar a finalização do Nova Lite
+      pollUntilDone(currentPackageId, executeScore, token);
+      return true;
+    } catch (err) {
+      setPhase("revision");
+      setErrorMessage(err.message || "Não foi possível processar a revisão manual.");
+      pushLog(err.message || "Erro no transbordo humano.", "error");
+      return false;
+    }
+  }, [currentPackageId, executeScore, pollUntilDone, pushLog]);
 
   const upload = useCallback(
     async (files, scoreRequested, token) => {
@@ -134,6 +189,8 @@ export function useDocumentPipeline() {
       setErrorMessage("");
       setLogs([]);
       setFinishedAt(null);
+      setCurrentPackageId(null);
+      setRevisionFields([]);
 
       if (!files || files.length < MIN_FILES) {
         setPhase("error");
@@ -185,6 +242,7 @@ export function useDocumentPipeline() {
         }
 
         pushLog(`Lote registrado: ${prepData.package_id}`);
+        setCurrentPackageId(prepData.package_id);
 
         setPhase("uploading");
         pushLog(`Enviando ${files.length} documento(s) para o storage seguro...`);
@@ -196,20 +254,12 @@ export function useDocumentPipeline() {
             throw new Error(`Instrução de upload não encontrada para o arquivo: ${file.name}`);
           }
 
-          // ==========================================================================
-          // 🛡️ ATUALIZAÇÃO [RF-24]: CONSTRUÇÃO DO PAYLOAD MULTIPART PARA PRESIGNED POST
-          // ==========================================================================
           const formData = new FormData();
-
-          // Regra de Ouro 1: Anexa todas as chaves de autenticação/tokens ANTES do arquivo
           Object.entries(instruction.fields).forEach(([key, value]) => {
             formData.append(key, value);
           });
-
-          // Regra de Ouro 1 (Continuação): O arquivo físico DEVE ser o último parâmetro
           formData.append("file", file);
 
-          // Regra de Ouro 2: Chamada POST sem passar Content-Type manual nos headers
           const postResponse = await fetch(instruction.url, {
             method: "POST",
             body: formData, 
@@ -247,7 +297,10 @@ export function useDocumentPipeline() {
     errorMessage,
     startedAt,
     finishedAt,
+    currentPackageId,
+    revisionFields,
     upload,
+    submitReview,
     reset,
   };
 }
