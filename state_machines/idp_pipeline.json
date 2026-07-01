@@ -15,12 +15,24 @@
         }
       },
       "ResultPath": "$",
-      "Next": "EvaluateConfidence"
+      "Next": "EvaluateConfidence",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "EvaluateConfidence": {
       "Type": "Task",
       "Resource": "${ConfidenceCheckerArn}",
-      "Next": "StructureWithNova"
+      "Next": "ListNovaDocuments",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "ListNovaDocuments": {
       "Type": "Task",
@@ -33,7 +45,13 @@
         "Payload.$": "$.Payload"
       },
       "OutputPath": "$.Payload",
-      "Next": "StructureNovaDocumentsMap"
+      "Next": "StructureNovaDocumentsMap",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "StructureNovaDocumentsMap": {
       "Type": "Map",
@@ -65,7 +83,13 @@
         }
       },
       "ResultPath": "$.map_results",
-      "Next": "AggregateNovaBatch"
+      "Next": "AggregateNovaBatch",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "AggregateNovaBatch": {
       "Type": "Task",
@@ -78,7 +102,13 @@
         "Payload.$": "$.Payload"
       },
       "OutputPath": "$.Payload",
-      "Next": "GenerateExcelReports"
+      "Next": "GenerateExcelReports",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "GenerateExcelReports": {
       "Type": "Map",
@@ -105,7 +135,13 @@
         }
       },
       "ResultPath": "$.excel_generation_results",
-      "Next": "CheckScoreExecution"
+      "Next": "CheckScoreExecution",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "CheckScoreExecution": {
       "Type": "Choice",
@@ -129,7 +165,13 @@
         "Payload.$": "$.Payload"
       },
       "OutputPath": "$.Payload",
-      "Next": "GenerateConsolidatedExcel"
+      "Next": "GenerateConsolidatedExcel",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "GenerateConsolidatedExcel": {
       "Type": "Task",
@@ -144,12 +186,24 @@
         }
       },
       "ResultPath": "$.consolidated_excel_result",
-      "Next": "WriteResult"
+      "Next": "WriteResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "WriteResult": {
       "Type": "Task",
       "Resource": "${ResultWriterArn}",
-      "Next": "NotifySuccess"
+      "Next": "NotifySuccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyError"
+        }
+      ]
     },
     "NotifySuccess": {
       "Type": "Task",
