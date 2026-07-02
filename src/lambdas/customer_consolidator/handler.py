@@ -8,99 +8,86 @@ s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 def safe_float(val) -> float:
-    """Converte valores monetários textuais ou mistos em floats puros de forma segura."""
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
     try:
         limpo = "".join(c for c in str(val) if c.isdigit() or c in [".", ","])
         if "," in limpo and "." in limpo:
-            if limpo.rfind(",") > limpo.rfind("."):
-                limpo = limpo.replace(".", "").replace(",", ".")
-            else:
-                limpo = limpo.replace(",", "")
-        elif "," in limpo:
-            limpo = limpo.replace(",", ".")
+            if limpo.rfind(",") > limpo.rfind("."): limpo = limpo.replace(".", "").replace(",", ".")
+            else: limpo = limpo.replace(",", "")
+        elif "," in limpo: limpo = limpo.replace(",", ".")
         return float(limpo) if limpo else 0.0
-    except:
-        return 0.0
+    except: return 0.0
 
 def extrair_renda_documento(campos: dict, tipo: str) -> float:
-    """Extrai a renda do documento respeitando a estrutura de cada template."""
     tipo_upper = tipo.upper()
-    
     if tipo_upper in ["COMPROVANTE_RENDA", "PAY_STUB", "COMPROVANTE_COMPLEMENTAR", "PAYROLL_CHECK"]:
         net_pay = campos.get("net_pay")
         if isinstance(net_pay, dict):
             v = net_pay.get("this_period") or net_pay.get("year_to_date")
             if v: return safe_float(v)
-        
         for earning in campos.get("earnings", []):
             if isinstance(earning, dict) and "gross_pay" in earning:
                 gp = earning["gross_pay"]
                 if isinstance(gp, dict):
                     v = gp.get("this_period")
                     if v: return safe_float(v)
-        
         v = campos.get("amount_numeric")
         if v: return safe_float(v)
-    
     elif tipo_upper in ["W2_TAX_FORM", "COMPROVANTE_RENDA"]:
         v = campos.get("wages_tips_other_compensation")
         if v: return safe_float(v)
-    
     return 0.0
 
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
-    """Aplica o algoritmo determinístico de Application Scorecard."""
     score_calculado = 300
     motivos_detalhados = []
     
-    if validacao.get("nome_consistente_entre_documentos") is True: 
+    if validacao.get("nome_consistente_entre_documentos") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Consistência nominal unificada entre toda a esteira documental.")
-    if validacao.get("data_nascimento_consistente") is True: 
+    if validacao.get("data_nascimento_consistente") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Data de nascimento validada e sem divergências cadastrais.")
-    if validacao.get("documento_identificacao_presente") is True: 
+    if validacao.get("documento_identificacao_presente") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Documento de identificação oficial regularizado presente.")
-    
+        
     renda_maxima = 0.0
     saldo_maximo = 0.0
     
     for doc in docs_analisados:
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-        campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
+        campos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
         
         renda_doc = extrair_renda_documento(campos, tipo)
         renda_maxima = max(renda_maxima, renda_doc)
 
         if tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
             v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
+            if isinstance(v_saldo, dict): v_saldo = v_saldo.get("closing_balance") or v_saldo.get("value")
             saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
 
-    if renda_maxima >= 5000.0: 
+    if renda_maxima >= 5000.0:
         score_calculado += 450
         motivos_detalhados.append(f"+450: Capacidade de renda líquida elevada comprovada (US$ {renda_maxima:.2f}).")
-    elif renda_maxima >= 2500.0: 
+    elif renda_maxima >= 2500.0:
         score_calculado += 300
         motivos_detalhados.append(f"+300: Capacidade de renda líquida média-alta (US$ {renda_maxima:.2f}).")
-    elif renda_maxima >= 1200.0: 
+    elif renda_maxima >= 1200.0:
         score_calculado += 150
         motivos_detalhados.append(f"+150: Capacidade de renda líquida básica (US$ {renda_maxima:.2f}).")
-    else: 
+    else:
         score_calculado += 50
         motivos_detalhados.append("+50: Capacidade de renda em faixa mínima de amortização.")
 
-    if saldo_maximo >= 10000.0: 
+    if saldo_maximo >= 10000.0:
         score_calculado += 400
         motivos_detalhados.append(f"+400: Excelente liquidez de fechamento patrimonial (US$ {saldo_maximo:.2f}).")
-    elif saldo_maximo >= 5000.0: 
+    elif saldo_maximo >= 5000.0:
         score_calculado += 250
         motivos_detalhados.append(f"+250: Liquidez de fechamento estável (US$ {saldo_maximo:.2f}).")
-    elif saldo_maximo >= 3000.0: 
+    elif saldo_maximo >= 3000.0:
         score_calculado += 100
         motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido.")
 
@@ -118,8 +105,8 @@ def handler(event, context):
         
         logger.info(f"Iniciando consolidação analítica de score para o pacote {package_id}")
 
-        json_base_lote = event.get("json_estruturado")
-        if not json_base_lote:
+        json_base_lote = event.get("json_estruturado") or {}
+        if not json_base_lote or "documentos_analisados" not in json_base_lote:
             key_base = f"results/packages/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -171,39 +158,48 @@ def handler(event, context):
         texto_resposta = response_body["output"]["message"]["content"][0]["text"].strip()
         usage_tokens = response_body.get("usage", {})
         
-        if texto_resposta.startswith("```json"):
+        if "```json" in texto_resposta:
             texto_resposta = texto_resposta.split("```json")[1].split("```")[0].strip()
-        elif texto_resposta.startswith("```"):
+        elif "```" in texto_resposta:
             texto_resposta = texto_resposta.split("```")[1].split("```")[0].strip()
 
         consolidado_json = json.loads(texto_resposta)
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
+        
+        # Reconstrói os documentos analisados injetando o padrão esperado downstream
+        resumo_docs = []
+        for doc in docs_analisados:
+            resumo_docs.append({
+                "arquivo_original": doc.get("arquivo_original", ""),
+                "tipo_documento": doc.get("tipo_documento", ""),
+                "subtipo_documento": doc.get("subtipo_documento", ""),
+                "status_extracao": doc.get("status_extracao", "sucesso"),
+                "confianca_media": float(doc.get("confianca_media", 1.0000)),
+                "s3_key_origem": doc.get("s3_key_origem", ""),
+                "s3_key_resultado": doc.get("s3_key_resultado", ""),
+                "campos_extraidos": doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {},
+                "observacoes": doc.get("observacoes", [])
+            })
 
-        # 🚀 CONSOLIDAÇÃO INTEGRAL MASTER: Exposta na raiz para alimentar os gráficos do front-end
+        # 🚀 CONSOLIDAÇÃO INTEGRAL MASTER: Exposta na raiz absoluta para alimentar os gráficos
         report_final_master = {
             "package_id": package_id,
             "status": "COMPLETED",
+            "execute_score": True,
+            "bda_output_bucket": bucket,
+            "confianca_general": 1,
             "renda_bruta_estimada": scorecard_completo["renda_apurada"],
             "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            },
             "auditoria": {
                 "versao_algoritmo_score": "1.0.0",
-                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0"
-            },
-            "sistema": {
-                "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
-                "processamento": {
-                    "status": "processado",
-                    "modelo_utilizado": "Amazon Nova Pro",
-                    "bda_project_arn": json_base_lote.get("sistema", {}).get("processamento", {}).get("bda_project_arn"),
-                    "quantidade_tokens": {
-                        "input_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
-                        "output_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0),
-                        "total_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("total_tokens", 0) + usage_tokens.get("inputTokens", 0) + usage_tokens.get("outputTokens", 0)
-                    },
-                    "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
-                },
-                "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
+                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0",
+                "input_tokens_consumidos": int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0) if json_base_lote else usage_tokens.get("inputTokens", 0),
+                "output_tokens_consumidos": int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0) if json_base_lote else usage_tokens.get("outputTokens", 0)
             },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
@@ -217,18 +213,16 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": docs_analisados
+            "documentos_analisados": resumo_docs
         }
 
-        s3_target_cliente = f"results/clientes/{package_id}/customer_consolidated.json"
+        # Sincroniza o arquivo mestre unificado em ambos os caminhos do ecossistema S3
         s3_client.put_object(
-            Bucket=bucket, Key=s3_target_cliente,
+            Bucket=bucket, Key=f"results/clientes/{package_id}/customer_consolidated.json",
             Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
         )
-
-        s3_target_pacote = f"results/packages/{package_id}/output.json"
         s3_client.put_object(
-            Bucket=bucket, Key=s3_target_pacote,
+            Bucket=bucket, Key=f"results/packages/{package_id}/output.json",
             Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
         )
 
@@ -237,7 +231,7 @@ def handler(event, context):
             "user_id": event.get("user_id", "sistema"),
             "execute_score": True,
             "bda_output_bucket": bucket,
-            "confianca_geral": 1.0,
+            "confianca_general": 1,
             "json_estruturado": report_final_master
         }
 

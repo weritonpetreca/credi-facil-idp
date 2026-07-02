@@ -111,8 +111,6 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
 PROMPT_SISTEMA = f"""
 Você é um agente IDP analítico sênior especialista em extração de dados e conformidade cadastral.
 Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
-Mapeie e extraia absolutamente TODOS os campos do gabarito a partir do texto linear e metadados fornecidos.
-
 GABARITOS DE COMPLIANCE:
 - Subtipo 'payroll_check': {json.dumps(TEMPLATE_PAYROLL_CHECK)}
 - Subtipo 'driver_license': {json.dumps(TEMPLATE_DRIVER_LICENSE)}
@@ -152,7 +150,7 @@ def calcular_media_real_inference(bda_json: dict) -> float:
                 score = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score")
                 if score is not None:
                     confiancas.append(float(score))
-    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 1.0000
+    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8500
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
@@ -169,8 +167,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
     
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    if isinstance(raw_fields, str): 
-        raw_fields = json.loads(raw_fields)
+    if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
     fields_planos_bda = {}
     if bda_json and "inference_result" in bda_json:
@@ -182,44 +179,41 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                 else:
                     fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v)
 
-    # 1. Alimenta o template base plano
-    for chave_template in template_final.keys():
-        if isinstance(template_final[chave_template], (dict, list)):
-            continue
-        chave_limpa = chave_template.lower().replace(".", "").replace("_", "")
-        valor_encontrado = fields_planos_bda.get(chave_limpa)
-        if not valor_encontrado:
-            for k_ia, v_ia in raw_fields.items():
-                if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == chave_limpa:
-                    valor_encontrado = v_ia
-                    break
-        if valor_encontrado is not None:
-            template_final[chave_template] = valor_encontrado
+    # Mapeamento recursivo profundo para preencher dicionários e arrays internos
+    def preencher_recursivo(d_alvo):
+        if isinstance(d_alvo, dict):
+            for k_temp, v_temp in d_alvo.items():
+                if isinstance(v_temp, (dict, list)):
+                    preencher_recursivo(v_temp)
+                else:
+                    ch_limpa = k_temp.lower().replace("_", "").replace(" ", "").replace(".", "")
+                    val = fields_planos_bda.get(ch_limpa)
+                    if not val:
+                        for k_ia, v_ia in raw_fields.items():
+                            if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == ch_limpa:
+                                val = v_ia
+                                break
+                    if val is not None:
+                        d_alvo[k_temp] = val
+        elif isinstance(d_alvo, list):
+            for item in d_alvo:
+                preencher_recursivo(item)
 
-    # 🚀 MAPEAMENTO EXPLÍCITO DE SUB-ESTRUTURAS DO HOLERITE (Evita valores null)
+    preencher_recursivo(template_final)
+
+    # Injeção explícita de subcontratos críticos do PayStub e Check para evitar nulos residuais
     if subtipo.lower() == "pay_stub":
-        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period") or raw_fields.get("gross_pay", {}).get("this_period")
-        val_gross_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd") or raw_fields.get("gross_pay", {}).get("year_to_date")
-        
+        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period")
+        val_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd")
         for e in template_final.get("earnings", []):
             if "gross_pay" in e:
                 if val_gross: e["gross_pay"]["this_period"] = val_gross
-                if val_gross_ytd: e["gross_pay"]["year_to_date"] = val_gross_ytd
+                if val_ytd: e["gross_pay"]["year_to_date"] = val_ytd
             elif e.get("description") == "regular":
                 if val_gross: e["this_period"] = val_gross
-                if val_gross_ytd: e["year_to_date"] = val_gross_ytd
-
-        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period") or raw_fields.get("net_pay", {}).get("this_period")
-        if val_net:
-            template_final["net_pay"]["this_period"] = val_net
-
-        mapeamento_deducoes = {"federalincometax": "Federal Income tax", "socialsecuritytax": "Social Security Tax", "medicaretax": "Medicare Tax"}
-        for k_flat, desc in mapeamento_deducoes.items():
-            val_deducao = fields_planos_bda.get(k_flat) or raw_fields.get(k_flat)
-            if val_deducao and "deductions" in template_final:
-                for item in template_final["deductions"].get("statutory", []):
-                    if item["description"].lower() == desc.lower():
-                        item["this_period"] = val_deducao
+                if val_ytd: e["year_to_date"] = val_ytd
+        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period")
+        if val_net: template_final["net_pay"]["this_period"] = val_net
 
     is_human_override = False
     if correcoes_humanas:
@@ -228,19 +222,22 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                 file_part, field_part = composite_key.split("__", 1)
                 if file_part == arquivo:
                     is_human_override = True
-                    def injetar_correcao_recursiva(d_busca):
+                    def injetar_correcao(d_busca):
                         if isinstance(d_busca, dict):
                             if field_part in d_busca: d_busca[field_part] = valor_corrigido
-                            for val in d_busca.values(): injetar_correcao_recursiva(val)
+                            for val in d_busca.values(): injetar_correcao(val)
                         elif isinstance(d_busca, list):
-                            for item in d_busca: injetar_correcao_recursiva(item)
-                    injetar_correcao_recursiva(template_final)
+                            for item in d_busca: injetar_correcao(item)
+                    injetar_correcao(template_final)
 
-    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 1.0000
+    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.9500
 
+    # Povoamento rico de observações em caso de desvios cadastrais ou ópticos
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     if media_real_bda < 0.80 and not is_human_override:
-        alertas_observacoes.append(f"Aviso de Qualidade Óptica: Média de acurácia de caracteres baixa ({media_real_bda:.2%}).")
+        alertas_observacoes.append(f"Alerta de leitura óptica: Confiança média de caracteres baixa ({media_real_bda:.2%}).")
+    if is_human_override:
+        alertas_observacoes.append("Metadados homologados e retificados manualmente pelo operador humano.")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -263,3 +260,117 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "observacoes": alertas_observacoes
         }
     }
+
+def handler(event, context):
+    try:
+        package_id = event.get("package_id")
+        bucket_saida = event.get("bda_output_bucket")
+        bucket_entrada = os.environ.get("BUCKET_ENTRADA")
+        nome_pdf_original = event.get("nome_pdf_original")
+        s3_key_bda = event.get("s3_key_bda")
+
+        logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
+
+        s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
+        json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
+
+        texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
+        json_higienizado = limpar_ruido_recursivo(json_bruto)
+
+        correcoes_humanas = {}
+        string_prompt_humanos = ""
+        try:
+            rev_response = db_client.get_item(
+                TableName=TABLE_NAME,
+                Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}}
+            )
+            rev_item = rev_response.get("Item")
+            if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
+                correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
+                correcoes_humanas = json.loads(correcoes_json)
+                
+                correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
+                if correcoes_especificas:
+                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
+        except Exception as db_err:
+            logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
+
+        tool_config = {
+            "tools": [obter_especificacao_ferramenta_loan()],
+            "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
+        }
+        
+        conteudo_input_hibrido = (
+            f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
+            f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
+            f"{string_prompt_humanos}"
+        )
+
+        response = bedrock_runtime.converse(
+            modelId=MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
+            system=[{"text": PROMPT_SISTEMA}],
+            toolConfig=tool_config,
+            guardrailConfig={
+                "guardrailIdentifier": os.environ.get("GUARDRAIL_IDENTIFIER"),
+                "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "1"),
+                "trace": "disabled"
+            },
+            inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
+        )
+
+        usage = response.get("usage", {})
+        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+        tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
+        
+        if not tool_use_block:
+            raise ValueError(f"O modelo não acionou a ferramenta de estruturação para {nome_pdf_original}")
+
+        achado = tool_use_block.get("input", {})
+        if isinstance(achado, str): achado = json.loads(achado)
+
+        tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
+        subtipo_detectado = "pay_stub"
+        
+        if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
+            tipo_detectado = "comprovante_renda"
+            subtipo_detectado = "w2_tax_form"
+        elif "check" in nome_pdf_original.lower() or tipo_detectado == "payroll_check":
+            tipo_detectado = "comprovante_complementar"
+            subtipo_detectado = "payroll_check"
+        elif "statement" in nome_pdf_original.lower() or tipo_detectado == "bank_statement":
+            tipo_detectado = "extrato_bancario"
+            subtipo_detectado = "account_statement"
+        elif "insurance" in nome_pdf_original.lower() or tipo_detectado == "property_document":
+            tipo_detectado = "documento_imovel"
+            subtipo_detectado = "homeowners_insurance_application"
+        elif "license" in nome_pdf_original.lower() or "id_card" in nome_pdf_original.lower() or tipo_detectado == "identity_document":
+            tipo_detectado = "documento_identificacao"
+            subtipo_detectado = "driver_license"
+
+        s3_target_key = f"results/{tipo_detectado}/{subtipo_detectado}/{package_id}/{nome_pdf_original.replace('.pdf', '')}_structured.json"
+        
+        s3_meta_inputs = {
+            "bucket_entrada": bucket_entrada, "key_entrada": f"packages/{package_id}/{nome_pdf_original}",
+            "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
+        }
+
+        blueprint_json = formatar_conforme_blueprint(
+            tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas, json_bruto
+        )
+        
+        logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
+        s3_client.put_object(
+            Bucket=bucket_saida, Key=s3_target_key,
+            Body=json.dumps(blueprint_json, ensure_ascii=False), ContentType="application/json"
+        )
+
+        return {
+            "blueprint": blueprint_json,
+            "raw_ia": achado,
+            "input_tokens": usage.get("inputTokens", 0),
+            "output_tokens": usage.get("outputTokens", 0)
+        }
+    except Exception as e:
+        logger.error(f"Falha na estruturação isolada de {event.get('nome_pdf_original')}: {str(e)}")
+        raise e
