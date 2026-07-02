@@ -133,6 +133,20 @@ def handler(event, context):
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key)
             bda_json = json.loads(s3_response["Body"].read().decode("utf-8"))
 
+            logger.info(f"DIAGNÓSTICO - Arquivo Inspecionado: {key}")
+            logger.info(f"DIAGNÓSTICO - Top-Level Keys encontradas: {list(bda_json.keys())}")
+            
+            chaves_suspeitas = ["fields", "extractedData", "inference_result", "inferenceResult", "matched_blueprint", "customOutput", "document"]
+            for chave in chaves_suspeitas:
+                logger.info(f"DIAGNÓSTICO - Chave '{chave}' existe no payload? {chave in bda_json}")
+            
+            # Tenta bisbilhotar dentro do customOutput se ele existir
+            if "customOutput" in bda_json:
+                logger.info(f"DIAGNÓSTICO - Amostra customOutput: {str(bda_json['customOutput'])[:800]}")
+            elif "inferenceResult" in bda_json:
+                logger.info(f"DIAGNÓSTICO - Amostra inferenceResult: {str(bda_json['inferenceResult'])[:800]}")
+            # ------------------------------------------------------------------
+
             campos_criticos = CAMPOS_CRITICOS_POR_SUBTIPO.get(subtipo, [])
 
             for campo in campos_criticos:
