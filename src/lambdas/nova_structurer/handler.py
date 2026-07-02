@@ -108,7 +108,6 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
     "co_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "relationship_to_primary_applicant": None, "drivers_license_number": None, "dl_state": None}
 }
 
-# 🚀 PROMPT_SISTEMA DECLARADO GLOBALMENTE NO MÓDULO:
 PROMPT_SISTEMA = f"""
 Você é um agente IDP analítico sênior especialista em extração de dados e conformidade cadastral.
 Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
@@ -141,18 +140,6 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
-def calcular_media_real_inference(bda_json: dict) -> float:
-    """Calcula a média real varrendo os objetos de campo dentro de inference_result do BDA."""
-    confiancas = []
-    inf_res = bda_json.get("inference_result", {})
-    if isinstance(inf_res, dict):
-        for v in inf_res.values():
-            if isinstance(v, dict):
-                score = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score")
-                if score is not None:
-                    confiancas.append(float(score))
-    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.9500
-
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
         "payroll_check": TEMPLATE_PAYROLL_CHECK,
@@ -163,77 +150,47 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
     }
     
-    import copy
-    template_final = json.loads(json.dumps(MAPA_TEMPLATES.get(subtipo.lower(), {})))
+    template_final = dict(MAPA_TEMPLATES.get(subtipo.lower(), {}))
     
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
     if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
-    fields_planos_bda = {}
-    if bda_json and "inference_result" in bda_json:
-        inf_res = bda_json.get("inference_result", {})
-        if isinstance(inf_res, dict):
-            for k, v in inf_res.items():
-                if isinstance(v, dict):
-                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v.get("value") or v.get("text") or "")
-                else:
-                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v)
-
-    # 1. Alimenta chaves planas de primeiro nível checando BDA e IA de forma cross-check
     for chave_template in template_final.keys():
-        if isinstance(template_final[chave_template], (dict, list)):
-            continue
-        chave_limpa = chave_template.lower().replace(".", "").replace("_", "").replace(" ", "")
-        
-        valor_encontrado = fields_planos_bda.get(chave_limpa)
-        if valor_encontrado is None:
-            for k_ia, v_ia in raw_fields.items():
-                if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == chave_limpa:
-                    if not isinstance(v_ia, (dict, list)):
-                        valor_encontrado = v_ia
-                    break
+        valor_encontrado = None
+        for k_ia, v_ia in raw_fields.items():
+            if k_ia.lower().replace(" ", "_").replace(".", "") == chave_template.lower().replace(".", ""):
+                valor_encontrado = v_ia
+                break
         if valor_encontrado is not None:
             template_final[chave_template] = valor_encontrado
 
-    # 2. Resgata e acopla subestruturas complexas ricas geradas pela ferramenta da IA
-    for k_complex in ["exemptions_or_allowances", "earnings", "deductions", "net_pay", "taxable_wages", "other_benefits_and_information", "important_notes", "your_details", "your_account_balance", "your_account_valuation", "account_value", "your_insurance_details", "primary_applicant", "co_applicant"]:
-        if k_complex in template_final and k_complex in raw_fields and raw_fields[k_complex]:
-            template_final[k_complex] = raw_fields[k_complex]
-
-    # 3. Alinhamento explícito de campos do Blueprint do BDA para dentro das listas do Pay Stub
-    if subtipo.lower() == "pay_stub":
-        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period")
-        val_gross_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd")
-        for e in template_final.get("earnings", []):
-            if "gross_pay" in e:
-                if val_gross: e["gross_pay"]["this_period"] = val_gross
-                if val_gross_ytd: e["gross_pay"]["year_to_date"] = val_gross_ytd
-            elif e.get("description") == "regular":
-                if val_gross: e["this_period"] = val_gross
-                if val_gross_ytd: e["year_to_date"] = val_gross_ytd
-        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period")
-        if val_net: template_final["net_pay"]["this_period"] = val_net
-
+    is_human_override = False
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
             if "__" in composite_key:
                 file_part, field_part = composite_key.split("__", 1)
-                if file_part == arquivo:
-                    def aplicar_revisao(d_busca):
-                        if isinstance(d_busca, dict):
-                            if field_part in d_busca: d_busca[field_part] = valor_corrigido
-                            for val in d_busca.values(): aplicar_revisao(val)
-                        elif isinstance(d_busca, list):
-                            for item in d_busca: aplicar_revisao(item)
-                    aplicar_revisao(template_final)
+                if file_part == arquivo and field_part in template_final:
+                    template_final[field_part] = valor_corrigido
+                    is_human_override = True
 
-    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.9500
+    # 🔍 SONDAS DE CONFIRMAÇÃO DO BLUEPRINT
+    confiancas_reais = []
+    if bda_json and "inference_result" in bda_json:
+        ir = bda_json["inference_result"]
+        if isinstance(ir, dict):
+            for k, v in ir.items():
+                if isinstance(v, dict) and ("confidence" in v or "confidenceScore" in v):
+                    c = v.get("confidence") or v.get("confidenceScore")
+                    confiancas_reais.append(float(c))
+                elif isinstance(v, (int, float)):
+                    confiancas_reais.append(float(v))
+
+    media_real_bda = sum(confiancas_reais) / len(confiancas_reais) if confiancas_reais else 0.95
+
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
-    
-    campos_vazios = [k for k, v in template_final.items() if v is None or v == ""]
-    if campos_vazios:
-        alertas_observacoes.append(f"Campos estruturais vazios na extração: {', '.join(campos_vazios[:3])}.")
+    if is_human_override:
+        alertas_observacoes.append("Metadados homologados e retificados manualmente pelo operador humano.")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -250,9 +207,9 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
-            "status_extracao": "sucesso" if media_real_bda >= 0.8 else "parcial",
-            "confianca_media": f"{media_real_bda:.4f}",
-            "fonte_confiabilidade": "amazon_bedrock_data_automation",
+            "status_extracao": "sucesso" if is_human_override or media_real_bda >= 0.8 else "parcial",
+            "confianca_media": "1.0" if is_human_override else f"{media_real_bda:.4f}",
+            "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
             "observacoes": alertas_observacoes
         }
     }
@@ -265,16 +222,18 @@ def handler(event, context):
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
 
-        # 🚀 FILTRO CONDICIONAL: Aborta na hora se a chave pertencer à standard_output
-        if "standard_output" in s3_key_bda.lower():
-            logger.info(f"Filtro Ativo: Ignorando arquivo duplicado da standard_output: {s3_key_bda}")
-            return {"status": "SKIPPED", "message": "Ignorando standard_output para evitar duplicidade nula"}
-
         logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
 
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
 
+        # 🚀 SONDAS DE ISOLAMENTO DO PROBLEMA DE NULLS (Imprime no CloudWatch sem truncar)
+        logger.info(f"==== DIAGNÓSTICO ESTRUTURAL DO ARQUIVO: {nome_pdf_original} ====")
+        logger.info(f"KEYS DISPONÍVEIS: {list(json_bruto.keys())}")
+        if "inference_result" in json_bruto:
+            logger.info(f"CONTEÚDO INFERENCE_RESULT REAL: {json.dumps(json_bruto['inference_result'], ensure_ascii=False)}")
+        logger.info("===============================================================")
+        
         texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
         json_higienizado = limpar_ruido_recursivo(json_bruto)
 
@@ -292,7 +251,7 @@ def handler(event, context):
                 
                 correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
                 if correcoes_especificas:
-                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
+                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR (USE COMO VERDADE ABSOLUTA) ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
         except Exception as db_err:
             logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
 
