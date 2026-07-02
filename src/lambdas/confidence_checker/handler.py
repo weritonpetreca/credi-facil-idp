@@ -17,46 +17,46 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
     "pay_stub": ["employer_name", "employee_name", "social_security_number", "taxable_marital_status", "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd", "net_pay_this_period", "federal_income_tax", "social_security_tax", "medicare_tax", "retirement_401k"]
 }
 
-def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
-    campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
-    
-    if isinstance(dados, dict):
-        for k, v in dados.items():
-            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
-            if k_norm == campo_norm:
-                if isinstance(v, dict):
-                    conf = v.get("confidence") or v.get("confidence_score") or v.get("confidenceScore") or 1.0
-                    val = v.get("value") or v.get("text") or ""
-                    return float(conf), str(val)
-                else:
-                    return 1.0, str(v)
-        
-        for v in dados.values():
-            conf, val = extrair_recursivo_por_chave(v, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
-    elif isinstance(dados, list):
-        for item in dados:
-            if isinstance(item, dict):
-                name_attr = (item.get("name") or item.get("fieldName") or item.get("id") or "").lower().replace("_", "").replace(" ", "")
-                if name_attr and (name_attr in campo_norm or campo_norm in name_attr):
-                    conf = item.get("confidence") or item.get("confidence_score") or 1.0
-                    val = item.get("value") or item.get("text") or ""
-                    return float(conf), str(val)
-            conf, val = extrair_recursivo_por_chave(item, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
-    return -1.0, ""
-
 def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
-    for raiz in ["inference_result", "inferenceResult", "fields", "extractedData"]:
-        if raiz in bda_json:
-            conf, val = extrair_recursivo_por_chave(bda_json[raiz], campo_canonico)
-            if conf != -1.0:
-                return conf, val
-    return extrair_recursivo_por_chave(bda_json, campo_canonico)
+    """Lê a confiança real e valor do campo baseado no design unificado do AWS BDA (02/07/2026)."""
+    campo_norm = campo_canonico.lower().replace("_", "").replace(".", "").replace("$", "")
+    inference_result = bda_json.get("inference_result", {})
+    
+    valor_encontrado = None
+    chave_original = None
+    for k, v in inference_result.items():
+        if k.lower().replace("_", "").replace(".", "").replace("$", "") == campo_norm:
+            valor_encontrado = str(v).strip() if v is not None else ""
+            chave_original = k
+            break
+            
+    if valor_encontrado is None:
+        return -1.0, ""
+    if not valor_encontrado or valor_encontrado.lower() == "none":
+        return 0.0, ""
+        
+    exp_info = bda_json.get("explainability_info", {})
+    
+    # Formato A: dicionário estruturado por chave
+    if isinstance(exp_info, dict) and chave_original in exp_info:
+        dados_exp = exp_info[chave_original]
+        if isinstance(dados_exp, dict):
+            conf = dados_exp.get("confidence") or dados_exp.get("confidence_score") or dados_exp.get("score")
+            if conf is not None:
+                return float(conf), valor_encontrado
+                
+    # Formato B: lista de objetos de explainability
+    if isinstance(exp_info, list):
+        for item in exp_info:
+            if isinstance(item, dict):
+                nome = (item.get("label") or item.get("name") or item.get("field") or "").lower().replace("_", "")
+                if nome == campo_norm:
+                    conf = item.get("confidence") or item.get("confidence_score") or item.get("score")
+                    if conf is not None:
+                        return float(conf), valor_encontrado
+
+    logger.warning(f"Campo '{campo_canonico}' localizado no inference_result, mas sem meta-dados em explainability_info. Adotando proxy=1.0")
+    return 1.0, valor_encontrado
 
 def handler(event, context):
     try:
