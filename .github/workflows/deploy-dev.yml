@@ -72,6 +72,18 @@ jobs:
               NotificationEmail="$NOTIFICATION_EMAIL" \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 
+      # 🚀 NOVO STEP: Automação e Provisionamento de Contratos de Extração do BDA
+      - name: Provision Custom BDA Blueprints
+        if: github.event_name == 'push'
+        env:
+          BDA_PROJECT_ID: ${{ secrets.BDA_PROJECT_ID }} # Injeta o ID dinamicamente no SO do container
+        run: |
+          echo "📦 Instalando dependências SDK no ambiente isolado do Runner..."
+          pip install boto3 aws-lambda-powertools
+          
+          echo "🚀 Executando deploy automatizado de Blueprints customizados..."
+          python scripts/deploy_bda_blueprints.py
+
       - name: Build Front-End (Vite Compilation)
         if: github.event_name == 'push'
         run: |
@@ -89,13 +101,13 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
             --output text)
           
-          # 🚀 NOVO: Captura o ID do diretório de usuários do Cognito
+          # Captura o ID do diretório de usuários do Cognito
           USER_POOL_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
             --output text)
 
-          # 🚀 NOVO: Captura o ID do cliente do front-end do Cognito
+          # Captura o ID do cliente do front-end do Cognito
           USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
