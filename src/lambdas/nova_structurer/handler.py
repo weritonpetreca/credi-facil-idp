@@ -105,7 +105,8 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
     "alternate_phone": None, "insurance_company": None, "insurance_company_address": None,
     "insured_property_address": None, "notice_of_insurance_information_practices": None,
     "notice": None, "policy_number": None, "purchase_date_time": None, "effective_date": None, "expiration_date": None,
-    "primary_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "education_level": None, "existing_policy": None, "drivers_license_number": None, "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None}
+    "primary_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "education_level": None, "existing_policy": None, "drivers_license_number": None, "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None},
+    "co_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "relationship_to_primary_applicant": None, "drivers_license_number": None, "dl_state": None}
 }
 
 PROMPT_SISTEMA = f"""
@@ -221,6 +222,20 @@ def handler(event, context):
 
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
+
+        # ===== DIAGNÓSTICO TEMPORÁRIO — REMOVER APÓS DESCOBERTA =====
+        logger.info(f"BDA JSON top-level keys: {list(json_bruto.keys())}")
+        
+        # Imprime os primeiros 2000 caracteres para ver a estrutura
+        json_preview = json.dumps(json_bruto, ensure_ascii=False)[:2000]
+        logger.info(f"BDA JSON preview: {json_preview}")
+        
+        # Também verifica se os candidatos mais prováveis existem:
+        for chave_candidata in ["extractedFields", "keyValuePairs", "inference_result", 
+                                "fields", "extractedData", "inferenceResult", "document"]:
+            existe = chave_candidata in json_bruto
+            logger.info(f"Chave '{chave_candidata}' existe no JSON do BDA: {existe}")
+        # ===== FIM DO DIAGNÓSTICO =====
         
         texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
         json_higienizado = limpar_ruido_recursivo(json_bruto)

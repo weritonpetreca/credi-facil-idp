@@ -45,6 +45,32 @@ Globals:
         SNS_ERROR_TOPIC_ARN: !Ref SnsTopicoErros
 
 Resources:
+  
+  BDAProvisionerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src.lambdas.bda_provisioner.handler.handler
+      Policies:
+        - Statement:
+            - Sid: BDABlueprintAndProjectOrchestration
+              Effect: Allow
+              Action:
+                - bedrock:CreateBlueprint
+                - bedrock:UpdateBlueprint
+                - bedrock:DeleteBlueprint
+                - bedrock:ListBlueprints
+                - bedrock:ListDataAutomationBlueprints
+                - bedrock:UpdateDataAutomationProject
+                - bedrock:GetDataAutomationProject
+              Resource: "*"
+
+  BDABlueprintsAndProjectAssociation:
+    Type: Custom::BDABlueprintsConfig
+    Properties:
+      ServiceToken: !GetAtt BDAProvisionerFunction.Arn
+      BdaProjectId: !Ref BdaProjectId
+
   # ==========================================================================
   # 🔑 DEPENDÊNCIAS & COMPONENTES BASE
   # ==========================================================================
@@ -662,6 +688,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref BucketSaida
+        - DynamoDBReadPolicy:
+            TableName: !Ref CrediFacilDynamoTable
         - Version: "2012-10-17"
           Statement:
             - Sid: AllowBedrockNovaInvoke

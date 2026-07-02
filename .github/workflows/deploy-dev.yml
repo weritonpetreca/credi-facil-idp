@@ -89,13 +89,13 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
             --output text)
           
-          # 🚀 NOVO: Captura o ID do diretório de usuários do Cognito
+          # Captura o ID do diretório de usuários do Cognito
           USER_POOL_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
             --output text)
 
-          # 🚀 NOVO: Captura o ID do cliente do front-end do Cognito
+          # Captura o ID do cliente do front-end do Cognito
           USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
             --stack-name credifacil-idp-dev \
             --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
