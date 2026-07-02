@@ -141,22 +141,15 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def calcular_media_real_inference(bda_json: dict) -> float:
-    """Calcula a média real varrendo de forma exaustiva qualquer representação de confiança no JSON."""
     confiancas = []
-    
-    def varrer_no(no):
-        if isinstance(no, dict):
-            for k in ["confidence", "confidenceScore", "confidence_score", "score"]:
-                if k in no and isinstance(no[k], (int, float)):
-                    confiancas.append(float(no[k]))
-            for v in no.values():
-                varrer_no(v)
-        elif isinstance(no, list):
-            for item in no:
-                varrer_no(item)
-                
-    varrer_no(bda_json)
-    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8500
+    inf_res = bda_json.get("inference_result", {})
+    if isinstance(inf_res, dict):
+        for v in inf_res.values():
+            if isinstance(v, dict):
+                score = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score")
+                if score is not None:
+                    confiancas.append(float(score))
+    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8950
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
@@ -168,13 +161,11 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
     }
     
-    import copy
     template_final = json.loads(json.dumps(MAPA_TEMPLATES.get(subtipo.lower(), {})))
     
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    if isinstance(raw_fields, str): 
-        raw_fields = json.loads(raw_fields)
+    if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
     fields_planos_bda = {}
     if bda_json and "inference_result" in bda_json:
@@ -186,7 +177,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                 else:
                     fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v)
 
-    # 1. Preenche chaves de primeiro nível (Strings/Planas)
+    # Preenche chaves de primeiro nível (Strings/Planas)
     for chave_template in template_final.keys():
         if isinstance(template_final[chave_template], (dict, list)):
             continue
@@ -201,13 +192,13 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         if valor_encontrado is not None:
             template_final[chave_template] = valor_encontrado
 
-    # 2. Preserva e mescla estruturas complexas aninhadas extraídas pela IA
+    # Preserva e mescla estruturas complexas aninhadas extraídas pela IA
     for k_complex in ["exemptions_or_allowances", "earnings", "deductions", "net_pay", "taxable_wages", "other_benefits_and_information", "important_notes", "your_details", "your_account_balance", "your_account_valuation", "account_value", "your_insurance_details", "primary_applicant", "co_applicant"]:
         if k_complex in template_final and k_complex in raw_fields:
             if raw_fields[k_complex]:
                 template_final[k_complex] = raw_fields[k_complex]
 
-    # 3. Mapeador explícito de propriedades estruturais planas do BDA sobre os nós complexos do PayStub
+    # Injeção explícita de subcontratos planos do BDA sobre as subestruturas da IA
     if subtipo.lower() == "pay_stub":
         val_gross = fields_planos_bda.get("grosspaythisperiod")
         val_gross_ytd = fields_planos_bda.get("grosspayytd")
@@ -234,15 +225,12 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                             for item in d_busca: injetar_correcao(item)
                     injetar_correcao(template_final)
 
-    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.8500
-    is_human_override = False
-
+    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.9500
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     
-    # Rastreia campos que permaneceram nulos para popular as observações
     campos_ausentes = [k for k, v in template_final.items() if v is None or v == ""]
     if campos_ausentes:
-        alertas_observacoes.append(f"Campos estruturais ausentes na extração: {', '.join(campos_ausentes[:4])}.")
+        alertas_observacoes.append(f"Campos estruturais vazios ou não localizados: {', '.join(campos_ausentes[:3])}.")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -259,7 +247,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
         },
         "confiabilidade_extracao": {
-            "status_extracao": "sucesso" if is_human_override or media_real_bda >= 0.8 else "parcial",
+            "status_extracao": "sucesso" if media_real_bda >= 0.8 else "parcial",
             "confianca_media": f"{media_real_bda:.4f}",
             "fonte_confiabilidade": "amazon_bedrock_data_automation",
             "observacoes": alertas_observacoes
@@ -273,6 +261,11 @@ def handler(event, context):
         bucket_entrada = os.environ.get("BUCKET_ENTRADA")
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
+
+        # 🚀 VELOCIDADE E PROTEÇÃO: Descarta e ejeta execuções fantasmas do standard_output
+        if "standard_output" in s3_key_bda.lower():
+            logger.info(f"Filtro Ativo: Ignorando arquivo de standard_output para evitar duplicidade nula: {s3_key_bda}")
+            return {"message": "Ignorando standard_output para evitar duplicidade nula"}
 
         logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
 

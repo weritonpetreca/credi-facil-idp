@@ -51,7 +51,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         motivos_detalhados.append("+50: Data de nascimento validada e sem divergências cadastrais.")
     if validacao.get("documento_identificacao_presente") is True:
         score_calculado += 50
-        motivos_detalhados.append("+50: Documento de identificação oficial regularizado presente.")
+        motivos_detalhados.append("+50: Documento de identificação oficial presente.")
         
     renda_maxima = 0.0
     saldo_maximo = 0.0
@@ -111,7 +111,7 @@ def handler(event, context):
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        docs_analisados = json_base_lote.get("documentos_analisados", [])
+        docs_analisados = [d for d in json_base_lote.get("documentos_analisados", []) if d.get("arquivo_original")]
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
         prompt_consolidacao = f"""
@@ -128,12 +128,12 @@ def handler(event, context):
           * 'nome_consistente_entre_documentos': true se o nome completo do proponente for idêntico em todos os arquivos onde ele foi localizado.
           * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false.
 
-        Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo:
+        Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo antes ou depois:
         {{
           "cliente": {{
             "nome": "NOME COMPLETO EM CAIXA ALTA",
             "documento_identificacao": "NUMERO",
-            "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico." }}
+            "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico base do parecer de crédito." }}
           }},
           "validacao": {{
             "nome_consistente_entre_documentos": true,
@@ -170,7 +170,7 @@ def handler(event, context):
         input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
         output_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0)
 
-        # 🚀 FILTRO ENXUTO: Documentos sem o nó de dados brutos pesados para o arquivo do Cliente
+        # Separação Estrita dos Resumos conforme Regra de Negócio
         resumo_docs_enxuto = []
         resumo_docs_completo = []
         
@@ -190,29 +190,18 @@ def handler(event, context):
                 "dados_extraidos_do_documento": campos_brutos
             })
 
-        # 🚀 ESTRUTURA A: Dossiê de Negócio do Cliente (customer_consolidated.json)
+        # 🚀 JSON 1: Dossiê de Negócio Enxuto do Cliente (customer_consolidated.json)
         report_cliente_dossie = {
             "package_id": package_id,
             "status": "COMPLETED",
             "renda_bruta_estimada": scorecard_completo["renda_apurada"],
             "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
-            "sumario_financeiro": {
-                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
-            },
-            "auditoria": {
-                "versao_algoritmo_score": "1.0.0",
-                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0",
-                "input_tokens_consumidos": input_t,
-                "output_tokens_consumidos": output_t,
-                "total_tokens_consumidos": input_t + output_t # 🚀 Campo adicionado
-            },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
                 "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
                 "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
                 "score_credito": {
-                    "value": scorecard_completo["valor"], # Compatibilidade front-end
+                    "value": scorecard_completo["valor"],
                     "valor": scorecard_completo["valor"],
                     "motivos": scorecard_completo["detalhes_calculo"],
                     "renda_final": scorecard_completo["renda_apurada"],
@@ -223,16 +212,25 @@ def handler(event, context):
             "documentos_analisados": resumo_docs_enxuto
         }
 
-        # 🚀 ESTRUTURA B: Junção Mestre Completa (output.json na pasta de pacotes)
+        # 🚀 JSON 2: Pacote Mestre Completo (output.json)
         pacote_completo_json = {
             **report_cliente_dossie,
-            "sistema": json_base_lote.get("sistema", {}),
+            "sistema": {
+                "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
+                "processamento": {
+                    "status": "processado",
+                    "modelo_utilizado": "Amazon Nova Pro",
+                    "bda_project_arn": json_base_lote.get("sistema", {}).get("processamento", {}).get("bda_project_arn"),
+                    "quantidade_tokens": {
+                        "input_tokens": input_t,
+                        "output_tokens": output_t,
+                        "total_tokens": input_t + output_t # 🚀 Consolidado de tokens totais unificado
+                    },
+                    "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
+                },
+                "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
+            },
             "documentos_analisados": resumo_docs_completo
-        }
-        pacote_completo_json["sistema"]["processamento"]["quantidade_tokens"] = {
-            "input_tokens": input_t,
-            "output_tokens": output_t,
-            "total_tokens": input_t + output_t
         }
 
         s3_client.put_object(
