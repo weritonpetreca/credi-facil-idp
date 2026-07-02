@@ -141,23 +141,30 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def extrair_confiancas_explainability(bda_json: dict) -> dict:
-    """Lê as confianças reais por campo do nó explainability_info do BDA."""
+    """
+    Lê as confianças reais por campo do nó explainability_info do BDA.
+    Formato real (02/07/2026): List contendo um dict com chaves dos campos.
+    """
     exp = bda_json.get("explainability_info", {})
     resultado = {}
     
-    if isinstance(exp, dict):
-        for campo, dados in exp.items():
+    # Normaliza o tratamento para aceitar a lista de dicts vinda do log real
+    lista_dicts = []
+    if isinstance(exp, list):
+        for item in exp:
+            if isinstance(item, dict):
+                lista_dicts.append(item)
+    elif isinstance(exp, dict):
+        lista_dicts.append(exp)
+        
+    # Extrai o score de acurácia de cada campo localizado
+    for d in lista_dicts:
+        for campo, dados in d.items():
             if isinstance(dados, dict):
                 conf = dados.get("confidence") or dados.get("confidence_score") or dados.get("score")
                 if conf is not None:
                     resultado[campo] = float(conf)
-    elif isinstance(exp, list):
-        for item in exp:
-            if isinstance(item, dict):
-                nome = item.get("label") or item.get("name") or item.get("field")
-                conf = item.get("confidence") or item.get("confidence_score")
-                if nome and conf is not None:
-                    resultado[nome] = float(conf)
+                    
     return resultado
 
 def preencher_template_com_bda(template: dict, inference_result: dict) -> tuple[dict, list]:

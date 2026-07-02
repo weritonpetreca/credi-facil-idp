@@ -18,7 +18,10 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
 }
 
 def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
-    """Lê a confiança real e valor do campo baseado no design unificado do AWS BDA (02/07/2026)."""
+    """
+    Lê confiança e valor de um campo do BDA custom blueprint output
+    casando com o formato de lista de dicionários verificado em produção.
+    """
     campo_norm = campo_canonico.lower().replace("_", "").replace(".", "").replace("$", "")
     inference_result = bda_json.get("inference_result", {})
     
@@ -31,31 +34,41 @@ def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
             break
             
     if valor_encontrado is None:
+        # Campo ausente no inference_result
         return -1.0, ""
     if not valor_encontrado or valor_encontrado.lower() == "none":
+        # Campo vazio
         return 0.0, ""
         
     exp_info = bda_json.get("explainability_info", {})
     
-    # Formato A: dicionário estruturado por chave
-    if isinstance(exp_info, dict) and chave_original in exp_info:
-        dados_exp = exp_info[chave_original]
-        if isinstance(dados_exp, dict):
-            conf = dados_exp.get("confidence") or dados_exp.get("confidence_score") or dados_exp.get("score")
-            if conf is not None:
-                return float(conf), valor_encontrado
-                
-    # Formato B: lista de objetos de explainability
+    # Normalização idêntica para varredura de segurança
+    lista_dicts = []
     if isinstance(exp_info, list):
         for item in exp_info:
             if isinstance(item, dict):
-                nome = (item.get("label") or item.get("name") or item.get("field") or "").lower().replace("_", "")
-                if nome == campo_norm:
-                    conf = item.get("confidence") or item.get("confidence_score") or item.get("score")
+                lista_dicts.append(item)
+    elif isinstance(exp_info, dict):
+        lista_dicts.append(exp_info)
+        
+    for d in lista_dicts:
+        # 1. Tentativa por match direto de chave original do BDA
+        if chave_original and chave_original in d:
+            dados_exp = d[chave_original]
+            if isinstance(dados_exp, dict):
+                conf = dados_exp.get("confidence") or dados_exp.get("confidence_score")
+                if conf is not None:
+                    return float(conf), valor_encontrado
+                    
+        # 2. Fallback por chave normalizada caso haja divergência de escrita
+        for k_exp, dados_exp in d.items():
+            if k_exp.lower().replace("_", "").replace(".", "").replace("$", "") == campo_norm:
+                if isinstance(dados_exp, dict):
+                    conf = dados_exp.get("confidence") or dados_exp.get("confidence_score")
                     if conf is not None:
                         return float(conf), valor_encontrado
-
-    logger.warning(f"Campo '{campo_canonico}' localizado no inference_result, mas sem meta-dados em explainability_info. Adotando proxy=1.0")
+                        
+    logger.warning(f"Campo '{campo_canonico}' extraído, mas sem metadados em explainability_info. Proxy=1.0")
     return 1.0, valor_encontrado
 
 def handler(event, context):
