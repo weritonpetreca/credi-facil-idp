@@ -179,21 +179,31 @@ def handler(event, context):
         consolidado_json = json.loads(texto_resposta)
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
-        
-        # 🚀 CONSOLIDAÇÃO INTEGRAL: Montagem do Master JSON completo unificado demandado pelo negócio
+
+        # 🚀 CONSOLIDAÇÃO INTEGRAL MASTER: Exposta na raiz para alimentar os gráficos do front-end
         report_final_master = {
             "package_id": package_id,
             "status": "COMPLETED",
+            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
             "auditoria": {
                 "versao_algoritmo_score": "1.0.0",
-                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0",
-                "input_tokens_consumidos": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
-                "output_tokens_consumidos": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0)
+                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0"
             },
-            # 🚀 CORREÇÃO CONTRATO: Objeto mapeado na raiz para renderizar os cards de Renda e Saldo
-            "sumario_financeiro": {
-                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            "sistema": {
+                "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
+                "processamento": {
+                    "status": "processado",
+                    "modelo_utilizado": "Amazon Nova Pro",
+                    "bda_project_arn": json_base_lote.get("sistema", {}).get("processamento", {}).get("bda_project_arn"),
+                    "quantidade_tokens": {
+                        "input_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
+                        "output_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0),
+                        "total_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("total_tokens", 0) + usage_tokens.get("inputTokens", 0) + usage_tokens.get("outputTokens", 0)
+                    },
+                    "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
+                },
+                "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
             },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
@@ -207,7 +217,6 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            # Mantém a cópia íntegra de todos os dados extraídos detalhados dos arquivos individuais
             "documentos_analisados": docs_analisados
         }
 
@@ -224,9 +233,11 @@ def handler(event, context):
         )
 
         return {
-            **event,
-            "cliente": report_final_master["cliente"],
-            "validacao": validacao_data,
+            "package_id": package_id,
+            "user_id": event.get("user_id", "sistema"),
+            "execute_score": True,
+            "bda_output_bucket": bucket,
+            "confianca_geral": 1.0,
             "json_estruturado": report_final_master
         }
 

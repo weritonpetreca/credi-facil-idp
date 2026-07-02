@@ -17,31 +17,21 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
     "pay_stub": ["employer_name", "employee_name", "social_security_number", "taxable_marital_status", "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd", "net_pay_this_period", "federal_income_tax", "social_security_tax", "medicare_tax", "retirement_401k"]
 }
 
-def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
+def obter_confianca_e_valor(bda_json: dict, campo_alvo: str) -> tuple:
+    """Extrai com precisão a confiança óptica e o valor de dentro do nó do Blueprint."""
+    inference_result = bda_json.get("inference_result", {})
     campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
     
-    if isinstance(dados, dict):
-        for k, v in dados.items():
-            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
+    if isinstance(inference_result, dict):
+        for k, v in inference_result.items():
+            k_norm = k.lower().replace("_", "").replace(".", "").replace("$", "")
             if k_norm == campo_norm:
                 if isinstance(v, dict):
-                    conf = float(v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score") or 1.0)
-                    val = str(v.get("value") or v.get("text") or "")
-                    return conf, val
+                    conf = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score") or 1.0
+                    val = v.get("value") or v.get("text") or ""
+                    return float(conf), str(val)
                 else:
                     return 1.0, str(v)
-        
-        for v in dados.values():
-            conf, val = extrair_recursivo_por_chave(v, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
-    elif isinstance(dados, list):
-        for item in dados:
-            conf, val = extrair_recursivo_por_chave(item, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
     return -1.0, ""
 
 def handler(event, context):
@@ -79,10 +69,9 @@ def handler(event, context):
             bda_json = json.loads(s3_response["Body"].read().decode("utf-8"))
 
             campos_criticos = CAMPOS_CRITICOS_POR_SUBTIPO.get(subtipo, [])
-            inference_data = bda_json.get("inference_result", {})
 
             for campo in campos_criticos:
-                confidence, valor_extraido = extrair_recursivo_por_chave(inference_data, campo)
+                confidence, valor_extraido = obter_confianca_e_valor(bda_json, campo)
                 
                 campo_falho = False
                 motivo = ""

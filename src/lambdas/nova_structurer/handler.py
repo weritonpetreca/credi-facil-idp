@@ -143,22 +143,16 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def calcular_media_real_inference(bda_json: dict) -> float:
-    """Varre de forma exaustiva qualquer chave numérica de acurácia no JSON do BDA."""
+    """Calcula a média real varrendo os sub-objetos de propriedade dentro de inference_result."""
     confiancas = []
-    
-    def varrer(no):
-        if isinstance(no, dict):
-            for k in ["confidence", "confidenceScore", "confidence_score", "score"]:
-                if k in no and isinstance(no[k], (int, float)):
-                    confiancas.append(float(no[k]))
-            for v in no.values():
-                varrer(v)
-        elif isinstance(no, list):
-            for item in no:
-                varrer(item)
-                
-    varrer(bda_json)
-    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8150
+    inf_res = bda_json.get("inference_result", {})
+    if isinstance(inf_res, dict):
+        for v in inf_res.values():
+            if isinstance(v, dict):
+                score = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score")
+                if score is not None:
+                    confiancas.append(float(score))
+    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 1.0000
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
@@ -183,48 +177,43 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         inf_res = bda_json.get("inference_result", {})
         if isinstance(inf_res, dict):
             for k, v in inf_res.items():
-                fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v)
-
-    # Preenchimento Recursivo Base
-    def preencher_dicionario_recursivo(dicionario_alvo):
-        if isinstance(dicionario_alvo, dict):
-            for k_template, v_template in dicionario_alvo.items():
-                if isinstance(v_template, (dict, list)):
-                    preencher_dicionario_recursivo(v_template)
+                if isinstance(v, dict):
+                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v.get("value") or v.get("text") or "")
                 else:
-                    chave_limpa = k_template.lower().replace("_", "").replace(" ", "")
-                    if chave_limpa in fields_planos_bda:
-                        dicionario_alvo[k_template] = fields_planos_bda[chave_limpa]
-                    else:
-                        for k_ia, v_ia in raw_fields.items():
-                            if k_ia.lower().replace(" ", "").replace("_", "") == chave_limpa:
-                                dicionario_alvo[k_template] = v_ia
-                                break
-        elif isinstance(dicionario_alvo, list):
-            for item in dicionario_alvo:
-                preencher_dicionario_recursivo(item)
+                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v)
 
-    preencher_dicionario_recursivo(template_final)
+    # 1. Alimenta o template base plano
+    for chave_template in template_final.keys():
+        if isinstance(template_final[chave_template], (dict, list)):
+            continue
+        chave_limpa = chave_template.lower().replace(".", "").replace("_", "")
+        valor_encontrado = fields_planos_bda.get(chave_limpa)
+        if not valor_encontrado:
+            for k_ia, v_ia in raw_fields.items():
+                if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == chave_limpa:
+                    valor_encontrado = v_ia
+                    break
+        if valor_encontrado is not None:
+            template_final[chave_template] = valor_encontrado
 
-    # 🚀 MAPEADOR EXPLÍCITO DE CONTRATO ANINHADO PARA O PAY_STUB
+    # 🚀 MAPEAMENTO EXPLÍCITO DE SUB-ESTRUTURAS DO HOLERITE (Evita valores null)
     if subtipo.lower() == "pay_stub":
-        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period")
-        val_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd")
-        if val_gross or val_ytd:
-            for e in template_final.get("earnings", []):
-                if "gross_pay" in e:
-                    if val_gross: e["gross_pay"]["this_period"] = val_gross
-                    if val_ytd: e["gross_pay"]["year_to_date"] = val_ytd
+        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period") or raw_fields.get("gross_pay", {}).get("this_period")
+        val_gross_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd") or raw_fields.get("gross_pay", {}).get("year_to_date")
+        
+        for e in template_final.get("earnings", []):
+            if "gross_pay" in e:
+                if val_gross: e["gross_pay"]["this_period"] = val_gross
+                if val_gross_ytd: e["gross_pay"]["year_to_date"] = val_gross_ytd
+            elif e.get("description") == "regular":
+                if val_gross: e["this_period"] = val_gross
+                if val_gross_ytd: e["year_to_date"] = val_gross_ytd
 
-        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period")
+        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period") or raw_fields.get("net_pay", {}).get("this_period")
         if val_net:
             template_final["net_pay"]["this_period"] = val_net
 
-        mapeamento_deducoes = {
-            "federalincometax": "Federal Income tax",
-            "socialsecuritytax": "Social Security Tax",
-            "medicaretax": "Medicare Tax"
-        }
+        mapeamento_deducoes = {"federalincometax": "Federal Income tax", "socialsecuritytax": "Social Security Tax", "medicaretax": "Medicare Tax"}
         for k_flat, desc in mapeamento_deducoes.items():
             val_deducao = fields_planos_bda.get(k_flat) or raw_fields.get(k_flat)
             if val_deducao and "deductions" in template_final:
@@ -232,6 +221,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                     if item["description"].lower() == desc.lower():
                         item["this_period"] = val_deducao
 
+    is_human_override = False
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
             if "__" in composite_key:
@@ -246,8 +236,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                             for item in d_busca: injetar_correcao_recursiva(item)
                     injetar_correcao_recursiva(template_final)
 
-    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.8500
-    is_human_override = False
+    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 1.0000
 
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     if media_real_bda < 0.80 and not is_human_override:
