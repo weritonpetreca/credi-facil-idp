@@ -26,6 +26,38 @@ def safe_float(val) -> float:
     except:
         return 0.0
 
+def extrair_renda_documento(campos: dict, tipo: str) -> float:
+    """
+    Extrai a renda do documento respeitando a estrutura real de cada template.
+    Navega por chaves aninhadas caso o documento seja um PayStub.
+    """
+    tipo_upper = tipo.upper()
+    
+    if tipo_upper in ["COMPROVANTE_RENDA", "PAY_STUB", "COMPROVANTE_COMPLEMENTAR", "PAYROLL_CHECK"]:
+        # PayStub: net_pay é um dict aninhado {"this_period": "..."}
+        net_pay = campos.get("net_pay")
+        if isinstance(net_pay, dict):
+            v = net_pay.get("this_period") or net_pay.get("year_to_date")
+            if v: return safe_float(v)
+        
+        # Fallback PayStub: gross_pay dentro de earnings[]
+        for earning in campos.get("earnings", []):
+            if isinstance(earning, dict) and "gross_pay" in earning:
+                gp = earning["gross_pay"]
+                if isinstance(gp, dict):
+                    v = gp.get("this_period")
+                    if v: return safe_float(v)
+        
+        # PayrollCheck: amount_numeric no nível raiz
+        v = campos.get("amount_numeric")
+        if v: return safe_float(v)
+    
+    elif tipo_upper in ["W2_TAX_FORM", "COMPROVANTE_RENDA"]:
+        v = campos.get("wages_tips_other_compensation")
+        if v: return safe_float(v)
+    
+    return 0.0
+
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
     """Aplica o algoritmo determinístico de Application Scorecard retornando os motivos reais."""
     score_calculado = 300
@@ -46,13 +78,14 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     
     for doc in docs_analisados:
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-        # 🚀 CORREÇÃO CRÍTICA: Lê do contrato correto gerado pelo Nova Structurer
         campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
         
-        if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"]:
-            v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation")
-            renda_maxima = max(renda_maxima, safe_float(v_renda))
-        elif tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
+        # Utiliza a nova função de travessia estrutural para renda
+        renda_doc = extrair_renda_documento(campos, tipo)
+        renda_maxima = max(renda_maxima, renda_doc)
+
+        # Extrato Bancário continua com leitura de raiz
+        if tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
             v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
             saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
 
@@ -87,12 +120,12 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     }
 
 def handler(event, context):
-    """Handler AWS Lambda focado exclusivamente na consolidação e cálculo de Score do Proponente."""
+    """Handler AWS Lambda focado na consolidação estruturada e cálculo de Score do Proponente."""
     try:
         package_id = event.get("package_id")
         bucket = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         
-        logger.info(f"Iniciando consolidação analítica de score sob demanda para o pacote {package_id}")
+        logger.info(f"Iniciando consolidação analítica de score para o pacote {package_id}")
 
         json_base_lote = event.get("json_estruturado")
         if not json_base_lote:
@@ -104,7 +137,6 @@ def handler(event, context):
         docs_analisados = json_base_lote.get("documentos_analisados", [])
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
-        # 🎯 AJUSTE DE DIRETRIZ: Introduzido critérios estritos de negação por ausência de dados
         prompt_consolidacao = f"""
         Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada do proponente mestre.
 
@@ -156,14 +188,30 @@ def handler(event, context):
 
         consolidado_json = json.loads(texto_resposta)
 
-        # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Subtrai automaticamente os 50 pontos caso a data caia como false)
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # Montagem do Dossiê de Auditoria Real unificado para o Front-end
+        # Cria um resumo leve para o Dossiê Executivo, sem carregar os dados brutos de cada documento
+        resumo_docs = [
+            {
+                "arquivo": doc.get("arquivo_original", ""),
+                "tipo": doc.get("tipo_documento", ""),
+                "subtipo": doc.get("subtipo_documento", ""),
+                "status": doc.get("confiabilidade_extracao", {}).get("status_extracao", ""),
+                "confianca_media": doc.get("confiabilidade_extracao", {}).get("confianca_media", "0.0"),
+                "s3_key_resultado": doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", "")
+            }
+            for doc in docs_analisados
+        ]
+
+        # Montagem do Dossiê de Auditoria Executivo (Lean JSON)
         report_final = {
             "package_id": package_id,
             "status": "COMPLETED",
+            "auditoria": {
+                "versao_algoritmo_score": "1.0.0",
+                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0"
+            },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
                 "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
@@ -176,7 +224,7 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": docs_analisados
+            "documentos_analisados": resumo_docs
         }
 
         s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
