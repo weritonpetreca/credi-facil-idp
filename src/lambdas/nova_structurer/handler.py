@@ -140,15 +140,18 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
+# ──────────────────────────────────────────────────────────────────────
+# NOVAS FUNÇÕES DO PASSO 1 (ADAPTADAS COM PRECISÃO AO SEU FORMATO DE LOG REAL)
+# ──────────────────────────────────────────────────────────────────────
+
 def extrair_confiancas_explainability(bda_json: dict) -> dict:
     """
     Lê as confianças reais por campo do nó explainability_info do BDA.
-    Formato real (02/07/2026): List contendo um dict com chaves dos campos.
+    Formato real auditado: List de Dict contendo objetos com chaves de confiança.
     """
     exp = bda_json.get("explainability_info", {})
     resultado = {}
     
-    # Normaliza o tratamento para aceitar a lista de dicts vinda do log real
     lista_dicts = []
     if isinstance(exp, list):
         for item in exp:
@@ -157,9 +160,8 @@ def extrair_confiancas_explainability(bda_json: dict) -> dict:
     elif isinstance(exp, dict):
         lista_dicts.append(exp)
         
-    # Extrai o score de acurácia de cada campo localizado
-    for d in lista_dicts:
-        for campo, dados in d.items():
+    for item in lista_dicts:
+        for campo, dados in item.items():
             if isinstance(dados, dict):
                 conf = dados.get("confidence") or dados.get("confidence_score") or dados.get("score")
                 if conf is not None:
@@ -168,31 +170,39 @@ def extrair_confiancas_explainability(bda_json: dict) -> dict:
     return resultado
 
 def preencher_template_com_bda(template: dict, inference_result: dict) -> tuple[dict, list]:
-    """Preenche o blueprint diretamente a partir do inference_result plano da AWS."""
+    """
+    Preenche o template diretamente do inference_result plano do BDA.
+    Faz o mapeamento inteligente de chaves flat para subestruturas complexas.
+    """
     template_preenchido = json.loads(json.dumps(template))
     campos_sem_valor = []
     
-    for campo_template in template_preenchido.keys():
-        if isinstance(template_preenchido[campo_template], (dict, list)):
-            continue
-            
-        if campo_template in inference_result:
-            valor = inference_result[campo_template]
-            if valor is not None and str(valor).strip():
-                template_preenchido[campo_template] = str(valor)
-                continue
+    ir_normalizado = {k.lower().replace("_", "").replace(".", "").replace(" ", ""): v for k, v in inference_result.items()}
+    
+    def preencher_recursivo(sub_template, chaves_vazias, prefixo=""):
+        if isinstance(sub_template, dict):
+            for k, v in sub_template.items():
+                chave_composta = f"{prefixo}_{k}" if prefixo else k
+                k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "")
+                kc_norm = chave_composta.lower().replace("_", "").replace(".", "").replace(" ", "")
                 
-        campo_norm = campo_template.lower().replace("_", "").replace(".", "")
-        encontrado = False
-        for k_bda, v_bda in inference_result.items():
-            if k_bda.lower().replace("_", "").replace(".", "") == campo_norm:
-                if v_bda is not None and str(v_bda).strip():
-                    template_preenchido[campo_template] = str(v_bda)
-                    encontrado = True
-                    break
-        if not encontrado:
-            campos_sem_valor.append(campo_template)
-            
+                if isinstance(v, (dict, list)):
+                    preencher_recursivo(v, chaves_vazias, chave_composta)
+                else:
+                    valor = inference_result.get(chave_composta) or inference_result.get(k)
+                    if valor is None:
+                        valor = ir_normalizado.get(kc_norm) or ir_normalizado.get(k_norm)
+                        
+                    if valor is not None and str(valor).strip() and str(valor).lower() != "none":
+                        sub_template[k] = str(valor)
+                    else:
+                        chaves_vazias.append(chave_composta)
+        elif isinstance(sub_template, list):
+            for item in sub_template:
+                if isinstance(item, (dict, list)):
+                    preencher_recursivo(item, chaves_vazias, prefixo)
+                    
+    preencher_recursivo(template_preenchido, campos_sem_valor)
     return template_preenchido, campos_sem_valor
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
@@ -208,28 +218,44 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
     template_base = MAPA_TEMPLATES.get(subtipo.lower(), {})
     inference_result = (bda_json or {}).get("inference_result", {})
     
-    # Camada 1: Cópia Direta BDA (Mapeamento Confiável Sem Perda por LLM)
+    # ─────────────────────────────────────────────
+    # CAMADA 1: Preenchimento direto do BDA (Cópia Seca Sem LLM)
+    # ─────────────────────────────────────────────
     template_final, campos_sem_valor = preencher_template_com_bda(template_base, inference_result)
     
-    # Camada 2: Fallback Inteligente via Nova Lite (Apenas para lacunas do BDA)
+    # ─────────────────────────────────────────────
+    # CAMADA 2: Complementação via Nova Lite (Fallback de lacunas)
+    # ─────────────────────────────────────────────
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields_ia = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    if isinstance(raw_fields_ia, str): 
+    if isinstance(raw_fields_ia, str):
         raw_fields_ia = json.loads(raw_fields_ia)
         
-    for campo_vazio in campos_sem_valor:
-        for k_ia, v_ia in raw_fields_ia.items():
-            if k_ia.lower().replace(" ", "_").replace(".", "") == campo_vazio.lower().replace(".", ""):
-                if v_ia is not None:
-                    template_final[campo_vazio] = v_ia
-                break
-
-    # Resgate de Subestruturas Hierárquicas Complexas geradas pela IA
+    def complementar_recursivo(sub_template, prefixo=""):
+        if isinstance(sub_template, dict):
+            for k, v in sub_template.items():
+                chave_composta = f"{prefixo}_{k}" if prefixo else k
+                if isinstance(v, (dict, list)):
+                    complementar_recursivo(v, chave_composta)
+                elif v is None or v == "":
+                    for k_ia, v_ia in raw_fields_ia.items():
+                        k_ia_norm = k_ia.lower().replace(" ", "_").replace(".", "")
+                        if k_ia_norm in [k.lower(), chave_composta.lower()]:
+                            if v_ia is not None and not isinstance(v_ia, (dict, list)):
+                                sub_template[k] = v_ia
+                                break
+        elif isinstance(sub_template, list):
+            for item in sub_template:
+                complementar_recursivo(item, prefixo)
+                
+    complementar_recursivo(template_final)
+    
+    # Preserva objetos e sub-listas prontas injetadas explicitamente pela IA
     for k_complex in ["exemptions_or_allowances", "earnings", "deductions", "net_pay", "taxable_wages", "other_benefits_and_information", "important_notes", "your_details", "your_account_balance", "your_account_valuation", "account_value", "your_insurance_details", "primary_applicant", "co_applicant"]:
         if k_complex in template_final and k_complex in raw_fields_ia and raw_fields_ia[k_complex]:
             template_final[k_complex] = raw_fields_ia[k_complex]
 
-    # Mapeador Manual Explicito de campos planos do BDA para nós internos do PayStub
+    # Mapeador de normalização de campos do Holerite para injeção forçada nos nós corretos
     if subtipo.lower() == "pay_stub":
         fields_planos_bda = {k.lower().replace("_", ""): str(v) for k, v in inference_result.items()}
         val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields_ia.get("gross_pay_this_period")
@@ -244,15 +270,9 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields_ia.get("net_pay_this_period")
         if val_net: template_final["net_pay"]["this_period"] = val_net
 
-        mapeamento_deducoes = {"federalincometax": "Federal Income tax", "socialsecuritytax": "Social Security Tax", "medicaretax": "Medicare Tax"}
-        for k_flat, desc in mapeamento_deducoes.items():
-            val_deducao = fields_planos_bda.get(k_flat) or raw_fields_ia.get(k_flat)
-            if val_deducao and "deductions" in template_final:
-                for item in template_final["deductions"].get("statutory", []):
-                    if item["description"].lower() == desc.lower():
-                        item["this_period"] = val_deducao
-
-    # Camada 3: Mesa de Revisão Humana (Sobrescrita de Maior Autoridade)
+    # ─────────────────────────────────────────────
+    # CAMADA 3: Mesa de Revisão Humana (Autoridade Máxima)
+    # ─────────────────────────────────────────────
     is_human_override = False
     campos_corrigidos = []
     if correcoes_humanas:
@@ -263,39 +283,73 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                     def aplicar_revisao(d_busca):
                         nonlocal is_human_override
                         if isinstance(d_busca, dict):
-                            if field_part in d_busca: 
+                            if field_part in d_busca:
                                 d_busca[field_part] = valor_corrigido
                                 is_human_override = True
                                 campos_corrigidos.append(field_part)
-                            for val in d_busca.values(): aplicar_revisao(val)
+                            for val in d_busca.values():
+                                aplicar_revisao(val)
                         elif isinstance(d_busca, list):
-                            for item in d_busca: aplicar_revisao(item)
+                            for item in d_busca:
+                                aplicar_revisao(item)
                     aplicar_revisao(template_final)
 
-    # Cálculo da Acurácia Real via Meta-Dados de Explainability
+    # ─────────────────────────────────────────────
+    # PARSER DE CONFIANÇA REAL: Explainability List do BDA
+    # ─────────────────────────────────────────────
     confiancas_por_campo = extrair_confiancas_explainability(bda_json or {})
-    campos_bda_preenchidos = set(inference_result.keys()) & set(template_final.keys())
+    campos_bda_preenchidos = set(inference_result.keys())
     
     if confiancas_por_campo:
         confs = [confiancas_por_campo[c] for c in campos_bda_preenchidos if c in confiancas_por_campo]
         media_real = round(sum(confs) / len(confs), 4) if confs else 0.8850
     else:
-        campos_preenchidos = sum(1 for v in template_final.values() if v is not None and v != "")
-        total = max(len(template_final), 1)
-        media_real = round(campos_preenchidos / total, 4)
-
+        def contar_preenchidos(d):
+            total, preenchidos = 0, 0
+            if isinstance(d, dict):
+                for v in d.values():
+                    if isinstance(v, (dict, list)):
+                        t, p = contar_preenchidos(v)
+                        total += t; preenchidos += p
+                    else:
+                        total += 1
+                        if v is not None and v != "": preenchidos += 1
+            elif isinstance(d, list):
+                for item in d:
+                    t, p = contar_preenchidos(item)
+                    total += t; preenchidos += p
+            return total, preenchidos
+        t_c, p_c = contar_preenchidos(template_final)
+        media_real = round(p_c / max(t_c, 1), 4)
+        
     if is_human_override:
-        media_real = 1.0000
+        media_real = 1.0
 
-    campos_criticos_nulos = [c for c in ["payee_name", "pay_date", "amount_numeric", "employee_name", "net_pay", "pay_period_ending", "account_holder_name", "closing_balance"] if c in template_final and (template_final[c] is None or template_final[c] == "")]
-    status_extracao = "parcial" if campos_criticos_nulos and not is_human_override else "sucesso"
+    def buscar_valor_campo(d, campo_alvo):
+        if isinstance(d, dict):
+            if campo_alvo in d: return d[campo_alvo]
+            for v in d.values():
+                res = buscar_valor_campo(v, campo_alvo)
+                if res is not None: return res
+        elif isinstance(d, list):
+            for item in d:
+                res = buscar_valor_campo(item, campo_alvo)
+                if res is not None: return res
+        return None
 
-    alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
+    campos_criticos = ["payee_name", "pay_date", "amount_numeric", "employee_name", "this_period", "pay_period_ending", "account_holder_name", "closing_balance"]
+    campos_criticos_nulos = [c for c in campos_criticos if buscar_valor_campo(template_final, c) in (None, "")]
+    
+    status_extracao = "sucesso"
+    if campos_criticos_nulos and not is_human_override:
+        status_extracao = "parcial"
+        
+    alertas = list(payload_ia.get("alertas_inconsistencias", []))
     if campos_sem_valor:
-        alertas_observacoes.append(f"Campos estruturais vazios na extração: {', '.join(campos_sem_valor[:3])}")
+        alertas.append(f"Campos estruturais vazios na extração: {', '.join(campos_sem_valor[:3])}")
     if campos_corrigidos:
-        alertas_observacoes.append(f"Campos retificados manualmente: {', '.join(campos_corrigidos)}")
-
+        alertas.append(f"Campos retificados manualmente: {', '.join(campos_corrigidos)}")
+        
     return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
@@ -314,7 +368,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             "status_extracao": status_extracao,
             "confianca_media": f"{media_real:.4f}",
             "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
-            "observacoes": alertas_observacoes
+            "observacoes": alertas
         }
     }
 
@@ -335,16 +389,6 @@ def handler(event, context):
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        # 🚀 PASSO 0 — Monitoramento Estrutural do Explainability (Clau)
-        if "explainability_info" in json_bruto:
-            exp_info = json_bruto["explainability_info"]
-            logger.info(f"==== EXPLAINABILITY_INFO TIPO: {type(exp_info).__name__} ====")
-            logger.info(f"EXPLAINABILITY_INFO CONTEÚDO: {json.dumps(exp_info, ensure_ascii=False)[:2000]}")
-            if isinstance(exp_info, dict):
-                logger.info(f"EXPLAINABILITY_INFO CHAVES: {list(exp_info.keys())[:20]}")
-            elif isinstance(exp_info, list) and exp_info:
-                logger.info(f"EXPLAINABILITY_INFO PRIMEIRO ITEM: {json.dumps(exp_info[0], ensure_ascii=False)}")
-
         texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
         json_higienizado = limpar_ruido_recursivo(json_bruto)
 
@@ -359,6 +403,7 @@ def handler(event, context):
             if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
                 correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
                 correcoes_humanas = json.loads(correcoes_json)
+                
                 correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
                 if correcoes_especificas:
                     string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
