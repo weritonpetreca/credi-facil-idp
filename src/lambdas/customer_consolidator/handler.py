@@ -126,14 +126,14 @@ def handler(event, context):
         
         - VALIDAÇÃO ESTRITA DE CONSISTÊNCIA CADASTRAL (REGRAS DE BOOLEANOS):
           * 'nome_consistente_entre_documentos': true se o nome completo do proponente for idêntico em todos os arquivos onde ele foi localizado.
-          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false. Nunca alucine consistência se o dado não existe.
+          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false.
 
-        Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo antes ou depois:
+        Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo:
         {{
           "cliente": {{
             "nome": "NOME COMPLETO EM CAIXA ALTA",
             "documento_identificacao": "NUMERO",
-            "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico base do parecer de crédito." }}
+            "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico." }}
           }},
           "validacao": {{
             "nome_consistente_entre_documentos": true,
@@ -167,28 +167,33 @@ def handler(event, context):
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # Reconstrói os documentos analisados injetando o padrão esperado downstream
-        resumo_docs = []
+        input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
+        output_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0)
+
+        # 🚀 FILTRO ENXUTO: Documentos sem o nó de dados brutos pesados para o arquivo do Cliente
+        resumo_docs_enxuto = []
+        resumo_docs_completo = []
+        
         for doc in docs_analisados:
-            resumo_docs.append({
+            campos_brutos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
+            resumo_docs_enxuto.append({
                 "arquivo_original": doc.get("arquivo_original", ""),
                 "tipo_documento": doc.get("tipo_documento", ""),
                 "subtipo_documento": doc.get("subtipo_documento", ""),
                 "status_extracao": doc.get("status_extracao", "sucesso"),
                 "confianca_media": float(doc.get("confianca_media", 1.0000)),
-                "s3_key_origem": doc.get("s3_key_origem", ""),
-                "s3_key_resultado": doc.get("s3_key_resultado", ""),
-                "campos_extraidos": doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {},
-                "observacoes": doc.get("observacoes", [])
+                "s3_key_resultado": doc.get("s3_key_resultado", "")
+            })
+            resumo_docs_completo.append({
+                **doc,
+                "campos_extraidos": campos_brutos,
+                "dados_extraidos_do_documento": campos_brutos
             })
 
-        # 🚀 CONSOLIDAÇÃO INTEGRAL MASTER: Exposta na raiz absoluta para alimentar os gráficos
-        report_final_master = {
+        # 🚀 ESTRUTURA A: Dossiê de Negócio do Cliente (customer_consolidated.json)
+        report_cliente_dossie = {
             "package_id": package_id,
             "status": "COMPLETED",
-            "execute_score": True,
-            "bda_output_bucket": bucket,
-            "confianca_general": 1,
             "renda_bruta_estimada": scorecard_completo["renda_apurada"],
             "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
             "sumario_financeiro": {
@@ -198,14 +203,16 @@ def handler(event, context):
             "auditoria": {
                 "versao_algoritmo_score": "1.0.0",
                 "modelo_ia_consolidacao": "amazon.nova-pro-v1:0",
-                "input_tokens_consumidos": int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0) if json_base_lote else usage_tokens.get("inputTokens", 0),
-                "output_tokens_consumidos": int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0) if json_base_lote else usage_tokens.get("outputTokens", 0)
+                "input_tokens_consumidos": input_t,
+                "output_tokens_consumidos": output_t,
+                "total_tokens_consumidos": input_t + output_t # 🚀 Campo adicionado
             },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
                 "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
                 "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
                 "score_credito": {
+                    "value": scorecard_completo["valor"], # Compatibilidade front-end
                     "valor": scorecard_completo["valor"],
                     "motivos": scorecard_completo["detalhes_calculo"],
                     "renda_final": scorecard_completo["renda_apurada"],
@@ -213,17 +220,28 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": resumo_docs
+            "documentos_analisados": resumo_docs_enxuto
         }
 
-        # Sincroniza o arquivo mestre unificado em ambos os caminhos do ecossistema S3
+        # 🚀 ESTRUTURA B: Junção Mestre Completa (output.json na pasta de pacotes)
+        pacote_completo_json = {
+            **report_cliente_dossie,
+            "sistema": json_base_lote.get("sistema", {}),
+            "documentos_analisados": resumo_docs_completo
+        }
+        pacote_completo_json["sistema"]["processamento"]["quantidade_tokens"] = {
+            "input_tokens": input_t,
+            "output_tokens": output_t,
+            "total_tokens": input_t + output_t
+        }
+
         s3_client.put_object(
             Bucket=bucket, Key=f"results/clientes/{package_id}/customer_consolidated.json",
-            Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
+            Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
         )
         s3_client.put_object(
             Bucket=bucket, Key=f"results/packages/{package_id}/output.json",
-            Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
+            Body=json.dumps(pacote_completo_json, ensure_ascii=False), ContentType="application/json"
         )
 
         return {
@@ -232,7 +250,7 @@ def handler(event, context):
             "execute_score": True,
             "bda_output_bucket": bucket,
             "confianca_general": 1,
-            "json_estruturado": report_final_master
+            "json_estruturado": pacote_completo_json
         }
 
     except Exception as e:

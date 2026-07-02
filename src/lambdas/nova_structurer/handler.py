@@ -141,15 +141,21 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def calcular_media_real_inference(bda_json: dict) -> float:
-    """Calcula a média real varrendo os sub-objetos de propriedade dentro de inference_result."""
+    """Calcula a média real varrendo de forma exaustiva qualquer representação de confiança no JSON."""
     confiancas = []
-    inf_res = bda_json.get("inference_result", {})
-    if isinstance(inf_res, dict):
-        for v in inf_res.values():
-            if isinstance(v, dict):
-                score = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score")
-                if score is not None:
-                    confiancas.append(float(score))
+    
+    def varrer_no(no):
+        if isinstance(no, dict):
+            for k in ["confidence", "confidenceScore", "confidence_score", "score"]:
+                if k in no and isinstance(no[k], (int, float)):
+                    confiancas.append(float(no[k]))
+            for v in no.values():
+                varrer_no(v)
+        elif isinstance(no, list):
+            for item in no:
+                varrer_no(item)
+                
+    varrer_no(bda_json)
     return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8500
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
@@ -167,7 +173,8 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
     
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
+    if isinstance(raw_fields, str): 
+        raw_fields = json.loads(raw_fields)
         
     fields_planos_bda = {}
     if bda_json and "inference_result" in bda_json:
@@ -175,53 +182,50 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         if isinstance(inf_res, dict):
             for k, v in inf_res.items():
                 if isinstance(v, dict):
-                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v.get("value") or v.get("text") or "")
+                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v.get("value") or v.get("text") or "")
                 else:
-                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "")] = str(v)
+                    fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v)
 
-    # Mapeamento recursivo profundo para preencher dicionários e arrays internos
-    def preencher_recursivo(d_alvo):
-        if isinstance(d_alvo, dict):
-            for k_temp, v_temp in d_alvo.items():
-                if isinstance(v_temp, (dict, list)):
-                    preencher_recursivo(v_temp)
-                else:
-                    ch_limpa = k_temp.lower().replace("_", "").replace(" ", "").replace(".", "")
-                    val = fields_planos_bda.get(ch_limpa)
-                    if not val:
-                        for k_ia, v_ia in raw_fields.items():
-                            if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == ch_limpa:
-                                val = v_ia
-                                break
-                    if val is not None:
-                        d_alvo[k_temp] = val
-        elif isinstance(d_alvo, list):
-            for item in d_alvo:
-                preencher_recursivo(item)
+    # 1. Preenche chaves de primeiro nível (Strings/Planas)
+    for chave_template in template_final.keys():
+        if isinstance(template_final[chave_template], (dict, list)):
+            continue
+        chave_limpa = chave_template.lower().replace(".", "").replace("_", "").replace(" ", "")
+        valor_encontrado = fields_planos_bda.get(chave_limpa)
+        if not valor_encontrado:
+            for k_ia, v_ia in raw_fields.items():
+                if k_ia.lower().replace(" ", "").replace("_", "").replace(".", "") == chave_limpa:
+                    if not isinstance(v_ia, (dict, list)):
+                        valor_encontrado = v_ia
+                    break
+        if valor_encontrado is not None:
+            template_final[chave_template] = valor_encontrado
 
-    preencher_recursivo(template_final)
+    # 2. Preserva e mescla estruturas complexas aninhadas extraídas pela IA
+    for k_complex in ["exemptions_or_allowances", "earnings", "deductions", "net_pay", "taxable_wages", "other_benefits_and_information", "important_notes", "your_details", "your_account_balance", "your_account_valuation", "account_value", "your_insurance_details", "primary_applicant", "co_applicant"]:
+        if k_complex in template_final and k_complex in raw_fields:
+            if raw_fields[k_complex]:
+                template_final[k_complex] = raw_fields[k_complex]
 
-    # Injeção explícita de subcontratos críticos do PayStub e Check para evitar nulos residuais
+    # 3. Mapeador explícito de propriedades estruturais planas do BDA sobre os nós complexos do PayStub
     if subtipo.lower() == "pay_stub":
-        val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period")
-        val_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd")
+        val_gross = fields_planos_bda.get("grosspaythisperiod")
+        val_gross_ytd = fields_planos_bda.get("grosspayytd")
         for e in template_final.get("earnings", []):
             if "gross_pay" in e:
                 if val_gross: e["gross_pay"]["this_period"] = val_gross
-                if val_ytd: e["gross_pay"]["year_to_date"] = val_ytd
+                if val_gross_ytd: e["gross_pay"]["year_to_date"] = val_gross_ytd
             elif e.get("description") == "regular":
                 if val_gross: e["this_period"] = val_gross
-                if val_ytd: e["year_to_date"] = val_ytd
-        val_net = fields_planos_bda.get("netpaythisperiod") or raw_fields.get("net_pay_this_period")
+                if val_gross_ytd: e["year_to_date"] = val_gross_ytd
+        val_net = fields_planos_bda.get("netpaythisperiod")
         if val_net: template_final["net_pay"]["this_period"] = val_net
 
-    is_human_override = False
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
             if "__" in composite_key:
                 file_part, field_part = composite_key.split("__", 1)
                 if file_part == arquivo:
-                    is_human_override = True
                     def injetar_correcao(d_busca):
                         if isinstance(d_busca, dict):
                             if field_part in d_busca: d_busca[field_part] = valor_corrigido
@@ -230,14 +234,15 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                             for item in d_busca: injetar_correcao(item)
                     injetar_correcao(template_final)
 
-    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.9500
+    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.8500
+    is_human_override = False
 
-    # Povoamento rico de observações em caso de desvios cadastrais ou ópticos
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
-    if media_real_bda < 0.80 and not is_human_override:
-        alertas_observacoes.append(f"Alerta de leitura óptica: Confiança média de caracteres baixa ({media_real_bda:.2%}).")
-    if is_human_override:
-        alertas_observacoes.append("Metadados homologados e retificados manualmente pelo operador humano.")
+    
+    # Rastreia campos que permaneceram nulos para popular as observações
+    campos_ausentes = [k for k, v in template_final.items() if v is None or v == ""]
+    if campos_ausentes:
+        alertas_observacoes.append(f"Campos estruturais ausentes na extração: {', '.join(campos_ausentes[:4])}.")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -255,8 +260,8 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         },
         "confiabilidade_extracao": {
             "status_extracao": "sucesso" if is_human_override or media_real_bda >= 0.8 else "parcial",
-            "confianca_media": "1.0000" if is_human_override else f"{media_real_bda:.4f}",
-            "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
+            "confianca_media": f"{media_real_bda:.4f}",
+            "fonte_confiabilidade": "amazon_bedrock_data_automation",
             "observacoes": alertas_observacoes
         }
     }
