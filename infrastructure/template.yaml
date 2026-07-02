@@ -58,6 +58,8 @@ Resources:
               Action:
                 - bedrock:CreateBlueprint
                 - bedrock:UpdateBlueprint
+                - bedrock:DeleteBlueprint
+                - bedrock:ListBlueprints
                 - bedrock:ListDataAutomationBlueprints
                 - bedrock:UpdateDataAutomationProject
                 - bedrock:GetDataAutomationProject
