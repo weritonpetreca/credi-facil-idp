@@ -41,7 +41,7 @@ def extrair_renda_do_documento(campos: dict, subtipo: str) -> float:
                     
     elif subtipo_lower in ("payroll_check", "comprovante_complementar"):
         v = campos.get("amount_numeric")
-        if v: return safe_float(str(v).replace("$", ""))
+        if v: return safe_float(v)
         
     elif subtipo_lower == "w2_tax_form":
         v = campos.get("wages_tips_other_compensation")
@@ -115,11 +115,37 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     }
 
 def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict, docs_analisados: list) -> dict:
-    """Gera um dossiê executivo limpo focado exclusivamente nas regras de decisão de crédito."""
+    """Gera um dossiê executivo unificado suportando chaves legadas e novas em paralelo (Multi-Contrato)."""
     import datetime
+    
+    # Estrutura base original para o front-end renderizar sem quebras
     return {
         "package_id": package_id,
+        "status": "COMPLETED",
         "versao_algoritmo": "1.0.0",
+        "renda_bruta_estimada": score["renda_maxima"],
+        "saldo_bancario_fechamento": score["saldo_maximo"],
+        
+        # 🚀 RESTAURADO: Mapeamento de 'cliente' original exigido pelo Front-end
+        "cliente": {
+            "nome": consolidado_json.get("cliente", {}).get("nome"),
+            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+            "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
+            "score_credito": {
+                "valor": score["score_calculado"],
+                "motivos": score["motivos_detalhados"],
+                "renda_final": score["renda_maxima"],
+                "liquidez_final": score["saldo_maximo"]
+            }
+        },
+        "validacao": consolidado_json.get("validacao", {}),
+        
+        # 🚀 RESTAURADO: Chave original que o query_handler varre para assinar os links S3
+        "documentos_analisados": docs_analisados,
+        
+        # ──────────────────────────────────────────────────────────────
+        # Chaves Novas do Dossiê do Clau injetadas em paralelo (Compliance)
+        # ──────────────────────────────────────────────────────────────
         "requerente": {
             "nome": consolidado_json.get("cliente", {}).get("nome"),
             "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
@@ -268,10 +294,10 @@ def handler(event, context):
             item_completo["dados_extraidos_do_documento"] = campos_brutos
             resumo_docs_completo.append(item_completo)
 
-        # Construção Exclusiva do JSON 1 de Negócio via Passo 4 (Clau)
+        # Geração do Dossiê Híbrido Retrocompatível
         report_cliente_dossie = montar_dossie_executivo(package_id, consolidado_json, scorecard_completo, resumo_docs_enxuto)
 
-        # Junção do JSON Mestre Completo (output.json)
+        # Geração do JSON Mestre Completo (output.json)
         pacote_completo_json = {
             "package_id": package_id,
             "status": "COMPLETED",
@@ -299,17 +325,7 @@ def handler(event, context):
                 },
                 "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
             },
-            "cliente": {
-                "nome": consolidado_json.get("cliente", {}).get("nome"),
-                "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
-                "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
-                "score_credito": {
-                    "valor": scorecard_completo["score_calculado"],
-                    "motivos": scorecard_completo["motivos_detalhados"],
-                    "renda_final": scorecard_completo["renda_maxima"],
-                    "liquidez_final": scorecard_completo["saldo_maximo"]
-                }
-            },
+            "cliente": report_cliente_dossie["cliente"],
             "validacao": validacao_data,
             "documentos_analisados": resumo_docs_completo
         }
