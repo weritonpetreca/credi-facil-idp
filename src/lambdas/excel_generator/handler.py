@@ -205,13 +205,16 @@ def handler(event, context):
         wb.save(output_buffer)
         output_buffer.seek(0)
 
-        nome_limpo_arquivo = (
-            arquivo_original
-            .replace(".pdf", "")
-            .replace(".png", "")
-            .replace(".jpg", "")
-            .replace(".jpeg", "")
-        )
+        if s3_key_json and "customer_consolidated" in s3_key_json:
+            nome_limpo_arquivo = "customer_consolidated"
+        else:
+            nome_limpo_arquivo = (
+                arquivo_original
+                .replace(".pdf", "")
+                .replace(".png", "")
+                .replace(".jpg", "")
+                .replace(".jpeg", "")
+            )
 
         s3_target_excel_key = f"results/planilhas/{package_id}/excel_metadados_{nome_limpo_arquivo}.xlsx"
 

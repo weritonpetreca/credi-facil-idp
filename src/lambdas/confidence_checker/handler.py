@@ -8,64 +8,29 @@ s3_client = boto3.client("s3", region_name="us-east-1")
 
 THRESHOLD = 0.80
 
-# 🎯 SLA EXPANDIDO DE COMPLIANCE: Mapeamento de todos os campos definidos pelo time
 CAMPOS_CRITICOS_POR_SUBTIPO = {
-    "w2_tax_form": [
-        "tax_year", "employer_name", "employer_identification_number",
-        "employee_first_name_and_initial", "employee_last_name", "employee_address",
-        "wages_tips_other_compensation", "federal_income_tax_withheld",
-        "social_security_wages", "medicare_wages_and_tips",
-        "state_wages_tips_etc", "state_income_tax"
-    ],
-    "payroll_check": [
-        "issuer_name", "payroll_check_number", "pay_date", "social_security_number",
-        "payee_name", "amount_words", "amount_numeric", "sample_indicator",
-        "non_negotiable_indicator", "void_indicator", "authorized_signature_present"
-    ],
-    "driver_license": [
-        "identification_document_type", "document_number", "full_name",
-        "date_of_birth", "expiration_date", "issuing_state"
-    ],
-    "account_statement": [
-        "account_holder_name", "account_holder_address", "statement_period",
-        "account_number", "account_name", "opening_balance", "closing_balance",
-        "investment_option_name", "option_code", "units", "unit_price_$",
-        "value_$", "percentage", "value"
-    ],
-    "homeowners_insurance_application": [
-        "named_insured", "insurance_company", "policy_number", "effective_date",
-        "expiration_date", "mailing_address", "primary_applicant_name",
-        "primary_applicant_date_of_birth", "primary_applicant_gender",
-        "primary_applicant_marital_status", "primary_applicant_education_level",
-        "primary_applicant_existing_policy", "primary_applicant_drivers_license_number",
-        "primary_applicant_dl_state", "primary_applicant_currently_insured_auto",
-        "primary_applicant_current_property_policy_type", "co_applicant_name",
-        "co_applicant_date_of_birth", "co_applicant_gender", "co_applicant_marital_status",
-        "co_applicant_relationship_to_primary_applicant", "co_applicant_drivers_license_number",
-        "co_applicant_dl_state"
-    ],
-    "pay_stub": [
-        "employer_name", "employee_name", "social_security_number", "taxable_marital_status",
-        "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd",
-        "net_pay_this_period", "federal_income_tax", "social_security_tax",
-        "medicare_tax", "retirement_401k"
-    ]
+    "w2_tax_form": ["tax_year", "employer_name", "employer_identification_number", "employee_first_name_and_initial", "employee_last_name", "employee_address", "wages_tips_other_compensation", "federal_income_tax_withheld", "social_security_wages", "medicare_wages_and_tips", "state_wages_tips_etc", "state_income_tax"],
+    "payroll_check": ["issuer_name", "payroll_check_number", "pay_date", "social_security_number", "payee_name", "amount_words", "amount_numeric", "sample_indicator", "non_negotiable_indicator", "void_indicator", "authorized_signature_present"],
+    "driver_license": ["identification_document_type", "document_number", "full_name", "date_of_birth", "expiration_date", "issuing_state"],
+    "account_statement": ["account_holder_name", "account_holder_address", "statement_period", "account_number", "account_name", "opening_balance", "closing_balance", "investment_option_name", "option_code", "units", "unit_price_$", "value_$", "percentage", "value"],
+    "homeowners_insurance_application": ["named_insured", "insurance_company", "policy_number", "effective_date", "expiration_date", "mailing_address", "primary_applicant_name", "primary_applicant_date_of_birth", "primary_applicant_gender", "primary_applicant_marital_status", "primary_applicant_education_level", "primary_applicant_existing_policy", "primary_applicant_drivers_license_number", "primary_applicant_dl_state", "primary_applicant_currently_insured_auto", "primary_applicant_current_property_policy_type", "co_applicant_name", "co_applicant_date_of_birth", "co_applicant_gender", "co_applicant_marital_status", "co_applicant_relationship_to_primary_applicant", "co_applicant_drivers_license_number", "co_applicant_dl_state"],
+    "pay_stub": ["employer_name", "employee_name", "social_security_number", "taxable_marital_status", "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd", "net_pay_this_period", "federal_income_tax", "social_security_tax", "medicare_tax", "retirement_401k"]
 }
 
 def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
-    """Busca um campo de forma profunda e tolerante a formatos dentro do dicionário do BDA."""
     campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
     
     if isinstance(dados, dict):
-        # 1. Verifica correspondência direta na chave do dicionário
         for k, v in dados.items():
             k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
-            if k_norm == campo_norm and isinstance(v, dict):
-                conf = float(v.get("confidence") or v.get("confidence_score") or 0.0)
-                val = str(v.get("value") or "")
-                return conf, val
+            if k_norm == campo_norm:
+                if isinstance(v, dict):
+                    conf = v.get("confidence") or v.get("confidence_score") or v.get("confidenceScore") or 1.0
+                    val = v.get("value") or v.get("text") or ""
+                    return float(conf), str(val)
+                else:
+                    return 1.0, str(v)
         
-        # 2. Varre nós anidados recursivamente
         for v in dados.values():
             conf, val = extrair_recursivo_por_chave(v, campo_alvo)
             if conf != -1.0:
@@ -74,12 +39,11 @@ def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
     elif isinstance(dados, list):
         for item in dados:
             if isinstance(item, dict):
-                # Suporte para formato de lista estruturada da AWS BDA: [{"name": "campo", "value": "x", "confidence": 0.9}]
                 name_attr = (item.get("name") or item.get("fieldName") or item.get("id") or "").lower().replace("_", "").replace(" ", "")
-                if name_attr and name_attr in campo_norm or campo_norm in name_attr:
-                    conf = float(item.get("confidence") or item.get("confidence_score") or 0.0)
-                    val = str(item.get("value") or "")
-                    return conf, val
+                if name_attr and (name_attr in campo_norm or campo_norm in name_attr):
+                    conf = item.get("confidence") or item.get("confidence_score") or 1.0
+                    val = item.get("value") or item.get("text") or ""
+                    return float(conf), str(val)
             conf, val = extrair_recursivo_por_chave(item, campo_alvo)
             if conf != -1.0:
                 return conf, val
@@ -87,15 +51,11 @@ def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
     return -1.0, ""
 
 def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
-    """Orquestra a busca da acurácia suportando múltiplos formatos de Custom Blueprints."""
-    # Tenta buscar nas raizes comuns de saída de modelos customizados
-    for raiz in ["fields", "extractedData", "inference_result", "inferenceResult"]:
+    for raiz in ["inference_result", "inferenceResult", "fields", "extractedData"]:
         if raiz in bda_json:
             conf, val = extrair_recursivo_por_chave(bda_json[raiz], campo_canonico)
             if conf != -1.0:
                 return conf, val
-                
-    # Fallback de busca irrestrita a partir do topo do JSON
     return extrair_recursivo_por_chave(bda_json, campo_canonico)
 
 def handler(event, context):
@@ -103,8 +63,6 @@ def handler(event, context):
         package_id = event.get("package_id")
         bucket_saida = event.get("bda_output_bucket")
         prefix_busca = f"bda-output/{package_id}/"
-
-        logger.info(f"Iniciando checagem real de acurácia BDA via Custom Blueprints para o lote {package_id}")
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects:
@@ -117,12 +75,13 @@ def handler(event, context):
             key = obj["Key"]
             if not key.endswith(".json") or "manifest" in key.lower() or "job_metadata" in key.lower():
                 continue
+            if "standard_output" in key.lower():
+                continue
 
             partes = key.split("/")
             if len(partes) < 3: continue
             nome_pdf_original = partes[2]
 
-            # Inferência de subtipo documental por nomenclatura de arquivo
             subtipo = "pay_stub"
             if "w2" in nome_pdf_original.lower(): subtipo = "w2_tax_form"
             elif "check" in nome_pdf_original.lower(): subtipo = "payroll_check"
@@ -141,17 +100,16 @@ def handler(event, context):
                 campo_falho = False
                 motivo = ""
 
-                # 🗲 CRITÉRIOS DE COMPLIANCE DE EXTRAÇÃO REAL
                 if confidence == -1.0:
                     campo_falho = True
-                    motivo = "Campo crítico não localizado estruturalmente nas chaves do Blueprint."
+                    motivo = "Campo crítico ausente na extração do Blueprint."
                     confidence = 0.0
                 elif confidence < THRESHOLD:
                     campo_falho = True
-                    motivo = f"Acurácia óptica de OCR abaixo do threshold mínimo ({confidence:.2%})."
-                elif not str(valor_extraido).strip():
+                    motivo = f"Acurácia óptica abaixo do limite aceitável ({confidence:.2%})."
+                elif not str(valor_extraido).strip() or str(valor_extraido).lower() == "none":
                     campo_falho = True
-                    motivo = "Campo identificado pela IA, mas com leitura de valor em branco ou nula."
+                    motivo = "Campo detectado pela IA com valor nulo ou vazio."
                     confidence = 0.0
 
                 if campo_falho:
@@ -164,10 +122,6 @@ def handler(event, context):
                         "valor_bruto": str(valor_extraido) if valor_extraido else "",
                         "motivo": motivo
                     })
-                else:
-                    logger.info(f"Campo OK: {campo} extraído com {confidence:.2%} de acurácia real.")
-
-        logger.info(f"Auditoria concluída para o lote {package_id}. Total com falha de acurácia: {len(campos_para_revisao)}")
 
         return {
             **event,

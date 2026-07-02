@@ -8,74 +8,86 @@ s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
 def safe_float(val) -> float:
-    """Converte valores monetários textuais ou mistos em floats puros de forma segura."""
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
     try:
         limpo = "".join(c for c in str(val) if c.isdigit() or c in [".", ","])
         if "," in limpo and "." in limpo:
-            if limpo.rfind(",") > limpo.rfind("."):
-                limpo = limpo.replace(".", "").replace(",", ".")
-            else:
-                limpo = limpo.replace(",", "")
-        elif "," in limpo:
-            limpo = limpo.replace(",", ".")
+            if limpo.rfind(",") > limpo.rfind("."): limpo = limpo.replace(".", "").replace(",", ".")
+            else: limpo = limpo.replace(",", "")
+        elif "," in limpo: limpo = limpo.replace(",", ".")
         return float(limpo) if limpo else 0.0
-    except:
-        return 0.0
+    except: return 0.0
+
+def extrair_renda_documento(campos: dict, tipo: str) -> float:
+    tipo_upper = tipo.upper()
+    if tipo_upper in ["COMPROVANTE_RENDA", "PAY_STUB", "COMPROVANTE_COMPLEMENTAR", "PAYROLL_CHECK"]:
+        net_pay = campos.get("net_pay")
+        if isinstance(net_pay, dict):
+            v = net_pay.get("this_period") or net_pay.get("year_to_date")
+            if v: return safe_float(v)
+        for earning in campos.get("earnings", []):
+            if isinstance(earning, dict) and "gross_pay" in earning:
+                gp = earning["gross_pay"]
+                if isinstance(gp, dict):
+                    v = gp.get("this_period")
+                    if v: return safe_float(v)
+        v = campos.get("amount_numeric") or campos.get("Gross Pay")
+        if v: return safe_float(v)
+    elif tipo_upper in ["W2_TAX_FORM", "COMPROVANTE_RENDA"]:
+        v = campos.get("wages_tips_other_compensation")
+        if v: return safe_float(v)
+    return 0.0
 
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
-    """Aplica o algoritmo determinístico de Application Scorecard retornando os motivos reais."""
     score_calculado = 300
     motivos_detalhados = []
     
-    if validacao.get("nome_consistente_entre_documentos") is True: 
+    if validacao.get("nome_consistente_entre_documentos") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Consistência nominal unificada entre toda a esteira documental.")
-    if validacao.get("data_nascimento_consistente") is True: 
+    if validacao.get("data_nascimento_consistente") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Data de nascimento validada e sem divergências cadastrais.")
-    if validacao.get("documento_identificacao_presente") is True: 
+    if validacao.get("documento_identificacao_presente") is True:
         score_calculado += 50
         motivos_detalhados.append("+50: Documento de identificação oficial regularizado presente.")
-    
+        
     renda_maxima = 0.0
     saldo_maximo = 0.0
     
     for doc in docs_analisados:
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-        # 🚀 CORREÇÃO CRÍTICA: Lê do contrato correto gerado pelo Nova Structurer
-        campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
+        campos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
         
-        if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"]:
-            v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation")
-            renda_maxima = max(renda_maxima, safe_float(v_renda))
-        elif tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
+        renda_doc = extrair_renda_documento(campos, tipo)
+        renda_maxima = max(renda_maxima, renda_doc)
+
+        if tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
             v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
+            if isinstance(v_saldo, dict): v_saldo = v_saldo.get("closing_balance") or v_saldo.get("value")
             saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
 
-    if renda_maxima >= 5000.0: 
+    if renda_maxima >= 5000.0:
         score_calculado += 450
         motivos_detalhados.append(f"+450: Capacidade de renda líquida elevada comprovada (US$ {renda_maxima:.2f}).")
-    elif renda_maxima >= 2500.0: 
+    elif renda_maxima >= 2500.0:
         score_calculado += 300
         motivos_detalhados.append(f"+300: Capacidade de renda líquida média-alta (US$ {renda_maxima:.2f}).")
-    elif renda_maxima >= 1200.0: 
+    elif renda_maxima >= 1200.0:
         score_calculado += 150
         motivos_detalhados.append(f"+150: Capacidade de renda líquida básica (US$ {renda_maxima:.2f}).")
-    else: 
+    else:
         score_calculado += 50
         motivos_detalhados.append("+50: Capacidade de renda em faixa mínima de amortização.")
 
-    if saldo_maximo >= 10000.0: 
+    if saldo_maximo >= 10000.0:
         score_calculado += 400
         motivos_detalhados.append(f"+400: Excelente liquidez de fechamento patrimonial (US$ {saldo_maximo:.2f}).")
-    elif saldo_maximo >= 5000.0: 
+    elif saldo_maximo >= 5000.0:
         score_calculado += 250
         motivos_detalhados.append(f"+250: Liquidez de fechamento estável (US$ {saldo_maximo:.2f}).")
-    elif saldo_maximo >= 3000.0: 
+    elif saldo_maximo >= 3000.0:
         score_calculado += 100
         motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido.")
 
@@ -87,24 +99,21 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     }
 
 def handler(event, context):
-    """Handler AWS Lambda focado exclusivamente na consolidação e cálculo de Score do Proponente."""
     try:
         package_id = event.get("package_id")
         bucket = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         
-        logger.info(f"Iniciando consolidação analítica de score sob demanda para o pacote {package_id}")
+        logger.info(f"Iniciando consolidação analítica de score para o pacote {package_id}")
 
-        json_base_lote = event.get("json_estruturado")
-        if not json_base_lote:
-            logger.warning("Linha de base não localizada em memória. Recorrendo ao S3...")
+        json_base_lote = event.get("json_estruturado") or {}
+        if not json_base_lote or "documentos_analisados" not in json_base_lote:
             key_base = f"results/packages/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        docs_analisados = json_base_lote.get("documentos_analisados", [])
+        docs_analisados = [d for d in json_base_lote.get("documentos_analisados", []) if d.get("arquivo_original")]
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
-        # 🎯 AJUSTE DE DIRETRIZ: Introduzido critérios estritos de negação por ausência de dados
         prompt_consolidacao = f"""
         Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada do proponente mestre.
 
@@ -117,7 +126,7 @@ def handler(event, context):
         
         - VALIDAÇÃO ESTRITA DE CONSISTÊNCIA CADASTRAL (REGRAS DE BOOLEANOS):
           * 'nome_consistente_entre_documentos': true se o nome completo do proponente for idêntico em todos os arquivos onde ele foi localizado.
-          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false. Nunca alucine consistência se o dado não existe.
+          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false.
 
         Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo antes ou depois:
         {{
@@ -141,29 +150,72 @@ def handler(event, context):
             "messages": [{"role": "user", "content": [{"text": prompt_consolidacao}]}]
         })
 
-        logger.info(f"Invocando o motor Amazon Nova Pro para o lote {package_id}")
         bedrock_response = bedrock_runtime.invoke_model(
             modelId="amazon.nova-pro-v1:0", contentType="application/json", accept="application/json", body=body_request
         )
 
         response_body = json.loads(bedrock_response["body"].read().decode("utf-8"))
         texto_resposta = response_body["output"]["message"]["content"][0]["text"].strip()
+        usage_tokens = response_body.get("usage", {})
         
-        if texto_resposta.startswith("```json"):
+        if "```json" in texto_resposta:
             texto_resposta = texto_resposta.split("```json")[1].split("```")[0].strip()
-        elif texto_resposta.startswith("```"):
+        elif "```" in texto_resposta:
             texto_resposta = texto_resposta.split("```")[1].split("```")[0].strip()
 
         consolidado_json = json.loads(texto_resposta)
-
-        # 🚀 MOTOR MATEMÁTICO DETERMINÍSTICO (Subtrai automaticamente os 50 pontos caso a data caia como false)
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # Montagem do Dossiê de Auditoria Real unificado para o Front-end
-        report_final = {
+        input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
+        output_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0)
+
+        resumo_docs_enxuto = []
+        resumo_docs_completo = []
+        
+        for doc in docs_analisados:
+            tipo = str(doc.get("tipo_documento", "")).lower()
+            campos_brutos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
+            
+            renda_calc = extrair_renda_documento(campos_brutos, tipo)
+            saldo_calc = safe_float(campos_brutos.get("closing_account_balance") or campos_brutos.get("saldo_bancario_fechamento") or campos_brutos.get("closing_balance") or campos_brutos.get("balance"))
+
+            # 🚀 POVOAMENTO BIUNÍVOCO: Chaves financeiras espelhadas na raiz para a função calcularMaiorValorCampo ler
+            base_item_summary = {
+                "arquivo_original": doc.get("arquivo_original", ""),
+                "tipo_documento": doc.get("tipo_documento", ""),
+                "subtipo_documento": doc.get("subtipo_documento", ""),
+                "status_extracao": doc.get("status_extracao") or doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso"),
+                "confianca_media": float(doc.get("confianca_media") or doc.get("confiabilidade_extracao", {}).get("confianca_media", 1.0000)),
+                "s3_key_origem": doc.get("s3_key_origem") or doc.get("localizacao_documento_s3", {}).get("s3_key_origem", ""),
+                "s3_key_resultado": doc.get("s3_key_resultado") or doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", ""),
+                "observacoes": doc.get("observacoes") or doc.get("confiabilidade_extracao", {}).get("observacoes", []),
+                # Injeções de chaves planas requisitadas pelo front-end INCOME_KEYS e BALANCE_KEYS
+                "amount_numeric": renda_calc,
+                "Gross Pay": renda_calc,
+                "wages_tips_other_compensation": renda_calc,
+                "saldo_bancario_fechamento": saldo_calc,
+                "closing_balance": saldo_calc,
+                "balance": saldo_calc
+            }
+
+            resumo_docs_enxuto.append(base_item_summary)
+            
+            item_completo = dict(base_item_summary)
+            item_completo["campos_extraidos"] = campos_brutos
+            item_completo["dados_extraidos_do_documento"] = campos_brutos
+            resumo_docs_completo.append(item_completo)
+
+        # 🚀 JSON 1: DOSSIÊ EXECUTIVO DO CLIENTE (customer_consolidated.json) - Sem nós de TI ou dados brutos
+        report_cliente_dossie = {
             "package_id": package_id,
             "status": "COMPLETED",
+            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
                 "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
@@ -176,23 +228,60 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": docs_analisados
+            "documentos_analisados": resumo_docs_enxuto
         }
 
-        s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
-        logger.info(f"Gravando Dossiê do Cliente estruturado em: {s3_target_key}")
+        # 🚀 JSON 2: JUNÇÃO MESTRE COMPLETA DO PACOTE (output.json) - Dados brutos acoplados + Volume total de tokens
+        pacote_completo_json = {
+            "package_id": package_id,
+            "status": "COMPLETED",
+            "execute_score": True,
+            "bda_output_bucket": bucket,
+            "confianca_general": 1,
+            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            },
+            "sistema": {
+                "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
+                "processamento": {
+                    "status": "processado",
+                    "modelo_utilizado": "Amazon Nova Pro",
+                    "bda_project_arn": json_base_lote.get("sistema", {}).get("processamento", {}).get("bda_project_arn"),
+                    "quantidade_tokens": {
+                        "input_tokens": input_t,
+                        "output_tokens": output_t,
+                        "total_tokens": input_t + output_t # 🚀 Consolidado Geral Exigido pelo Negócio
+                    },
+                    "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
+                },
+                "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
+            },
+            "cliente": report_cliente_dossie["cliente"],
+            "validacao": validacao_data,
+            "documentos_analisados": resumo_docs_completo
+        }
+
         s3_client.put_object(
-            Bucket=bucket, Key=s3_target_key,
-            Body=json.dumps(report_final, ensure_ascii=False), ContentType="application/json"
+            Bucket=bucket, Key=f"results/clientes/{package_id}/customer_consolidated.json",
+            Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
+        )
+        s3_client.put_object(
+            Bucket=bucket, Key=f"results/packages/{package_id}/output.json",
+            Body=json.dumps(pacote_completo_json, ensure_ascii=False), ContentType="application/json"
         )
 
         return {
-            **event,
-            "cliente": report_final["cliente"],
-            "validacao": report_final["validacao"],
-            "json_estruturado": report_final
+            "package_id": package_id,
+            "user_id": event.get("user_id", "sistema"),
+            "execute_score": True,
+            "bda_output_bucket": bucket,
+            "confianca_general": 1,
+            "json_estruturado": pacote_completo_json
         }
 
     except Exception as e:
-        logger.error(f"Falha crítica na esteira de consolidação cadastral: {str(e)}")
+        logger.error(f"Falha crítica na esteira de consolidação: {str(e)}")
         raise e
