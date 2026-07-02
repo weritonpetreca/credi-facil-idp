@@ -662,6 +662,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref BucketSaida
+        - DynamoDBReadPolicy:
+            TableName: !Ref CrediFacilDynamoTable
         - Version: "2012-10-17"
           Statement:
             - Sid: AllowBedrockNovaInvoke

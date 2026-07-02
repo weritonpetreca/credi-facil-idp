@@ -25,7 +25,6 @@ def handler(event, context):
         if not package_id:
             return {"statusCode": 400, "body": json.dumps({"erro": "Parâmetro packageId obrigatório no path."})}
 
-        # 1. Busca o Task Token pendente no DynamoDB
         db_res = db_client.get_item(
             TableName=TABLE_NAME,
             Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}}
@@ -39,17 +38,6 @@ def handler(event, context):
 
         logger.info(f"Task Token localizado para o pacote {package_id}. Acordando a State Machine.")
 
-        # 2. Responde para o Step Functions continuar a execução do lote
-        output_payload = {
-            "status_revisao": "RESOLVIDO",
-            "dados_corrigidos": correcoes
-        }
-        sfn_client.send_task_success(
-            taskToken=task_token,
-            output=json.dumps(output_payload)
-        )
-
-        # 3. Atualiza o status da revisão no banco para auditoria posterior
         db_client.update_item(
             TableName=TABLE_NAME,
             Key={"PK": {"S": package_id}, "SK": {"S": "REVISION"}},
@@ -61,6 +49,15 @@ def handler(event, context):
                 ":ch": {"S": json.dumps(correcoes, ensure_ascii=False)}
             }
         )
+
+        output_payload = {
+            "status_revisao": "RESOLVIDO",
+            "dados_corrigidos": correcoes
+        }
+        sfn_client.send_task_success(
+            taskToken=task_token,
+            output=json.dumps(output_payload)
+        )        
 
         return {
             "statusCode": 200,

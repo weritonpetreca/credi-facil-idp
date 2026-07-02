@@ -105,7 +105,8 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
     "alternate_phone": None, "insurance_company": None, "insurance_company_address": None,
     "insured_property_address": None, "notice_of_insurance_information_practices": None,
     "notice": None, "policy_number": None, "purchase_date_time": None, "effective_date": None, "expiration_date": None,
-    "primary_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "education_level": None, "existing_policy": None, "drivers_license_number": None, "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None}
+    "primary_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "education_level": None, "existing_policy": None, "drivers_license_number": None, "dl_state": None, "currently_insured_auto": None, "length_current_auto_carrier": None, "length_prior_auto_carrier": None, "years_prior_property_company": None, "current_property_policy_type": None},
+    "co_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "relationship_to_primary_applicant": None, "drivers_license_number": None, "dl_state": None}
 }
 
 PROMPT_SISTEMA = f"""
