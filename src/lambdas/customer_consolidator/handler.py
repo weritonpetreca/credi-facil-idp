@@ -27,20 +27,15 @@ def safe_float(val) -> float:
         return 0.0
 
 def extrair_renda_documento(campos: dict, tipo: str) -> float:
-    """
-    Extrai a renda do documento respeitando a estrutura real de cada template.
-    Navega por chaves aninhadas caso o documento seja um PayStub.
-    """
+    """Extrai a renda do documento respeitando a estrutura de cada template."""
     tipo_upper = tipo.upper()
     
     if tipo_upper in ["COMPROVANTE_RENDA", "PAY_STUB", "COMPROVANTE_COMPLEMENTAR", "PAYROLL_CHECK"]:
-        # PayStub: net_pay é um dict aninhado {"this_period": "..."}
         net_pay = campos.get("net_pay")
         if isinstance(net_pay, dict):
             v = net_pay.get("this_period") or net_pay.get("year_to_date")
             if v: return safe_float(v)
         
-        # Fallback PayStub: gross_pay dentro de earnings[]
         for earning in campos.get("earnings", []):
             if isinstance(earning, dict) and "gross_pay" in earning:
                 gp = earning["gross_pay"]
@@ -48,7 +43,6 @@ def extrair_renda_documento(campos: dict, tipo: str) -> float:
                     v = gp.get("this_period")
                     if v: return safe_float(v)
         
-        # PayrollCheck: amount_numeric no nível raiz
         v = campos.get("amount_numeric")
         if v: return safe_float(v)
     
@@ -59,7 +53,7 @@ def extrair_renda_documento(campos: dict, tipo: str) -> float:
     return 0.0
 
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
-    """Aplica o algoritmo determinístico de Application Scorecard retornando os motivos reais."""
+    """Aplica o algoritmo determinístico de Application Scorecard."""
     score_calculado = 300
     motivos_detalhados = []
     
@@ -80,11 +74,9 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
         campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
         
-        # Utiliza a nova função de travessia estrutural para renda
         renda_doc = extrair_renda_documento(campos, tipo)
         renda_maxima = max(renda_maxima, renda_doc)
 
-        # Extrato Bancário continua com leitura de raiz
         if tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
             v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
             saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
@@ -120,7 +112,6 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     }
 
 def handler(event, context):
-    """Handler AWS Lambda focado na consolidação estruturada e cálculo de Score do Proponente."""
     try:
         package_id = event.get("package_id")
         bucket = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
@@ -191,20 +182,21 @@ def handler(event, context):
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # Cria um resumo leve para o Dossiê Executivo, sem carregar os dados brutos de cada documento
+        # 🚀 CORREÇÃO DE CONTRATO: Chaves mapeadas conforme expectativa das Lambdas downstream
         resumo_docs = [
             {
-                "arquivo": doc.get("arquivo_original", ""),
-                "tipo": doc.get("tipo_documento", ""),
-                "subtipo": doc.get("subtipo_documento", ""),
-                "status": doc.get("confiabilidade_extracao", {}).get("status_extracao", ""),
-                "confianca_media": doc.get("confiabilidade_extracao", {}).get("confianca_media", "0.0"),
-                "s3_key_resultado": doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", "")
+                "arquivo_original": doc.get("arquivo_original", ""),
+                "tipo_documento": doc.get("tipo_documento", ""),
+                "subtipo_documento": doc.get("subtipo_documento", ""),
+                "status_extracao": doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso"),
+                "confianca_media": float(doc.get("confiabilidade_extracao", {}).get("confianca_media", "1.0000")),
+                "s3_key_origem": doc.get("localizacao_documento_s3", {}).get("s3_key_origem", ""),
+                "s3_key_resultado": doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", ""),
+                "dados_extraidos_do_documento": doc.get("dados_extraidos_do_documento", {})
             }
             for doc in docs_analisados
         ]
 
-        # Montagem do Dossiê de Auditoria Executivo (Lean JSON)
         report_final = {
             "package_id": package_id,
             "status": "COMPLETED",

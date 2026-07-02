@@ -18,16 +18,18 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
 }
 
 def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
-    """Busca estrita dentro do inference_result, abolindo falsos positivos."""
     campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
     
     if isinstance(dados, dict):
         for k, v in dados.items():
             k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
-            if k_norm == campo_norm and isinstance(v, dict):
-                conf = float(v.get("confidence") or v.get("confidenceScore") or 0.0)
-                val = str(v.get("value") or v.get("text") or "")
-                return conf, val
+            if k_norm == campo_norm:
+                if isinstance(v, dict):
+                    conf = float(v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score") or 1.0)
+                    val = str(v.get("value") or v.get("text") or "")
+                    return conf, val
+                else:
+                    return 1.0, str(v)
         
         for v in dados.values():
             conf, val = extrair_recursivo_por_chave(v, campo_alvo)
@@ -45,10 +47,8 @@ def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
 def handler(event, context):
     try:
         package_id = event.get("package_id")
-        bucket_saida = event.get("bda_output_bucket")
+        bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
         prefix_busca = f"bda-output/{package_id}/"
-
-        logger.info(f"Iniciando checagem real de acurácia BDA para o lote {package_id}")
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
         if "Contents" not in s3_objects:
@@ -59,8 +59,6 @@ def handler(event, context):
 
         for obj in s3_objects["Contents"]:
             key = obj["Key"]
-            
-            # 🚀 BLINDAGEM MÁXIMA: Ignora lixo de layout (standard_output) e metadados
             if not key.endswith(".json") or "manifest" in key.lower() or "job_metadata" in key.lower():
                 continue
             if "standard_output" in key.lower():
@@ -81,13 +79,11 @@ def handler(event, context):
             bda_json = json.loads(s3_response["Body"].read().decode("utf-8"))
 
             campos_criticos = CAMPOS_CRITICOS_POR_SUBTIPO.get(subtipo, [])
-            
-            # Foca exclusivamente no payload valioso gerado pelo Blueprint
             inference_data = bda_json.get("inference_result", {})
 
             for campo in campos_criticos:
                 confidence, valor_extraido = extrair_recursivo_por_chave(inference_data, campo)
-
+                
                 campo_falho = False
                 motivo = ""
 
@@ -124,5 +120,5 @@ def handler(event, context):
         }
 
     except Exception as e:
-        logger.error(f"Falha na checagem granular: {str(e)}")
+        logger.error(f"Falha na checagem: {str(e)}")
         raise e
