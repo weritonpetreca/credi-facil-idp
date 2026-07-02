@@ -161,7 +161,7 @@ def handler(event, context):
             raise ValueError("BdaProjectId ausente.")
 
         account_id = context.invoked_function_arn.split(":")[4]
-        project_arn = project_id if project_id.startswith("arn:aws:") else f"arn:aws:bedrock-data-automation:us-east-1:{account_id}:project/{project_id}"
+        project_arn = project_id if project_id.startswith("arn:aws:") else f"arn:aws:bedrock:us-east-1:{account_id}:data-automation-project/{project_id}"
 
         # 🔍 IDEMPOTÊNCIA: Busca o que já existe na conta antes de tentar criar
         bps_existentes = bda_client.list_blueprints().get("blueprints", [])
