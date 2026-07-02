@@ -17,27 +17,51 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
     "pay_stub": ["employer_name", "employee_name", "social_security_number", "taxable_marital_status", "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd", "net_pay_this_period", "federal_income_tax", "social_security_tax", "medicare_tax", "retirement_401k"]
 }
 
-def obter_confianca_e_valor(bda_json: dict, campo_alvo: str) -> tuple:
-    """Extrai com precisão a confiança óptica e o valor de dentro do nó do Blueprint."""
-    inference_result = bda_json.get("inference_result", {})
+def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
     campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
     
-    if isinstance(inference_result, dict):
-        for k, v in inference_result.items():
-            k_norm = k.lower().replace("_", "").replace(".", "").replace("$", "")
+    if isinstance(dados, dict):
+        for k, v in dados.items():
+            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
             if k_norm == campo_norm:
                 if isinstance(v, dict):
-                    conf = v.get("confidence") or v.get("confidenceScore") or v.get("confidence_score") or 1.0
+                    conf = v.get("confidence") or v.get("confidence_score") or v.get("confidenceScore") or 1.0
                     val = v.get("value") or v.get("text") or ""
                     return float(conf), str(val)
                 else:
                     return 1.0, str(v)
+        
+        for v in dados.values():
+            conf, val = extrair_recursivo_por_chave(v, campo_alvo)
+            if conf != -1.0:
+                return conf, val
+                
+    elif isinstance(dados, list):
+        for item in dados:
+            if isinstance(item, dict):
+                name_attr = (item.get("name") or item.get("fieldName") or item.get("id") or "").lower().replace("_", "").replace(" ", "")
+                if name_attr and (name_attr in campo_norm or campo_norm in name_attr):
+                    conf = item.get("confidence") or item.get("confidence_score") or 1.0
+                    val = item.get("value") or item.get("text") or ""
+                    return float(conf), str(val)
+            conf, val = extrair_recursivo_por_chave(item, campo_alvo)
+            if conf != -1.0:
+                return conf, val
+                
     return -1.0, ""
+
+def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
+    for raiz in ["inference_result", "inferenceResult", "fields", "extractedData"]:
+        if raiz in bda_json:
+            conf, val = extrair_recursivo_por_chave(bda_json[raiz], campo_canonico)
+            if conf != -1.0:
+                return conf, val
+    return extrair_recursivo_por_chave(bda_json, campo_canonico)
 
 def handler(event, context):
     try:
         package_id = event.get("package_id")
-        bucket_saida = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
+        bucket_saida = event.get("bda_output_bucket")
         prefix_busca = f"bda-output/{package_id}/"
 
         s3_objects = s3_client.list_objects_v2(Bucket=bucket_saida, Prefix=prefix_busca)
@@ -71,21 +95,21 @@ def handler(event, context):
             campos_criticos = CAMPOS_CRITICOS_POR_SUBTIPO.get(subtipo, [])
 
             for campo in campos_criticos:
-                confidence, valor_extraido = obter_confianca_e_valor(bda_json, campo)
-                
+                confidence, valor_extraido = obter_confianca_campo_bda(bda_json, campo)
+
                 campo_falho = False
                 motivo = ""
 
                 if confidence == -1.0:
                     campo_falho = True
-                    motivo = "Campo crítico não localizado na extração do Blueprint."
+                    motivo = "Campo crítico ausente na extração do Blueprint."
                     confidence = 0.0
                 elif confidence < THRESHOLD:
                     campo_falho = True
-                    motivo = f"Acurácia óptica abaixo do threshold ({confidence:.2%})."
-                elif not str(valor_extraido).strip():
+                    motivo = f"Acurácia óptica abaixo do limite aceitável ({confidence:.2%})."
+                elif not str(valor_extraido).strip() or str(valor_extraido).lower() == "none":
                     campo_falho = True
-                    motivo = "Campo detectado, mas com leitura em branco."
+                    motivo = "Campo detectado pela IA com valor nulo ou vazio."
                     confidence = 0.0
 
                 if campo_falho:
@@ -98,8 +122,6 @@ def handler(event, context):
                         "valor_bruto": str(valor_extraido) if valor_extraido else "",
                         "motivo": motivo
                     })
-                else:
-                    logger.info(f"OK: {campo} | Confiança Real: {confidence:.2%}")
 
         return {
             **event,
@@ -109,5 +131,5 @@ def handler(event, context):
         }
 
     except Exception as e:
-        logger.error(f"Falha na checagem: {str(e)}")
+        logger.error(f"Falha crítica na execução do validador de acurácia: {str(e)}")
         raise e

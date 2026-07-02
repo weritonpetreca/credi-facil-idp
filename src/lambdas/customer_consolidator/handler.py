@@ -32,7 +32,7 @@ def extrair_renda_documento(campos: dict, tipo: str) -> float:
                 if isinstance(gp, dict):
                     v = gp.get("this_period")
                     if v: return safe_float(v)
-        v = campos.get("amount_numeric")
+        v = campos.get("amount_numeric") or campos.get("Gross Pay")
         if v: return safe_float(v)
     elif tipo_upper in ["W2_TAX_FORM", "COMPROVANTE_RENDA"]:
         v = campos.get("wages_tips_other_compensation")
@@ -51,7 +51,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         motivos_detalhados.append("+50: Data de nascimento validada e sem divergências cadastrais.")
     if validacao.get("documento_identificacao_presente") is True:
         score_calculado += 50
-        motivos_detalhados.append("+50: Documento de identificação oficial presente.")
+        motivos_detalhados.append("+50: Documento de identificação oficial regularizado presente.")
         
     renda_maxima = 0.0
     saldo_maximo = 0.0
@@ -170,38 +170,57 @@ def handler(event, context):
         input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
         output_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0)
 
-        # Separação Estrita dos Resumos conforme Regra de Negócio
         resumo_docs_enxuto = []
         resumo_docs_completo = []
         
         for doc in docs_analisados:
+            tipo = str(doc.get("tipo_documento", "")).lower()
             campos_brutos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
-            resumo_docs_enxuto.append({
+            
+            renda_calc = extrair_renda_documento(campos_brutos, tipo)
+            saldo_calc = safe_float(campos_brutos.get("closing_account_balance") or campos_brutos.get("saldo_bancario_fechamento") or campos_brutos.get("closing_balance") or campos_brutos.get("balance"))
+
+            # 🚀 POVOAMENTO BIUNÍVOCO: Chaves financeiras espelhadas na raiz para a função calcularMaiorValorCampo ler
+            base_item_summary = {
                 "arquivo_original": doc.get("arquivo_original", ""),
                 "tipo_documento": doc.get("tipo_documento", ""),
                 "subtipo_documento": doc.get("subtipo_documento", ""),
-                "status_extracao": doc.get("status_extracao", "sucesso"),
-                "confianca_media": float(doc.get("confianca_media", 1.0000)),
-                "s3_key_resultado": doc.get("s3_key_resultado", "")
-            })
-            resumo_docs_completo.append({
-                **doc,
-                "campos_extraidos": campos_brutos,
-                "dados_extraidos_do_documento": campos_brutos
-            })
+                "status_extracao": doc.get("status_extracao") or doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso"),
+                "confianca_media": float(doc.get("confianca_media") or doc.get("confiabilidade_extracao", {}).get("confianca_media", 1.0000)),
+                "s3_key_origem": doc.get("s3_key_origem") or doc.get("localizacao_documento_s3", {}).get("s3_key_origem", ""),
+                "s3_key_resultado": doc.get("s3_key_resultado") or doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", ""),
+                "observacoes": doc.get("observacoes") or doc.get("confiabilidade_extracao", {}).get("observacoes", []),
+                # Injeções de chaves planas requisitadas pelo front-end INCOME_KEYS e BALANCE_KEYS
+                "amount_numeric": renda_calc,
+                "Gross Pay": renda_calc,
+                "wages_tips_other_compensation": renda_calc,
+                "saldo_bancario_fechamento": saldo_calc,
+                "closing_balance": saldo_calc,
+                "balance": saldo_calc
+            }
 
-        # 🚀 JSON 1: Dossiê de Negócio Enxuto do Cliente (customer_consolidated.json)
+            resumo_docs_enxuto.append(base_item_summary)
+            
+            item_completo = dict(base_item_summary)
+            item_completo["campos_extraidos"] = campos_brutos
+            item_completo["dados_extraidos_do_documento"] = campos_brutos
+            resumo_docs_completo.append(item_completo)
+
+        # 🚀 JSON 1: DOSSIÊ EXECUTIVO DO CLIENTE (customer_consolidated.json) - Sem nós de TI ou dados brutos
         report_cliente_dossie = {
             "package_id": package_id,
             "status": "COMPLETED",
             "renda_bruta_estimada": scorecard_completo["renda_apurada"],
             "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
                 "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
                 "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
                 "score_credito": {
-                    "value": scorecard_completo["valor"],
                     "valor": scorecard_completo["valor"],
                     "motivos": scorecard_completo["detalhes_calculo"],
                     "renda_final": scorecard_completo["renda_apurada"],
@@ -212,9 +231,19 @@ def handler(event, context):
             "documentos_analisados": resumo_docs_enxuto
         }
 
-        # 🚀 JSON 2: Pacote Mestre Completo (output.json)
+        # 🚀 JSON 2: JUNÇÃO MESTRE COMPLETA DO PACOTE (output.json) - Dados brutos acoplados + Volume total de tokens
         pacote_completo_json = {
-            **report_cliente_dossie,
+            "package_id": package_id,
+            "status": "COMPLETED",
+            "execute_score": True,
+            "bda_output_bucket": bucket,
+            "confianca_general": 1,
+            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+            },
             "sistema": {
                 "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
                 "processamento": {
@@ -224,12 +253,14 @@ def handler(event, context):
                     "quantidade_tokens": {
                         "input_tokens": input_t,
                         "output_tokens": output_t,
-                        "total_tokens": input_t + output_t # 🚀 Consolidado de tokens totais unificado
+                        "total_tokens": input_t + output_t # 🚀 Consolidado Geral Exigido pelo Negócio
                     },
                     "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
                 },
                 "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
             },
+            "cliente": report_cliente_dossie["cliente"],
+            "validacao": validacao_data,
             "documentos_analisados": resumo_docs_completo
         }
 
