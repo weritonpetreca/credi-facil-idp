@@ -7,7 +7,7 @@ logger = Logger(service="bda-custom-resource-provisioner")
 bda_client = boto3.client("bedrock-data-automation", region_name="us-east-1")
 
 def send_cfn_response(event, context, response_status, response_data=None, physical_resource_id=None):
-    """Garante o envio do sinal para desatarraxar a Stack do CloudFormation sob qualquer circunstância."""
+    """Garante o envio do sinal de retorno para liberar a Stack do CloudFormation sob qualquer cenário."""
     response_body = json.dumps({
         "Status": response_status,
         "Reason": f"Log de execução detalhado disponível no CloudWatch Stream: {context.log_stream_name}",
@@ -31,7 +31,7 @@ def send_cfn_response(event, context, response_status, response_data=None, physi
         logger.error(f"Falha crítica ao tentar responder ao CloudFormation URL: {str(e)}")
 
 def obter_schemas_sincronizados():
-    # 🚀 CORREÇÃO CRÍTICA: Contrato ajustado para o padrão de array proprietário do Amazon BDA
+    """Retorna os schemas de extração seguindo o array plano exigido pelo Bedrock Data Automation."""
     return {
         "W2TaxForm": {
             "fields": [
@@ -139,10 +139,10 @@ def obter_schemas_sincronizados():
     }
 
 def handler(event, context):
-    logger.info(f"Custom Resource invocado pelo CloudFormation para a operação: {event['RequestType']}")
+    logger.info(f"Custom Resource invocado para a operação: {event['RequestType']}")
     
     status_final = "SUCCESS"
-    payload_resposta = {"Message": "Operação concluída sem anomalias cadastrais."}
+    payload_resposta = {"Message": "Operação concluída com sucesso."}
     id_recurso_fisico = event.get("PhysicalResourceId", "BDABlueprintsConfigurador")
     
     if event["RequestType"] == "Delete":
@@ -154,7 +154,11 @@ def handler(event, context):
         project_id = properties.get("BdaProjectId")
         
         if not project_id:
-            raise ValueError("O parâmetro essencial BdaProjectId está ausente no contrato de propriedades.")
+            raise ValueError("O parâmetro essencial BdaProjectId está ausente.")
+
+        # Resolve dinamicamente o ARN completo do projeto
+        account_id = context.invoked_function_arn.split(":")[4]
+        project_arn = project_id if project_id.startswith("arn:aws:") else f"arn:aws:bedrock-data-automation:us-east-1:{account_id}:project/{project_id}"
 
         schemas = obter_schemas_sincronizados()
         associacoes_blueprints = []
@@ -169,19 +173,21 @@ def handler(event, context):
                 blueprintStage="LIVE",
                 schema=json.dumps(schema_corpo, ensure_ascii=False)
             )
-            arn_gerado = bp_response.get("blueprintArn")
+            arn_gerado = bp_response["blueprint"]["blueprintArn"]
             associacoes_blueprints.append({"blueprintArn": arn_gerado})
 
-        logger.info(f"Consolidando amarração de {len(associacoes_blueprints)} Blueprints no projeto BDA: {project_id}")
-        bda_client.update_project(
-            projectId=project_id,
-            blueprintAssociations=associacoes_blueprints
+        logger.info(f"🚀 Chamando update_data_automation_project para o ARN: {project_arn}")
+        bda_client.update_data_automation_project(
+            projectArn=project_arn,
+            customOutputConfiguration={
+                "blueprints": associacoes_blueprints
+            }
         )
         
         payload_resposta["BlueprintsProvisionados"] = len(associacoes_blueprints)
 
     except Exception as err:
-        logger.exception(f"Erro catastrófico interceptado no provisionamento do BDA Custom Resource: {str(err)}")
+        logger.exception(f"Erro capturado no provisionamento do BDA Custom Resource: {str(err)}")
         status_final = "FAILED"
         payload_resposta = {"Error": str(err)}
         
