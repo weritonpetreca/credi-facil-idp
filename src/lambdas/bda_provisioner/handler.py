@@ -7,10 +7,9 @@ logger = Logger(service="bda-custom-resource-provisioner")
 bda_client = boto3.client("bedrock-data-automation", region_name="us-east-1")
 
 def send_cfn_response(event, context, response_status, response_data=None, physical_resource_id=None):
-    """Garante o envio do sinal de retorno para liberar a Stack do CloudFormation."""
     response_body = json.dumps({
         "Status": response_status,
-        "Reason": f"Log de execução detalhado disponível no CloudWatch Stream: {context.log_stream_name}",
+        "Reason": f"Log detalhado no CloudWatch Stream: {context.log_stream_name}",
         "PhysicalResourceId": physical_resource_id or context.log_stream_name,
         "StackId": event["StackId"],
         "RequestId": event["RequestId"],
@@ -26,168 +25,172 @@ def send_cfn_response(event, context, response_status, response_data=None, physi
     )
     try:
         with urllib.request.urlopen(req) as res:
-            logger.info(f"Sinalizador enviado ao CloudFormation. HTTP Status: {res.status}")
+            logger.info(f"Sinal enviado ao CloudFormation. HTTP Status: {res.status}")
     except Exception as e:
-        logger.error(f"Falha ao tentar responder ao CloudFormation URL: {str(e)}")
+        logger.error(f"Falha ao responder ao CloudFormation: {str(e)}")
+
+def criar_wrapper_bda(nome_classe, descricao, propriedades):
+    """Encapsula as propriedades no formato estrito exigido pelo Amazon Bedrock Data Automation."""
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": descricao,
+        "class": nome_classe,
+        "type": "object",
+        "definitions": {},
+        "properties": propriedades
+    }
 
 def obter_schemas_oficiais_bda():
-    """Retorna os schemas estritamente encapsulados em JSON Schema Draft-7 como exigido pela API."""
     return {
-        "W2TaxForm": {
-            "type": "object",
-            "description": "Blueprint for W2 Tax Form extraction",
-            "properties": {
-                "tax_year": {"type": "string", "description": "Extract the tax year."},
-                "employer_name": {"type": "string", "description": "Extract the employer name."},
-                "employer_identification_number": {"type": "string", "description": "Extract the Employer Identification Number (EIN)."},
-                "employee_first_name_and_initial": {"type": "string", "description": "Extract the employee's first name and middle initial."},
-                "employee_last_name": {"type": "string", "description": "Extract the employee's last name."},
-                "employee_address": {"type": "string", "description": "Extract the employee's full address."},
-                "wages_tips_other_compensation": {"type": "string", "description": "Extract Box 1 wages, tips, and other compensation."},
-                "federal_income_tax_withheld": {"type": "string", "description": "Extract Box 2 federal income tax withheld."},
-                "social_security_wages": {"type": "string", "description": "Extract Box 3 social security wages."},
-                "medicare_wages_and_tips": {"type": "string", "description": "Extract Box 5 medicare wages and tips."},
-                "state_wages_tips_etc": {"type": "string", "description": "Extract Box 16 state wages, tips, etc."},
-                "state_income_tax": {"type": "string", "description": "Extract Box 17 state income tax."}
+        "W2TaxForm": criar_wrapper_bda(
+            "W2TaxForm", 
+            "Blueprint for W2 Tax Form extraction",
+            {
+                "tax_year": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the tax year."},
+                "employer_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employer name."},
+                "employer_identification_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the Employer Identification Number (EIN)."},
+                "employee_first_name_and_initial": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employee's first name and middle initial."},
+                "employee_last_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employee's last name."},
+                "employee_address": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employee's full address."},
+                "wages_tips_other_compensation": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 1 wages, tips, and other compensation."},
+                "federal_income_tax_withheld": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 2 federal income tax withheld."},
+                "social_security_wages": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 3 social security wages."},
+                "medicare_wages_and_tips": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 5 medicare wages and tips."},
+                "state_wages_tips_etc": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 16 state wages, tips, etc."},
+                "state_income_tax": {"type": "string", "inferenceType": "explicit", "instruction": "Extract Box 17 state income tax."}
             }
-        },
-        "PayrollCheck": {
-            "type": "object",
-            "description": "Blueprint for Payroll Check extraction",
-            "properties": {
-                "issuer_name": {"type": "string", "description": "Extract the issuer company name from the check."},
-                "payroll_check_number": {"type": "string", "description": "Extract the payroll check number."},
-                "pay_date": {"type": "string", "description": "Extract the pay date printed on the check."},
-                "social_security_number": {"type": "string", "description": "Extract the social security number if visible."},
-                "payee_name": {"type": "string", "description": "Extract the payee name after 'Pay to the order of'."},
-                "amount_words": {"type": "string", "description": "Extract the check amount written in words."},
-                "amount_numeric": {"type": "string", "description": "Extract the numeric amount preceded by a dollar sign."},
-                "sample_indicator": {"type": "string", "description": "Extract if 'SAMPLE' watermark or text is present."},
-                "non_negotiable_indicator": {"type": "string", "description": "Extract if 'NON-NEGOTIABLE' text is present."},
-                "void_indicator": {"type": "string", "description": "Extract if 'VOID' text is present."},
-                "authorized_signature_present": {"type": "string", "description": "Identify if an authorized signature text or block is present."}
+        ),
+        "PayrollCheck": criar_wrapper_bda(
+            "PayrollCheck",
+            "Blueprint for Payroll Check extraction",
+            {
+                "issuer_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the issuer company name from the check."},
+                "payroll_check_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the payroll check number."},
+                "pay_date": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the pay date printed on the check."},
+                "social_security_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the social security number if visible."},
+                "payee_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the payee name after Pay to the order of."},
+                "amount_words": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the check amount written in words."},
+                "amount_numeric": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the numeric amount preceded by a dollar sign."},
+                "sample_indicator": {"type": "string", "inferenceType": "explicit", "instruction": "Extract if SAMPLE watermark or text is present."},
+                "non_negotiable_indicator": {"type": "string", "inferenceType": "explicit", "instruction": "Extract if NON-NEGOTIABLE text is present."},
+                "void_indicator": {"type": "string", "inferenceType": "explicit", "instruction": "Extract if VOID text is present."},
+                "authorized_signature_present": {"type": "string", "inferenceType": "explicit", "instruction": "Identify if an authorized signature text or block is present."}
             }
-        },
-        "DriverLicense": {
-            "type": "object",
-            "description": "Blueprint for Driver License extraction",
-            "properties": {
-                "identification_document_type": {"type": "string", "description": "Extract document type like Driver License."},
-                "document_number": {"type": "string", "description": "Extract the document or license number."},
-                "full_name": {"type": "string", "description": "Extract the full name of the license holder."},
-                "date_of_birth": {"type": "string", "description": "Extract the date of birth."},
-                "expiration_date": {"type": "string", "description": "Extract the document expiration date."},
-                "issuing_state": {"type": "string", "description": "Extract the issuing state abbreviation."}
+        ),
+        "DriverLicense": criar_wrapper_bda(
+            "DriverLicense",
+            "Blueprint for Driver License extraction",
+            {
+                "identification_document_type": {"type": "string", "inferenceType": "explicit", "instruction": "Extract document type like Driver License."},
+                "document_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the document or license number."},
+                "full_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the full name of the license holder."},
+                "date_of_birth": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the date of birth."},
+                "expiration_date": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the document expiration date."},
+                "issuing_state": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the issuing state abbreviation."}
             }
-        },
-        "AccountStatement": {
-            "type": "object",
-            "description": "Blueprint for Account Statement extraction",
-            "properties": {
+        ),
+        "AccountStatement": criar_wrapper_bda(
+            "AccountStatement",
+            "Blueprint for Account Statement extraction",
+            {
                 "your_details": {
                     "type": "object",
-                    "description": "Extract account holder details",
                     "properties": {
-                        "account_holder_name": {"type": "string", "description": "Extract the account holder name."},
-                        "account_holder_address": {"type": "string", "description": "Extract the account holder address."},
-                        "statement_period": {"type": "string", "description": "Extract the statement period."},
-                        "account_number": {"type": "string", "description": "Extract the account number."},
-                        "account_name": {"type": "string", "description": "Extract the account name."}
+                        "account_holder_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the account holder name."},
+                        "account_holder_address": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the account holder address."},
+                        "statement_period": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the statement period."},
+                        "account_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the account number."},
+                        "account_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the account name."}
                     }
                 },
                 "your_account_balance": {
                     "type": "object",
-                    "description": "Extract account balance",
                     "properties": {
-                        "opening_balance": {"type": "string", "description": "Extract the opening balance."},
-                        "closing_balance": {"type": "string", "description": "Extract the closing balance."}
+                        "opening_balance": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the opening balance."},
+                        "closing_balance": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the closing balance."}
                     }
                 },
                 "your_account_valuation": {
                     "type": "array",
-                    "description": "Extract investment options list",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "investment_option_name": {"type": "string", "description": "Extract investment option name."},
-                            "option_code": {"type": "string", "description": "Extract option code."},
-                            "units": {"type": "string", "description": "Extract units."},
-                            "unit_price_$": {"type": "string", "description": "Extract unit price."},
-                            "value_$": {"type": "string", "description": "Extract value."},
-                            "percentage": {"type": "string", "description": "Extract percentage."}
+                            "investment_option_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract investment option name."},
+                            "option_code": {"type": "string", "inferenceType": "explicit", "instruction": "Extract option code."},
+                            "units": {"type": "string", "inferenceType": "explicit", "instruction": "Extract units."},
+                            "unit_price_$": {"type": "string", "inferenceType": "explicit", "instruction": "Extract unit price."},
+                            "value_$": {"type": "string", "inferenceType": "explicit", "instruction": "Extract value."},
+                            "percentage": {"type": "string", "inferenceType": "explicit", "instruction": "Extract percentage."}
                         }
                     }
                 },
                 "account_value": {
                     "type": "object",
-                    "description": "Extract account valuation totals",
                     "properties": {
-                        "value": {"type": "string", "description": "Extract total value."},
-                        "percentage": {"type": "string", "description": "Extract percentage."}
+                        "value": {"type": "string", "inferenceType": "explicit", "instruction": "Extract total value."},
+                        "percentage": {"type": "string", "inferenceType": "explicit", "instruction": "Extract percentage."}
                     }
                 }
             }
-        },
-        "HomeownersInsurance": {
-            "type": "object",
-            "description": "Blueprint for Homeowners Insurance Application extraction",
-            "properties": {
-                "named_insured": {"type": "string", "description": "Extract the named insured."},
-                "insurance_company": {"type": "string", "description": "Extract the insurance company name."},
-                "policy_number": {"type": "string", "description": "Extract the policy number."},
-                "effective_date": {"type": "string", "description": "Extract the effective date."},
-                "expiration_date": {"type": "string", "description": "Extract the expiration date."},
-                "mailing_address": {"type": "string", "description": "Extract the full mailing address."},
+        ),
+        "HomeownersInsurance": criar_wrapper_bda(
+            "HomeownersInsurance",
+            "Blueprint for Homeowners Insurance Application extraction",
+            {
+                "named_insured": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the named insured."},
+                "insurance_company": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the insurance company name."},
+                "policy_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the policy number."},
+                "effective_date": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the effective date."},
+                "expiration_date": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the expiration date."},
+                "mailing_address": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the full mailing address."},
                 "primary_applicant": {
                     "type": "object",
-                    "description": "Extract primary applicant information",
                     "properties": {
-                        "name": {"type": "string", "description": "Extract name."},
-                        "date_of_birth": {"type": "string", "description": "Extract date of birth."},
-                        "gender": {"type": "string", "description": "Extract gender."},
-                        "marital_status": {"type": "string", "description": "Extract marital status."},
-                        "education_level": {"type": "string", "description": "Extract education level."},
-                        "existing_policy": {"type": "string", "description": "Extract existing policy number."},
-                        "drivers_license_number": {"type": "string", "description": "Extract drivers license number."},
-                        "dl_state": {"type": "string", "description": "Extract driver license state."},
-                        "currently_insured_auto": {"type": "string", "description": "Extract currently insured auto carrier."},
-                        "current_property_policy_type": {"type": "string", "description": "Extract current property policy type."}
+                        "name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant name."},
+                        "date_of_birth": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant date of birth."},
+                        "gender": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant gender."},
+                        "marital_status": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant marital status."},
+                        "education_level": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant education level."},
+                        "existing_policy": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant existing policy number."},
+                        "drivers_license_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant drivers license number."},
+                        "dl_state": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant driver license state."},
+                        "currently_insured_auto": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant currently insured auto carrier."},
+                        "current_property_policy_type": {"type": "string", "inferenceType": "explicit", "instruction": "Extract primary applicant current property policy type."}
                     }
                 },
                 "co_applicant": {
                     "type": "object",
-                    "description": "Extract co-applicant information",
                     "properties": {
-                        "name": {"type": "string", "description": "Extract name."},
-                        "date_of_birth": {"type": "string", "description": "Extract date of birth."},
-                        "gender": {"type": "string", "description": "Extract gender."},
-                        "marital_status": {"type": "string", "description": "Extract marital status."},
-                        "relationship_to_primary_applicant": {"type": "string", "description": "Extract relationship to primary applicant."},
-                        "drivers_license_number": {"type": "string", "description": "Extract drivers license number."},
-                        "dl_state": {"type": "string", "description": "Extract driver license state."}
+                        "name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant name."},
+                        "date_of_birth": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant date of birth."},
+                        "gender": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant gender."},
+                        "marital_status": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant marital status."},
+                        "relationship_to_primary_applicant": {"type": "string", "inferenceType": "explicit", "instruction": "Extract relationship to primary applicant."},
+                        "drivers_license_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant drivers license number."},
+                        "dl_state": {"type": "string", "inferenceType": "explicit", "instruction": "Extract co-applicant driver license state."}
                     }
                 }
             }
-        },
-        "PayStub": {
-            "type": "object",
-            "description": "Blueprint for Pay Stub extraction",
-            "properties": {
-                "employer_name": {"type": "string", "description": "Extract the employer name."},
-                "employee_name": {"type": "string", "description": "Extract the employee name."},
-                "social_security_number": {"type": "string", "description": "Extract the social security number."},
-                "taxable_marital_status": {"type": "string", "description": "Extract the marital status."},
-                "pay_period_ending": {"type": "string", "description": "Extract the pay period ending date."},
-                "pay_date": {"type": "string", "description": "Extract the pay date."},
-                "gross_pay_this_period": {"type": "string", "description": "Extract the gross pay for this period."},
-                "gross_pay_ytd": {"type": "string", "description": "Extract the gross pay year to date."},
-                "net_pay_this_period": {"type": "string", "description": "Extract the net pay for this period."},
-                "federal_income_tax": {"type": "string", "description": "Extract the federal income tax deduction."},
-                "social_security_tax": {"type": "string", "description": "Extract the social security tax deduction."},
-                "medicare_tax": {"type": "string", "description": "Extract the medicare tax deduction."},
-                "retirement_401k": {"type": "string", "description": "Extract the 401k retirement deduction."}
+        ),
+        "PayStub": criar_wrapper_bda(
+            "PayStub",
+            "Blueprint for Pay Stub extraction",
+            {
+                "employer_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employer name."},
+                "employee_name": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the employee name."},
+                "social_security_number": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the social security number."},
+                "taxable_marital_status": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the marital status."},
+                "pay_period_ending": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the pay period ending date."},
+                "pay_date": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the pay date."},
+                "gross_pay_this_period": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the gross pay for this period."},
+                "gross_pay_ytd": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the gross pay year to date."},
+                "net_pay_this_period": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the net pay for this period."},
+                "federal_income_tax": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the federal income tax deduction."},
+                "social_security_tax": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the social security tax deduction."},
+                "medicare_tax": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the medicare tax deduction."},
+                "retirement_401k": {"type": "string", "inferenceType": "explicit", "instruction": "Extract the 401k retirement deduction."}
             }
-        }
+        )
     }
 
 def handler(event, context):
