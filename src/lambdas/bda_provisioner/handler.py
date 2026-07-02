@@ -24,13 +24,12 @@ def send_cfn_response(event, context, response_status, response_data=None, physi
         method="PUT"
     )
     try:
-        with urllib.request.urlopen(req) as res:
-            logger.info(f"Sinal CFN enviado: {res.status}")
+        urllib.request.urlopen(req)
+        logger.info(f"Sinal CFN enviado: {response_status}")
     except Exception as e:
         logger.error(f"Erro no envio CFN: {str(e)}")
 
 def criar_blueprint_limpo(classe, descricao, propriedades_planas):
-    """Gera exatamente a estrutura homologada via CLI: chaves planas sem aninhamentos."""
     return {
         "class": classe,
         "description": descricao,
@@ -141,7 +140,17 @@ def handler(event, context):
     payload_resposta = {"Message": "Operacao concluida com sucesso."}
     id_recurso_fisico = event.get("PhysicalResourceId", "BDABlueprintsConfig")
     
+    # 🧹 DELEÇÃO: Limpa recursos em caso de exclusão ou rollback da stack
     if event["RequestType"] == "Delete":
+        try:
+            bps = bda_client.list_blueprints().get("blueprints", [])
+            for bp in bps:
+                if bp["blueprintName"].startswith("CrediFacil-"):
+                    logger.info(f"Deletando {bp['blueprintName']} na destruição da stack...")
+                    bda_client.delete_blueprint(blueprintArn=bp["blueprintArn"])
+        except Exception as e:
+            logger.error(f"Erro ao tentar limpar Blueprints na deleção: {str(e)}")
+        
         send_cfn_response(event, context, "SUCCESS", payload_resposta, id_recurso_fisico)
         return
 
@@ -154,25 +163,35 @@ def handler(event, context):
         account_id = context.invoked_function_arn.split(":")[4]
         project_arn = project_id if project_id.startswith("arn:aws:") else f"arn:aws:bedrock-data-automation:us-east-1:{account_id}:project/{project_id}"
 
+        # 🔍 IDEMPOTÊNCIA: Busca o que já existe na conta antes de tentar criar
+        bps_existentes = bda_client.list_blueprints().get("blueprints", [])
+        mapa_existentes = {bp["blueprintName"]: bp["blueprintArn"] for bp in bps_existentes}
+
         schemas = obter_schemas_oficiais_bda()
         associacoes_blueprints = []
 
         for nome, schema_corpo in schemas.items():
             nome_blueprint_canonica = f"CrediFacil-{nome}-Blueprint"
-            logger.info(f"Registrando Blueprint: {nome_blueprint_canonica}")
             
-            bp_res = bda_client.create_blueprint(
-                blueprintName=nome_blueprint_canonica,
-                type="DOCUMENT",
-                blueprintStage="LIVE",
-                schema=json.dumps(schema_corpo, ensure_ascii=False)
-            )
-            associacoes_blueprints.append({
-                "blueprintArn": bp_res["blueprint"]["blueprintArn"],
-                "blueprintStage": "LIVE"
-            })
+            if nome_blueprint_canonica in mapa_existentes:
+                logger.info(f"Blueprint {nome_blueprint_canonica} ja existe. Atualizando...")
+                arn = mapa_existentes[nome_blueprint_canonica]
+                bda_client.update_blueprint(
+                    blueprintArn=arn,
+                    schema=json.dumps(schema_corpo, ensure_ascii=False)
+                )
+                associacoes_blueprints.append({"blueprintArn": arn, "blueprintStage": "LIVE"})
+            else:
+                logger.info(f"Criando Blueprint: {nome_blueprint_canonica}")
+                bp_res = bda_client.create_blueprint(
+                    blueprintName=nome_blueprint_canonica,
+                    type="DOCUMENT",
+                    blueprintStage="LIVE",
+                    schema=json.dumps(schema_corpo, ensure_ascii=False)
+                )
+                associacoes_blueprints.append({"blueprintArn": bp_res["blueprint"]["blueprintArn"], "blueprintStage": "LIVE"})
             
-        logger.info(f"Buscando metadados e amarrando {len(associacoes_blueprints)} contratos...")
+        logger.info(f"Buscando metadados e amarrando {len(associacoes_blueprints)} contratos ao BDA Project...")
         project_details = bda_client.get_data_automation_project(projectArn=project_arn)
         std_output_config = project_details["project"]["standardOutputConfiguration"]
         
