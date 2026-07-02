@@ -7,7 +7,6 @@ from src.shared.tools import obter_especificacao_ferramenta_loan
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
-# 🚀 ADICIONADO: Inicialização do cliente DynamoDB para suportar o Human-in-the-Loop
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-lite-v1:0"
@@ -141,7 +140,28 @@ def limpar_ruido_recursivo(dados: any) -> any:
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
 
-# 🚀 RESOLVIDO: Garante a conformidade estrutural completa exigida no SRS
+def calcular_media_real_inference(bda_json: dict) -> float:
+    """Varre recursivamente a chave 'inference_result' para calcular a média verdadeira das confianças."""
+    confiancas = []
+    ir = bda_json.get("inference_result", {})
+    
+    def extrair_notas(no_atual):
+        if isinstance(no_atual, dict):
+            conf = no_atual.get("confidence") or no_atual.get("confidenceScore")
+            if conf is not None:
+                confiancas.append(float(conf))
+            for v in no_atual.values():
+                extrair_notas(v)
+        elif isinstance(no_atual, list):
+            for item in no_atual:
+                extrair_notas(item)
+                
+    extrair_notas(ir)
+    
+    if not confiancas:
+        return 0.0
+    return round(sum(confiancas) / len(confiancas), 4)
+
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
         "payroll_check": TEMPLATE_PAYROLL_CHECK,
@@ -152,14 +172,12 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
     }
     
-    # Clona o template estático do SRS para servir como base rígida de campos
     template_final = dict(MAPA_TEMPLATES.get(subtipo.lower(), {}))
     
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
     if isinstance(raw_fields, str): raw_fields = json.loads(raw_fields)
         
-    # 1. Alimenta o template base com as extrações do Nova Lite (mapeamento tolerante a espaços)
     for chave_template in template_final.keys():
         valor_encontrado = None
         for k_ia, v_ia in raw_fields.items():
@@ -169,7 +187,6 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         if valor_encontrado is not None:
             template_final[chave_template] = valor_encontrado
 
-    # 2. RESOLVIDO: Mesclagem cirúrgica e persistente das correções da mesa de revisão humana
     is_human_override = False
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
@@ -179,10 +196,8 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                     template_final[field_part] = valor_corrigido
                     is_human_override = True
 
-    # 3. METRICAS REAIS: Extrai a média matemática verdadeira das confianças do BDA
-    bda_fields = bda_json.get("extractedFields", {}) if bda_json else {}
-    confiancas_reais = [float(f.get("confidenceScore") or f.get("confidence") or 1.0) for f in bda_fields.values()]
-    media_real_bda = sum(confiancas_reais) / len(confiancas_reais) if confiancas_reais else 0.95
+    # 3. METRICAS REAIS: Substitui o 0.95 fixo pelo cálculo dinâmico varrendo o inference_result
+    media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.0
 
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     if is_human_override:
@@ -192,7 +207,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
         "arquivo_original": arquivo,
-        "dados_extraidos_do_documento": template_final, # JSON agora segue 100% o padrão do template
+        "dados_extraidos_do_documento": template_final,
         "localizacao_documento_s3": {
             "bucket_origem": s3_inputs["bucket_entrada"],
             "s3_key_origem": s3_inputs["key_entrada"],
@@ -223,24 +238,9 @@ def handler(event, context):
         s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
         json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        # ===== DIAGNÓSTICO TEMPORÁRIO — REMOVER APÓS DESCOBERTA =====
-        logger.info(f"BDA JSON top-level keys: {list(json_bruto.keys())}")
-        
-        # Imprime os primeiros 2000 caracteres para ver a estrutura
-        json_preview = json.dumps(json_bruto, ensure_ascii=False)[:2000]
-        logger.info(f"BDA JSON preview: {json_preview}")
-        
-        # Também verifica se os candidatos mais prováveis existem:
-        for chave_candidata in ["extractedFields", "keyValuePairs", "inference_result", 
-                                "fields", "extractedData", "inferenceResult", "document"]:
-            existe = chave_candidata in json_bruto
-            logger.info(f"Chave '{chave_candidata}' existe no JSON do BDA: {existe}")
-        # ===== FIM DO DIAGNÓSTICO =====
-        
         texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
         json_higienizado = limpar_ruido_recursivo(json_bruto)
 
-        # 🚀 RECUPERAÇÃO DE REVISÃO: Captura as correções salvas pelo analista no DynamoDB
         correcoes_humanas = {}
         string_prompt_humanos = ""
         try:
@@ -253,7 +253,6 @@ def handler(event, context):
                 correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
                 correcoes_humanas = json.loads(correcoes_json)
                 
-                # Isolamento de chaves deste arquivo específico para guiar o LLM
                 correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
                 if correcoes_especificas:
                     string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR (USE COMO VERDADE ABSOLUTA) ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
@@ -268,7 +267,7 @@ def handler(event, context):
         conteudo_input_hibrido = (
             f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
             f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
-            f"{string_prompt_humanos}" # Passa o dado retificado dentro do contexto do LLM
+            f"{string_prompt_humanos}"
         )
 
         response = bedrock_runtime.converse(
@@ -320,7 +319,6 @@ def handler(event, context):
             "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
-        # Envia o json_bruto do BDA para cálculo de acurácia fidedigna
         blueprint_json = formatar_conforme_blueprint(
             tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas, json_bruto
         )
