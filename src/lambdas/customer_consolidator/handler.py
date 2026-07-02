@@ -151,6 +151,8 @@ def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict
             "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
         },
         "sumario_financeiro": {
+            "renda_bruta_estimada": score["renda_maxima"],
+            "saldo_bancario_fechamento": score["saldo_maximo"],
             "renda_bruta_estimada_usd": score["renda_maxima"],
             "saldo_bancario_fechamento_usd": score["saldo_maximo"],
             "parcela_maxima_estimada_usd": round(score["renda_maxima"] * 0.30, 2),
