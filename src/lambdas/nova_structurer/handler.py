@@ -141,7 +141,7 @@ def limpar_ruido_recursivo(dados: any) -> any:
     return dados
 
 def calcular_media_real_inference(bda_json: dict) -> float:
-    """Varre recursivamente o nó explainability_info capturando as notas reais dos caracteres."""
+    """Extrai as notas reais de acurácia de dentro do nó explainability_info da AWS."""
     confiancas = []
     exp_info = bda_json.get("explainability_info", {})
     
@@ -157,10 +157,7 @@ def calcular_media_real_inference(bda_json: dict) -> float:
                 varrer(item)
                 
     varrer(exp_info)
-    if not confiancas:
-        varrer(bda_json.get("inference_result", {}))
-        
-    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.9500
+    return round(sum(confiancas) / len(confiancas), 4) if confiancas else 0.8850
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
@@ -185,7 +182,7 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             for k, v in ir.items():
                 fields_planos_bda[k.lower().replace("_", "").replace(" ", "").replace(".", "")] = str(v)
 
-    # 1. Cruzamento e preenchimento de chaves primitivas de primeiro nível
+    # 1. Alimenta as chaves primitivas de primeiro nível cruzando BDA e LLM complementar
     for chave_template in template_final.keys():
         if isinstance(template_final[chave_template], (dict, list)):
             continue
@@ -201,12 +198,12 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         if val is not None:
             template_final[chave_template] = val
 
-    # 2. Preserva e acopla subestruturas complexas ricas geradas pela IA
+    # 2. Resgata subestruturas complexas hierárquicas criadas originalmente pela IA
     for k_complex in ["exemptions_or_allowances", "earnings", "deductions", "net_pay", "taxable_wages", "other_benefits_and_information", "important_notes", "your_details", "your_account_balance", "your_account_valuation", "account_value", "your_insurance_details", "primary_applicant", "co_applicant"]:
         if k_complex in template_final and k_complex in raw_fields and raw_fields[k_complex]:
             template_final[k_complex] = raw_fields[k_complex]
 
-    # 3. Injeção explícita de chaves planas do BDA dentro das ramificações do PayStub
+    # 3. Mapeador Explícito dos campos planos extraídos do Blueprint do BDA para os nós internos
     if subtipo.lower() == "pay_stub":
         val_gross = fields_planos_bda.get("grosspaythisperiod") or raw_fields.get("gross_pay_this_period")
         val_ytd = fields_planos_bda.get("grosspayytd") or raw_fields.get("gross_pay_ytd")
@@ -225,7 +222,15 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             val_deducao = fields_planos_bda.get(k_flat) or raw_fields.get(k_flat)
             if val_deducao and "deductions" in template_final:
                 for item in template_final["deductions"].get("statutory", []):
-                    if item["description"].lower() == desc.lower(): item["this_period"] = val_deducao
+                    if item["description"].lower() == desc.lower():
+                        item["this_period"] = val_deducao
+                        
+        if "deductions" in template_final and "other" in template_final["deductions"]:
+            val_401k = fields_planos_bda.get("retirement401k") or raw_fields.get("retirement_401k")
+            if val_401k:
+                for item in template_final["deductions"]["other"]:
+                    if "401" in item.get("description", ""):
+                        item["this_period"] = val_401k
 
     if correcoes_humanas:
         for composite_key, valor_corrigido in correcoes_humanas.items():
@@ -243,19 +248,10 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
     media_real_bda = calcular_media_real_inference(bda_json) if bda_json else 0.9500
     alertas_observacoes = list(payload_ia.get("alertas_inconsistencias", []))
     
-    # Rastreia campos não povoados para gerar observações reais e auditáveis
-    campos_vazios = []
-    def checar_vazios(d_busca):
-        if isinstance(d_busca, dict):
-            for k, v in d_busca.items():
-                if v is None or v == "": campos_vazios.append(k)
-                else: checar_vazios(v)
-        elif isinstance(d_busca, list):
-            for item in d_busca: checar_vazios(item)
-            
-    checar_vazios(template_final)
+    # Rastreia chaves que permaneceram nulas para gerar as observações
+    campos_vazios = [k for k, v in template_final.items() if v is None or v == ""]
     if campos_vazios:
-        alertas_observacoes.append(f"Campos ausentes na extração: {', '.join(list(set(campos_vazios))[:4])}")
+        alertas_observacoes.append(f"Campos estruturais vazios na extração: {', '.join(campos_vazios[:3])}")
 
     return {
         "tipo_documento": tipo.lower(),
@@ -287,7 +283,7 @@ def handler(event, context):
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
 
-        # 🚀 FILTRO DE BARRAGEM: Aborta imediatamente se o arquivo for da standard_output
+        # 🚀 FILTRO CONDICIONAL: Aborta imediatamente se a chave pertencer à standard_output
         if "standard_output" in s3_key_bda.lower():
             logger.info(f"Filtro Ativo: Ignorando arquivo redundante da standard_output: {s3_key_bda}")
             return {"status": "SKIPPED", "message": "Ignorando standard_output duplicado"}
