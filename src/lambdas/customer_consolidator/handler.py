@@ -180,27 +180,20 @@ def handler(event, context):
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # Mapeia o resumo de ponteiros limpos para o Dossiê do Cliente
-        resumo_docs_enxuto = [
-            {
-                "arquivo_original": doc.get("arquivo_original", ""),
-                "tipo_documento": doc.get("tipo_documento", ""),
-                "subtipo_documento": doc.get("subtipo_documento", ""),
-                "status_extracao": doc.get("status_extracao", "sucesso"),
-                "confianca_media": float(doc.get("confianca_media", 1.0000)),
-                "s3_key_origem": doc.get("s3_key_origem", ""),
-                "s3_key_resultado": doc.get("s3_key_resultado", "")
-            }
-            for doc in docs_analisados
-        ]
-
-        # 🚀 ESTRUTURA 1: Dossiê Executivo Enxuto (Análise de Negócio)
-        report_cliente_dossie = {
+        # 🚀 CONSOLIDAÇÃO INTEGRAL: Montagem do Master JSON completo unificado demandado pelo negócio
+        report_final_master = {
             "package_id": package_id,
             "status": "COMPLETED",
             "auditoria": {
                 "versao_algoritmo_score": "1.0.0",
-                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0"
+                "modelo_ia_consolidacao": "amazon.nova-pro-v1:0",
+                "input_tokens_consumidos": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
+                "output_tokens_consumidos": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0)
+            },
+            # 🚀 CORREÇÃO CONTRATO: Objeto mapeado na raiz para renderizar os cards de Renda e Saldo
+            "sumario_financeiro": {
+                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
+                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
             },
             "cliente": {
                 "nome": consolidado_json.get("cliente", {}).get("nome"),
@@ -214,47 +207,27 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": resumo_docs_enxuto
+            # Mantém a cópia íntegra de todos os dados extraídos detalhados dos arquivos individuais
+            "documentos_analisados": docs_analisados
         }
 
-        # 🚀 ESTRUTURA 2: Junção Mestre Completa do Pacote (Para auditoria de TI / Business Metrics)
-        pacote_completo_json = {
-            "package_id": package_id,
-            "status": "COMPLETED",
-            "sistema": {
-                "processamento": {
-                    "data_conclusao": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_conclusao"),
-                    "quantidade_tokens": {
-                        "input_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
-                        "output_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0),
-                        "total_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("total_tokens", 0) + usage_tokens.get("inputTokens", 0) + usage_tokens.get("outputTokens", 0)
-                    }
-                }
-            },
-            "cliente": report_cliente_dossie["cliente"],
-            "validacao": validacao_data,
-            "documentos_analisados": docs_analisados # Mantém os dados brutos internos acoplados aqui
-        }
-
-        # Grava o Dossiê enxuto na rota de Clientes
         s3_target_cliente = f"results/clientes/{package_id}/customer_consolidated.json"
         s3_client.put_object(
             Bucket=bucket, Key=s3_target_cliente,
-            Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
+            Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
         )
 
-        # Grava o JSON mestre completo na raiz do pacote (Sobrescreve com os tokens unificados)
         s3_target_pacote = f"results/packages/{package_id}/output.json"
         s3_client.put_object(
             Bucket=bucket, Key=s3_target_pacote,
-            Body=json.dumps(pacote_completo_json, ensure_ascii=False), ContentType="application/json"
+            Body=json.dumps(report_final_master, ensure_ascii=False), ContentType="application/json"
         )
 
         return {
             **event,
-            "cliente": report_cliente_dossie["cliente"],
+            "cliente": report_final_master["cliente"],
             "validacao": validacao_data,
-            "json_estruturado": report_cliente_dossie
+            "json_estruturado": report_final_master
         }
 
     except Exception as e:
