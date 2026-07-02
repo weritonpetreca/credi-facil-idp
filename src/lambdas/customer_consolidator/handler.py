@@ -120,7 +120,6 @@ def handler(event, context):
 
         json_base_lote = event.get("json_estruturado")
         if not json_base_lote:
-            logger.warning("Linha de base não localizada em memória. Recorrendo ao S3...")
             key_base = f"results/packages/{package_id}/output.json"
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
@@ -164,13 +163,13 @@ def handler(event, context):
             "messages": [{"role": "user", "content": [{"text": prompt_consolidacao}]}]
         })
 
-        logger.info(f"Invocando o motor Amazon Nova Pro para o lote {package_id}")
         bedrock_response = bedrock_runtime.invoke_model(
             modelId="amazon.nova-pro-v1:0", contentType="application/json", accept="application/json", body=body_request
         )
 
         response_body = json.loads(bedrock_response["body"].read().decode("utf-8"))
         texto_resposta = response_body["output"]["message"]["content"][0]["text"].strip()
+        usage_tokens = response_body.get("usage", {})
         
         if texto_resposta.startswith("```json"):
             texto_resposta = texto_resposta.split("```json")[1].split("```")[0].strip()
@@ -178,26 +177,25 @@ def handler(event, context):
             texto_resposta = texto_resposta.split("```")[1].split("```")[0].strip()
 
         consolidado_json = json.loads(texto_resposta)
-
         validacao_data = consolidado_json.get("validacao", {})
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
-        # 🚀 CORREÇÃO DE CONTRATO: Chaves mapeadas conforme expectativa das Lambdas downstream
-        resumo_docs = [
+        # Mapeia o resumo de ponteiros limpos para o Dossiê do Cliente
+        resumo_docs_enxuto = [
             {
                 "arquivo_original": doc.get("arquivo_original", ""),
                 "tipo_documento": doc.get("tipo_documento", ""),
                 "subtipo_documento": doc.get("subtipo_documento", ""),
-                "status_extracao": doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso"),
-                "confianca_media": float(doc.get("confiabilidade_extracao", {}).get("confianca_media", "1.0000")),
-                "s3_key_origem": doc.get("localizacao_documento_s3", {}).get("s3_key_origem", ""),
-                "s3_key_resultado": doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", ""),
-                "dados_extraidos_do_documento": doc.get("dados_extraidos_do_documento", {})
+                "status_extracao": doc.get("status_extracao", "sucesso"),
+                "confianca_media": float(doc.get("confianca_media", 1.0000)),
+                "s3_key_origem": doc.get("s3_key_origem", ""),
+                "s3_key_resultado": doc.get("s3_key_resultado", "")
             }
             for doc in docs_analisados
         ]
 
-        report_final = {
+        # 🚀 ESTRUTURA 1: Dossiê Executivo Enxuto (Análise de Negócio)
+        report_cliente_dossie = {
             "package_id": package_id,
             "status": "COMPLETED",
             "auditoria": {
@@ -216,23 +214,49 @@ def handler(event, context):
                 }
             },
             "validacao": validacao_data,
-            "documentos_analisados": resumo_docs
+            "documentos_analisados": resumo_docs_enxuto
         }
 
-        s3_target_key = f"results/clientes/{package_id}/customer_consolidated.json"
-        logger.info(f"Gravando Dossiê do Cliente estruturado em: {s3_target_key}")
+        # 🚀 ESTRUTURA 2: Junção Mestre Completa do Pacote (Para auditoria de TI / Business Metrics)
+        pacote_completo_json = {
+            "package_id": package_id,
+            "status": "COMPLETED",
+            "sistema": {
+                "processamento": {
+                    "data_conclusao": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_conclusao"),
+                    "quantidade_tokens": {
+                        "input_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0) + usage_tokens.get("inputTokens", 0),
+                        "output_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0) + usage_tokens.get("outputTokens", 0),
+                        "total_tokens": json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("total_tokens", 0) + usage_tokens.get("inputTokens", 0) + usage_tokens.get("outputTokens", 0)
+                    }
+                }
+            },
+            "cliente": report_cliente_dossie["cliente"],
+            "validacao": validacao_data,
+            "documentos_analisados": docs_analisados # Mantém os dados brutos internos acoplados aqui
+        }
+
+        # Grava o Dossiê enxuto na rota de Clientes
+        s3_target_cliente = f"results/clientes/{package_id}/customer_consolidated.json"
         s3_client.put_object(
-            Bucket=bucket, Key=s3_target_key,
-            Body=json.dumps(report_final, ensure_ascii=False), ContentType="application/json"
+            Bucket=bucket, Key=s3_target_cliente,
+            Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
+        )
+
+        # Grava o JSON mestre completo na raiz do pacote (Sobrescreve com os tokens unificados)
+        s3_target_pacote = f"results/packages/{package_id}/output.json"
+        s3_client.put_object(
+            Bucket=bucket, Key=s3_target_pacote,
+            Body=json.dumps(pacote_completo_json, ensure_ascii=False), ContentType="application/json"
         )
 
         return {
             **event,
-            "cliente": report_final["cliente"],
-            "validacao": report_final["validacao"],
-            "json_estruturado": report_final
+            "cliente": report_cliente_dossie["cliente"],
+            "validacao": validacao_data,
+            "json_estruturado": report_cliente_dossie
         }
 
     except Exception as e:
-        logger.error(f"Falha crítica na esteira de consolidação cadastral: {str(e)}")
+        logger.error(f"Falha crítica na esteira de consolidação: {str(e)}")
         raise e
