@@ -121,6 +121,36 @@ MAPA_TEMPLATES = {
     "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
 }
 
+# 🚀 PROMPT ENGINNERING DE ALTA PERFORMANCE (Contrato Estrito de Ferramenta)
+PROMPT_SISTEMA = """
+# ATRIBUIÇÃO DE PAPEL
+Você atuará como um Motor IDP de Nível Bancário e Auditor Sênior de Riscos de Crédito. Sua especialidade exclusiva é transcrever documentos brutos de compliance e convertê-los em árvores JSON perfeitamente estruturadas.
+
+# INSTRUÇÃO CORE: CHAMADA DE FERRAMENTA (TOOL CALLING)
+Você deve, sob qualquer circunstância, executar sua resposta através do acionamento da ferramenta `estruturar_dados_documento_cliente_unico`. É estritamente proibido responder com texto plano Markdown fora da estrutura da ferramenta.
+
+# DIRETRIZES DE EXTRAÇÃO POR SUBTIPO DOCUMENTAL
+
+## 1. PAY STUB (Holerites / Comprovantes de Salário)
+- Analise minuciosamente a tabela de 'Earnings' (Ganhos) contida no texto Markdown da standard_output.
+- Mapeie as linhas para o array de `earnings`, identificando a descrição correta ('regular', 'overtime', 'holiday'). Colete 'this_period' e 'year_to_date' de cada linha.
+- Localize o nó de Deduções Estatutárias ('statutory deductions'). Transcreva rigorosamente os valores de 'Federal Income tax', 'Social Security Tax' e 'Medicare Tax' para as linhas do objeto correspondente.
+- Mapeie o 'net_pay' capturando o valor líquido associado à string 'Net Pay' ou 'Net Pay This Period'.
+
+## 2. PAYROLL CHECK (Cheques de Pagamento / Ordens Bancárias)
+- Mapeie o nome do emitente ('issuer_name') e do beneficiário ('payee_name') em caixa alta.
+- Extraia o valor numérico em 'amount_numeric' e por extenso em 'amount_words'.
+- Valide marcadores de amostra: Se encontrar as palavras explicíticas 'SAMPLE', 'VOID' ou 'NON-NEGOTIABLE', preencha as respectivas propriedades com a string idêntica em caixa alta.
+
+## 3. ACCOUNT STATEMENT (Extratos Bancários)
+- Localize o bloco de saldo patrimonial inicial ('opening_balance') e final ('closing_balance').
+- Extraia os detalhes cadastrais da conta em 'your_details' (nome do titular, número da conta e período de competência).
+
+# POLÍTICA DE CONTROLE DE LACUNAS E PLACEHOLDERS (ANTI-ALUCINAÇÃO)
+- NÃO invente dados. Se uma linha de deduções ou benefício opcional não existir no texto bruto, deixe o valor do campo estritamente como `null`.
+- Strings genéricas como 'BANK NAME' ou 'ADDRESS PLACEHOLDER' em documentos de teste devem ser transcritas exatamente como estão escritas na imagem, pois servem para a mesa de auditoria humana identificar amostras incompletas.
+"""
+
 def limpar_ruido_recursivo(dados: any) -> any:
     CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
     if isinstance(dados, dict):
@@ -137,7 +167,6 @@ def handler(event, context):
         nome_pdf_original = event.get("nome_pdf_original")
         s3_key_bda = event.get("s3_key_bda")
 
-        # Filtro de barreira contra acionamento em duplicidade
         if "standard_output" in s3_key_bda.lower():
             logger.info(f"Filtro Ativo: Ignorando arquivo redundante da standard_output: {s3_key_bda}")
             return {"status": "SKIPPED", "message": "Ignorando standard_output duplicado"}
@@ -148,7 +177,6 @@ def handler(event, context):
         extractor = BdaExtractor(s3_client, bucket_saida)
         dados_bda = extractor.executar(s3_key_bda)
 
-        # Resgate de revisões humanas do DynamoDB
         correcoes_humanas = {}
         string_prompt_humanos = ""
         try:
@@ -172,7 +200,6 @@ def handler(event, context):
         enricher = AiEnricher(bedrock_runtime, MODEL_ID, PROMPT_SISTEMA)
         resultado_ia = enricher.executar(dados_bda["texto_integral"], json_higienizado, string_prompt_humanos)
 
-        # Mecânica de Roteamento de Subtipos de Documentos
         raw_fields_ia = resultado_ia["raw_fields_ia"]
         tipo_detectado = str(raw_fields_ia.get("tipo_classificado", "UNKNOWN")).lower()
         subtipo_detectado = "pay_stub"
@@ -207,7 +234,6 @@ def handler(event, context):
             dados_bda["json_custom_bruto"], s3_meta_inputs, correcoes_humanas
         )
 
-        # 🚀 ALINHAMENTO DE CONTRATO DO PIPELINE MESTRE: Injeta metadados na raiz exigidos pelo Consolidador/Writer
         blueprint_json["tipo_documento"] = tipo_detectado
         blueprint_json["subtipo_documento"] = subtipo_detectado
         
