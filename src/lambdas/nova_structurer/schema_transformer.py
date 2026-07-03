@@ -79,7 +79,6 @@ class SchemaTransformer:
                 if "__" in composite_key:
                     file_part, field_part = composite_key.split("__", 1)
                     if file_part == arquivo:
-                        # Re-utiliza a lógica de overlay recursivo para injetar a correção na folha correta
                         ir_humano_limpo = {field_part.lower().replace("_", "").replace(" ", "").replace(".", ""): valor_corrigido}
                         if self.aplicar_overlay_bda_recursivo(template_final, ir_humano_limpo):
                             is_human_override = True
@@ -104,10 +103,19 @@ class SchemaTransformer:
                 if critico in ["payee_name", "pay_date", "employee_name"]:
                     status_extracao = "parcial"
 
+        # 🚀 CORRIGIDO: Retorna o mapeamento de chaves traduzido exatamente para o contrato legado exigido pelo Aggregator
         return {
             "arquivo_original": arquivo,
             "dados_extraidos_do_documento": template_final,
-            "localizacao_documento_s3": s3_inputs,
+            "localizacao_documento_s3": {
+                "bucket_origem": s3_inputs["bucket_entrada"],
+                "s3_key_origem": s3_inputs["key_entrada"],
+                "s3_uri_origem": f"s3://{s3_inputs['bucket_entrada']}/{s3_inputs['key_entrada']}",
+                "bucket_resultado_bda": s3_inputs["bucket_saida"],
+                "s3_key_resultado_bda": s3_inputs["key_bda"],
+                "s3_key_resultado": s3_inputs["key_resultado"],
+                "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
+            },
             "confiabilidade_extracao": {
                 "status_extracao": status_extracao,
                 "confianca_media": f"{media_real:.4f}",
