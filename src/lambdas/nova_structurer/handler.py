@@ -195,10 +195,19 @@ def handler(event, context):
         except Exception as db_err:
             logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
 
+        guardrail_id = os.environ.get("GUARDRAIL_IDENTIFIER")
+        guardrail_ver = os.environ.get("GUARDRAIL_VERSION", "1")
+
         # 🚀 2. EXECUÇÃO DO ENRICHER: Tool Calling puro com texto completo
         json_higienizado = limpar_ruido_recursivo(dados_bda["json_custom_bruto"])
         enricher = AiEnricher(bedrock_runtime, MODEL_ID, PROMPT_SISTEMA)
-        resultado_ia = enricher.executar(dados_bda["texto_integral"], json_higienizado, string_prompt_humanos)
+        resultado_ia = enricher.executar(
+            dados_bda["texto_integral"], 
+            json_higienizado, 
+            string_prompt_humanos,
+            guardrail_id=guardrail_id,
+            guardrail_version=guardrail_ver
+        )
 
         raw_fields_ia = resultado_ia["raw_fields_ia"]
         tipo_detectado = str(raw_fields_ia.get("tipo_classificado", "UNKNOWN")).lower()
