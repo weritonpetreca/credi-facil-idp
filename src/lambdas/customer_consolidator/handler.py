@@ -1,11 +1,14 @@
 import json
 import os
+import datetime
 import boto3
 from aws_lambda_powertools import Logger
 
 logger = Logger(service="customer-consolidator")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+MODEL_ID = "amazon.nova-lite-v1:0"
 
 def safe_float(val) -> float:
     if val is None: return 0.0
@@ -50,6 +53,7 @@ def extrair_renda_do_documento(campos: dict, subtipo: str) -> float:
     return 0.0
 
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
+    """Aplica o scorecard de crédito blindado contra bônus em faixas de renda nula."""
     score_calculado = 300
     motivos_detalhados = []
     
@@ -83,7 +87,6 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
                 saldo_raw = saldo_raw.get("closing_balance") or saldo_raw.get("value")
             saldo_maximo = max(saldo_maximo, safe_float(saldo_raw))
 
-    # 🚀 CORRIGIDO: Lógica de Score de Renda Alinhada com as Práticas de Mercado
     if renda_maxima >= 5000.0:
         score_calculado += 450
         motivos_detalhados.append(f"+450: Capacidade de renda líquida elevada comprovada (US$ {renda_maxima:.2f}).")
@@ -99,7 +102,6 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     else:
         motivos_detalhados.append("+0: Nenhuma renda comprovada ou identificada nos documentos analisados.")
 
-    # 🚀 CORRIGIDO: Lógica de Score de Liquidez Patrimonial
     if saldo_maximo >= 10000.0:
         score_calculado += 400
         motivos_detalhados.append(f"+400: Excelente liquidez de fechamento patrimonial (US$ {saldo_maximo:.2f}).")
@@ -121,8 +123,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     }
 
 def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict, docs_analisados: list) -> dict:
-    """Gera um dossiê executivo unificado suportando chaves legadas e novas em paralelo (Multi-Contrato)."""
-    import datetime
+    """Gera o dossiê leve exclusivo para cruzamento de dados e auditoria de score."""
     return {
         "package_id": package_id,
         "status": "COMPLETED",
@@ -141,10 +142,9 @@ def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict
             }
         },
         "validacao": consolidado_json.get("validacao", {}),
-        "documentos_analisados": docs_analisados,
         "requerente": {
-            "nome": consolidado_json.get("cliente", {}).get("nome"),
-            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+            "nome": consolidado_json.get("cliente", {}).get("nome") or "NAO INFORMADO",
+            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao") or "NAO INFORMADO",
         },
         "sumario_financeiro": {
             "renda_bruta_estimada": score["renda_maxima"],
@@ -172,9 +172,51 @@ def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict
         "auditoria": {
             "modelo_extracao": "amazon.bedrock.data-automation",
             "modelo_estruturacao": "amazon.nova-lite-v1:0",
-            "modelo_consolidacao": "amazon.nova-pro-v1:0",
+            "modelo_consolidacao": MODEL_ID,
             "revisao_humana": any(doc.get("status_extracao") == "parcial" for doc in docs_analisados),
             "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z"
+        }
+    }
+
+def obter_especificacao_ferramenta_consolidacao():
+    """Garante o contrato JSON estrito via Tool Calling para a Nova Lite."""
+    return {
+        "name": "consolidar_e_validar_dados_esteira",
+        "description": "Consolida a validação cadastral cruzada e a análise de risco do proponente.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "cliente": {
+                        "type": "object",
+                        "properties": {
+                            "nome": {"type": "string", "description": "Nome completo do proponente em CAIXA ALTA."},
+                            "documento_identificacao": {"type": "string", "description": "Número do documento de identificação civil."},
+                            "classificacao_risco": {
+                                "type": "object",
+                                "properties": {
+                                    "categoria": {"type": "string", "enum": ["baixo", "medio", "alto"]},
+                                    "justificativa": {"type": "string", "description": "Texto sucinto e analítico do parecer técnico de crédito."}
+                                },
+                                "required": ["categoria", "justificativa"]
+                            }
+                        },
+                        "required": ["nome", "documento_identificacao", "classificacao_risco"]
+                    },
+                    "validacao": {
+                        "type": "object",
+                        "properties": {
+                            "nome_consistente_entre_documentos": {"type": "boolean"},
+                            "data_nascimento_consistente": {"type": "boolean"},
+                            "documento_identificacao_presente": {"type": "boolean"},
+                            "comprovante_renda_presente": {"type": "boolean"},
+                            "extrato_bancario_presente": {"type": "boolean"}
+                        },
+                        "required": ["nome_consistente_entre_documentos", "data_nascimento_consistente", "documento_identificacao_presente"]
+                    }
+                },
+                "required": ["cliente", "validacao"]
+            }
         }
     }
 
@@ -182,6 +224,7 @@ def handler(event, context):
     try:
         package_id = event.get("package_id")
         bucket = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA")
+        execute_score = event.get("execute_score", False)
         
         logger.info(f"Iniciando consolidação analítica de score para o pacote {package_id}")
 
@@ -191,7 +234,7 @@ def handler(event, context):
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        # 🚀 CORRIGIDO: Desembrulha o Contrato Híbrido vindo do Map/Aggregator
+        # Desembrulha o contrato híbrido vindo do Map/Aggregator
         raw_docs = json_base_lote.get("documentos_analisados", [])
         docs_analisados = []
         for d in raw_docs:
@@ -202,76 +245,71 @@ def handler(event, context):
                 
             if isinstance(doc_obj, dict) and doc_obj.get("arquivo_original"):
                 docs_analisados.append(doc_obj)
-                    
-        dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
-        prompt_consolidacao = f"""
-        Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados abaixo para realizar a validação cadastral cruzada do proponente mestre.
+        # 🚀 TELEMETRIA: Resgata tokens base acumulados nas Lambdas anteriores
+        tokens_base = json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {})
+        input_t = int(tokens_base.get("input_tokens", 0))
+        output_t = int(tokens_base.get("output_tokens", 0))
 
-        Dossiê de Documentos Estruturados:
-        {dossie_textual}
+        consolidado_json = {}
+        scorecard_completo = {
+            "score_calculado": 300, "motivos_detalhados": ["Scorecard não executado por demanda do fluxo."],
+            "renda_maxima": 0.0, "saldo_maximo": 0.0, "classificacao": "alto"
+        }
+        report_cliente_dossie = {}
 
-        DIRETRIZES DE CRÉDITO OBRIGATÓRIAS:
-        - Mapeie o nome completo e documento civil do proponente baseado nos documentos de identificação oficiais mais confiáveis (ex: Driver License).
-        - Classifique a categoria de risco em 'baixo', 'medio' ou 'alto', fornecendo uma justificativa técnica sucinta e fundamentada na saúde patrimonial e financeira demonstrada.
-        
-        - VALIDAÇÃO ESTRITA DE CONSISTÊNCIA CADASTRAL (REGRAS DE BOOLEANOS):
-          * 'nome_consistente_entre_documentos': true se o nome completo do proponente for idêntico em todos os arquivos onde ele foi localizado.
-          * 'data_nascimento_consistente': Só pode ser true se a data de nascimento constar de forma explícita e visível em pelo menos um ou mais documentos e não houver divergência. SE A DATA DE NASCIMENTO ESTIVER AUSENTE OU NÃO CONSTAR EM NENHUM DOS DOCUMENTOS DO DOSSIÊ, VOCÊ DEVE OBRIGATORIAMENTE DEFINIR ESTE CAMPO COMO false.
+        # ==========================================================================
+        # 🎯 BLOCO REATIVO: EXECUTA O SCORE E O TOOL CALLING CASO SOLICITADO
+        # ==========================================================================
+        if execute_score and docs_analisados:
+            logger.info("Gate de Score Ativo. Disparando Tool Calling na Nova Lite.")
+            dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
-        Retorne RIGOROSAMENTE o formato JSON plano abaixo, sem tags markdown (como ```json) ou qualquer texto complementar explicativo antes ou depois:
-        {{
-          "cliente": {{
-            "nome": "NOME COMPLETO EM CAIXA ALTA",
-            "documento_identificacao": "NUMERO",
-            "classificacao_risco": {{ "categoria": "baixo", "justificativa": "Texto analítico base do parecer de crédito." }}
-          }},
-          "validacao": {{
-            "nome_consistente_entre_documentos": true,
-            "data_nascimento_consistente": false,
-            "documento_identificacao_presente": true,
-            "comprovante_renda_presente": true,
-            "extrato_bancario_presente": true
-          }}
-        }}
-        """
+            prompt_sistema_consolidacao = """
+            Você é um analista sênior de risco de crédito. Analise o dossiê de documentos estruturados fornecido para realizar a validação cadastral cruzada do proponente mestre.
+            Sua resposta deve ser obrigatoriamente despachada através do acionamento da ferramenta 'consolidar_e_validar_dados_esteira'.
+            Regra Estrita de Negócio: O campo 'data_nascimento_consistente' só pode ser marcado como true se a data constar explicitamente em algum documento de identificação oficial. Se estiver omissa, defina como false.
+            """
 
-        body_request = json.dumps({
-            "inferenceConfig": {"temperature": 0.0, "maxTokens": 1500},
-            "messages": [{"role": "user", "content": [{"text": prompt_consolidacao}]}]
-        })
+            tool_config = {
+                "tools": [obter_especificacao_ferramenta_consolidacao()],
+                "toolChoice": {"tool": {"name": "consolidar_e_validar_dados_esteira"}}
+            }
 
-        bedrock_response = bedrock_runtime.invoke_model(
-            modelId="amazon.nova-pro-v1:0", contentType="application/json", accept="application/json", body=body_request
-        )
+            response = bedrock_runtime.converse(
+                modelId=MODEL_ID,
+                messages=[{"role": "user", "content": [{"text": f"Dossiê de Documentos:\n{dossie_textual}"}]}],
+                system=[{"text": prompt_sistema_consolidacao}],
+                toolConfig=tool_config,
+                inferenceConfig={"temperature": 0.0, "maxTokens": 1500}
+            )
 
-        response_body = json.loads(bedrock_response["body"].read().decode("utf-8"))
-        texto_resposta = response_body["output"]["message"]["content"][0]["text"].strip()
-        usage_tokens = response_body.get("usage", {})
-        
-        if "```json" in texto_resposta:
-            texto_resposta = texto_resposta.split("```json")[1].split("```")[0].strip()
-        elif "```" in texto_resposta:
-            texto_resposta = texto_resposta.split("```")[1].split("```")[0].strip()
+            usage_tokens = response.get("usage", {})
+            input_t += usage_tokens.get("inputTokens", 0)
+            output_t += usage_tokens.get("outputTokens", 0)
 
-        consolidado_json = json.loads(texto_resposta)
-        validacao_data = consolidado_json.get("validacao", {})
-        
-        scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
-        
-        input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
-        output_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("output_tokens", 0)) + usage_tokens.get("outputTokens", 0)
+            content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+            tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
+            
+            if not tool_use_block:
+                raise ValueError("A Nova Lite falhou ao tentar acionar a ferramenta de validação cruzada.")
 
-        resumo_docs_enxuto = []
+            consolidado_json = tool_use_block.get("input", {})
+            if isinstance(consolidado_json, str): 
+                consolidado_json = json.loads(consolidado_json)
+
+            validacao_data = consolidado_json.get("validacao", {})
+            scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
+
+        # ==========================================================================
+        # 📦 CONSTRUÇÃO DA LISTA INTEGRAL PARA O OUTPUT.JSON (Sem perder nenhum campo)
+        # ==========================================================================
         resumo_docs_completo = []
-        
         for doc in docs_analisados:
-            tipo = str(doc.get("tipo_documento", "")).lower()
             subtipo = str(doc.get("subtipo_documento", "")).lower()
             campos_brutos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
             
             renda_calc = extrair_renda_do_documento(campos_brutos, subtipo)
-            
             saldo_calc = (campos_brutos.get("your_account_balance") or {}).get("closing_balance")
             if not saldo_calc:
                 saldo_calc = campos_brutos.get("closing_account_balance") or campos_brutos.get("saldo_bancario_fechamento") or campos_brutos.get("closing_balance") or campos_brutos.get("balance")
@@ -279,7 +317,8 @@ def handler(event, context):
                 saldo_calc = saldo_calc.get("closing_balance") or saldo_calc.get("value")
             saldo_calc = safe_float(saldo_calc)
 
-            base_item_summary = {
+            # Injeta a árvore completa mantendo chaves legadas e hierárquicas coexistindo
+            resumo_docs_completo.append({
                 "arquivo_original": doc.get("arquivo_original", ""),
                 "tipo_documento": doc.get("tipo_documento", ""),
                 "subtipo_documento": doc.get("subtipo_documento", ""),
@@ -293,22 +332,26 @@ def handler(event, context):
                 "wages_tips_other_compensation": renda_calc,
                 "saldo_bancario_fechamento": saldo_calc,
                 "closing_balance": saldo_calc,
-                "balance": saldo_calc
-            }
+                "balance": saldo_calc,
+                "dados_extraidos_do_documento": campos_brutos,  # 🚀 CRUCIAL: Expõe a árvore completa no painel
+                "campos_extraidos": campos_brutos
+            })
 
-            resumo_docs_enxuto.append(base_item_summary)
-            
-            item_completo = dict(base_item_summary)
-            item_completo["campos_extraidos"] = campos_brutos
-            item_completo["dados_extraidos_do_documento"] = campos_brutos
-            resumo_docs_completo.append(item_completo)
-
-        report_cliente_dossie = montar_dossie_executivo(package_id, consolidado_json, scorecard_completo, resumo_docs_enxuto)
+        # ==========================================================================
+        # 💾 ESCRITA DOS ARTEFATOS NO S3 BASEADO NAS REGRAS DE NEGÓCIO
+        # ==========================================================================
+        if execute_score:
+            report_cliente_dossie = montar_dossie_executivo(package_id, consolidado_json, scorecard_completo, resumo_docs_completo)
+            logger.info("Gravando dossiê leve de crédito do cliente no S3.")
+            s3_client.put_object(
+                Bucket=bucket, Key=f"results/clientes/{package_id}/customer_consolidated.json",
+                Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
+            )
 
         pacote_completo_json = {
             "package_id": package_id,
             "status": "COMPLETED",
-            "execute_score": True,
+            "execute_score": execute_score,
             "bda_output_bucket": bucket,
             "confianca_general": 1,
             "renda_bruta_estimada": scorecard_completo["renda_maxima"],
@@ -321,7 +364,7 @@ def handler(event, context):
                 "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
                 "processamento": {
                     "status": "processado",
-                    "modelo_utilizado": "Amazon Nova Pro",
+                    "modelo_utilizado": "Amazon Nova Lite",
                     "bda_project_arn": json_base_lote.get("sistema", {}).get("processamento", {}).get("bda_project_arn"),
                     "quantidade_tokens": {
                         "input_tokens": input_t,
@@ -332,15 +375,15 @@ def handler(event, context):
                 },
                 "tipos_documentos_analisados": json_base_lote.get("sistema", {}).get("tipos_documentos_analisados", [])
             },
-            "cliente": report_cliente_dossie["cliente"],
-            "validacao": validacao_data,
+            "cliente": report_cliente_dossie.get("cliente", {
+                "nome": "NAO REQUISITADO", "documento_identificacao": "NAO REQUISITADO",
+                "score_credito": {"valor": 0, "motivos": ["Score não requisitado neste lote."]}
+            }),
+            "validacao": consolidado_json.get("validacao", {}),
             "documentos_analisados": resumo_docs_completo
         }
 
-        s3_client.put_object(
-            Bucket=bucket, Key=f"results/clientes/{package_id}/customer_consolidated.json",
-            Body=json.dumps(report_cliente_dossie, ensure_ascii=False), ContentType="application/json"
-        )
+        logger.info("Gravando arquivo mestre do pacote integral (output.json) no S3.")
         s3_client.put_object(
             Bucket=bucket, Key=f"results/packages/{package_id}/output.json",
             Body=json.dumps(pacote_completo_json, ensure_ascii=False), ContentType="application/json"
@@ -349,7 +392,7 @@ def handler(event, context):
         return {
             "package_id": package_id,
             "user_id": event.get("user_id", "sistema"),
-            "execute_score": True,
+            "execute_score": execute_score,
             "bda_output_bucket": bucket,
             "confianca_general": 1,
             "json_estruturado": pacote_completo_json
