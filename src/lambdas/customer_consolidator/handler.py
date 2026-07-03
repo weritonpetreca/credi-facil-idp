@@ -83,6 +83,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
                 saldo_raw = saldo_raw.get("closing_balance") or saldo_raw.get("value")
             saldo_maximo = max(saldo_maximo, safe_float(saldo_raw))
 
+    # 🚀 CORRIGIDO: Lógica de Score de Renda Alinhada com as Práticas de Mercado
     if renda_maxima >= 5000.0:
         score_calculado += 450
         motivos_detalhados.append(f"+450: Capacidade de renda líquida elevada comprovada (US$ {renda_maxima:.2f}).")
@@ -92,10 +93,13 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     elif renda_maxima >= 1200.0:
         score_calculado += 150
         motivos_detalhados.append(f"+150: Capacidade de renda líquida básica (US$ {renda_maxima:.2f}).")
-    else:
+    elif renda_maxima > 0.0:
         score_calculado += 50
-        motivos_detalhados.append("+50: Capacidade de renda em faixa mínima de amortização.")
+        motivos_detalhados.append(f"+50: Capacidade de renda em faixa mínima de amortização (US$ {renda_maxima:.2f}).")
+    else:
+        motivos_detalhados.append("+0: Nenhuma renda comprovada ou identificada nos documentos analisados.")
 
+    # 🚀 CORRIGIDO: Lógica de Score de Liquidez Patrimonial
     if saldo_maximo >= 10000.0:
         score_calculado += 400
         motivos_detalhados.append(f"+400: Excelente liquidez de fechamento patrimonial (US$ {saldo_maximo:.2f}).")
@@ -104,7 +108,9 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         motivos_detalhados.append(f"+250: Liquidez de fechamento estável (US$ {saldo_maximo:.2f}).")
     elif saldo_maximo >= 3000.0:
         score_calculado += 100
-        motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido.")
+        motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido (US$ {saldo_maximo:.2f}).")
+    else:
+        motivos_detalhados.append("+0: Nenhum saldo bancário expressivo ou identificado nos extratos.")
 
     return {
         "score_calculado": min(1000, max(300, score_calculado)),
@@ -117,19 +123,15 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
 def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict, docs_analisados: list) -> dict:
     """Gera um dossiê executivo unificado suportando chaves legadas e novas em paralelo (Multi-Contrato)."""
     import datetime
-    
-    # Estrutura base original para o front-end renderizar sem quebras
     return {
         "package_id": package_id,
         "status": "COMPLETED",
         "versao_algoritmo": "1.0.0",
         "renda_bruta_estimada": score["renda_maxima"],
         "saldo_bancario_fechamento": score["saldo_maximo"],
-        
-        # 🚀 RESTAURADO: Mapeamento de 'cliente' original exigido pelo Front-end
         "cliente": {
-            "nome": consolidado_json.get("cliente", {}).get("nome"),
-            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+            "nome": consolidado_json.get("cliente", {}).get("nome") or "NAO INFORMADO",
+            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao") or "NAO INFORMADO",
             "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
             "score_credito": {
                 "valor": score["score_calculado"],
@@ -139,13 +141,7 @@ def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict
             }
         },
         "validacao": consolidado_json.get("validacao", {}),
-        
-        # 🚀 RESTAURADO: Chave original que o query_handler varre para assinar os links S3
         "documentos_analisados": docs_analisados,
-        
-        # ──────────────────────────────────────────────────────────────
-        # Chaves Novas do Dossiê do Clau injetadas em paralelo (Compliance)
-        # ──────────────────────────────────────────────────────────────
         "requerente": {
             "nome": consolidado_json.get("cliente", {}).get("nome"),
             "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
@@ -195,7 +191,18 @@ def handler(event, context):
             s3_response = s3_client.get_object(Bucket=bucket, Key=key_base)
             json_base_lote = json.loads(s3_response["Body"].read().decode("utf-8"))
 
-        docs_analisados = [d for d in json_base_lote.get("documentos_analisados", []) if d.get("arquivo_original")]
+        # 🚀 CORRIGIDO: Desembrulha o Contrato Híbrido vindo do Map/Aggregator
+        raw_docs = json_base_lote.get("documentos_analisados", [])
+        docs_analisados = []
+        for d in raw_docs:
+            if isinstance(d, dict) and "blueprint" in d and isinstance(d["blueprint"], dict):
+                doc_obj = d["blueprint"]
+            else:
+                doc_obj = d
+                
+            if isinstance(doc_obj, dict) and doc_obj.get("arquivo_original"):
+                docs_analisados.append(doc_obj)
+                    
         dossie_textual = json.dumps(docs_analisados, ensure_ascii=False)
 
         prompt_consolidacao = f"""
@@ -296,10 +303,8 @@ def handler(event, context):
             item_completo["dados_extraidos_do_documento"] = campos_brutos
             resumo_docs_completo.append(item_completo)
 
-        # Geração do Dossiê Híbrido Retrocompatível
         report_cliente_dossie = montar_dossie_executivo(package_id, consolidado_json, scorecard_completo, resumo_docs_enxuto)
 
-        # Geração do JSON Mestre Completo (output.json)
         pacote_completo_json = {
             "package_id": package_id,
             "status": "COMPLETED",
