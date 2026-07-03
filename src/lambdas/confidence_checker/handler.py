@@ -17,46 +17,59 @@ CAMPOS_CRITICOS_POR_SUBTIPO = {
     "pay_stub": ["employer_name", "employee_name", "social_security_number", "taxable_marital_status", "pay_period_ending", "pay_date", "gross_pay_this_period", "gross_pay_ytd", "net_pay_this_period", "federal_income_tax", "social_security_tax", "medicare_tax", "retirement_401k"]
 }
 
-def extrair_recursivo_por_chave(dados: any, campo_alvo: str) -> tuple:
-    campo_norm = campo_alvo.lower().replace("_", "").replace(".", "").replace("$", "")
-    
-    if isinstance(dados, dict):
-        for k, v in dados.items():
-            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "").replace("$", "")
-            if k_norm == campo_norm:
-                if isinstance(v, dict):
-                    conf = v.get("confidence") or v.get("confidence_score") or v.get("confidenceScore") or 1.0
-                    val = v.get("value") or v.get("text") or ""
-                    return float(conf), str(val)
-                else:
-                    return 1.0, str(v)
-        
-        for v in dados.values():
-            conf, val = extrair_recursivo_por_chave(v, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
-    elif isinstance(dados, list):
-        for item in dados:
-            if isinstance(item, dict):
-                name_attr = (item.get("name") or item.get("fieldName") or item.get("id") or "").lower().replace("_", "").replace(" ", "")
-                if name_attr and (name_attr in campo_norm or campo_norm in name_attr):
-                    conf = item.get("confidence") or item.get("confidence_score") or 1.0
-                    val = item.get("value") or item.get("text") or ""
-                    return float(conf), str(val)
-            conf, val = extrair_recursivo_por_chave(item, campo_alvo)
-            if conf != -1.0:
-                return conf, val
-                
-    return -1.0, ""
-
 def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
-    for raiz in ["inference_result", "inferenceResult", "fields", "extractedData"]:
-        if raiz in bda_json:
-            conf, val = extrair_recursivo_por_chave(bda_json[raiz], campo_canonico)
-            if conf != -1.0:
-                return conf, val
-    return extrair_recursivo_por_chave(bda_json, campo_canonico)
+    """
+    Lê confiança e valor de um campo do BDA custom blueprint output
+    casando com o formato de lista de dicionários verificado em produção.
+    """
+    campo_norm = campo_canonico.lower().replace("_", "").replace(".", "").replace("$", "")
+    inference_result = bda_json.get("inference_result", {})
+    
+    valor_encontrado = None
+    chave_original = None
+    for k, v in inference_result.items():
+        if k.lower().replace("_", "").replace(".", "").replace("$", "") == campo_norm:
+            valor_encontrado = str(v).strip() if v is not None else ""
+            chave_original = k
+            break
+            
+    if valor_encontrado is None:
+        # Campo ausente no inference_result
+        return -1.0, ""
+    if not valor_encontrado or valor_encontrado.lower() == "none":
+        # Campo vazio
+        return 0.0, ""
+        
+    exp_info = bda_json.get("explainability_info", {})
+    
+    # Normalização idêntica para varredura de segurança
+    lista_dicts = []
+    if isinstance(exp_info, list):
+        for item in exp_info:
+            if isinstance(item, dict):
+                lista_dicts.append(item)
+    elif isinstance(exp_info, dict):
+        lista_dicts.append(exp_info)
+        
+    for d in lista_dicts:
+        # 1. Tentativa por match direto de chave original do BDA
+        if chave_original and chave_original in d:
+            dados_exp = d[chave_original]
+            if isinstance(dados_exp, dict):
+                conf = dados_exp.get("confidence") or dados_exp.get("confidence_score")
+                if conf is not None:
+                    return float(conf), valor_encontrado
+                    
+        # 2. Fallback por chave normalizada caso haja divergência de escrita
+        for k_exp, dados_exp in d.items():
+            if k_exp.lower().replace("_", "").replace(".", "").replace("$", "") == campo_norm:
+                if isinstance(dados_exp, dict):
+                    conf = dados_exp.get("confidence") or dados_exp.get("confidence_score")
+                    if conf is not None:
+                        return float(conf), valor_encontrado
+                        
+    logger.warning(f"Campo '{campo_canonico}' extraído, mas sem metadados em explainability_info. Proxy=1.0")
+    return 1.0, valor_encontrado
 
 def handler(event, context):
     try:

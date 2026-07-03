@@ -19,24 +19,34 @@ def safe_float(val) -> float:
         return float(limpo) if limpo else 0.0
     except: return 0.0
 
-def extrair_renda_documento(campos: dict, tipo: str) -> float:
-    tipo_upper = tipo.upper()
-    if tipo_upper in ["COMPROVANTE_RENDA", "PAY_STUB", "COMPROVANTE_COMPLEMENTAR", "PAYROLL_CHECK"]:
+def extrair_renda_do_documento(campos: dict, subtipo: str) -> float:
+    """Extrai a renda respeitando estritamente os nós complexos e aninhados do blueprint."""
+    subtipo_lower = subtipo.lower() if subtipo else ""
+    
+    if subtipo_lower in ("pay_stub", "comprovante_renda"):
         net_pay = campos.get("net_pay")
         if isinstance(net_pay, dict):
             v = net_pay.get("this_period") or net_pay.get("year_to_date")
             if v: return safe_float(v)
-        for earning in campos.get("earnings", []):
-            if isinstance(earning, dict) and "gross_pay" in earning:
-                gp = earning["gross_pay"]
+            
+        for item in campos.get("earnings", []):
+            if isinstance(item, dict):
+                gp = item.get("gross_pay", {})
                 if isinstance(gp, dict):
                     v = gp.get("this_period")
                     if v: return safe_float(v)
-        v = campos.get("amount_numeric") or campos.get("Gross Pay")
+                if item.get("description") == "regular":
+                    v = item.get("this_period")
+                    if v: return safe_float(v)
+                    
+    elif subtipo_lower in ("payroll_check", "comprovante_complementar"):
+        v = campos.get("amount_numeric")
         if v: return safe_float(v)
-    elif tipo_upper in ["W2_TAX_FORM", "COMPROVANTE_RENDA"]:
+        
+    elif subtipo_lower == "w2_tax_form":
         v = campos.get("wages_tips_other_compensation")
         if v: return safe_float(v)
+        
     return 0.0
 
 def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dict:
@@ -58,15 +68,20 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
     
     for doc in docs_analisados:
         tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-        campos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
+        subtipo = str(doc.get("subtipo_documento", "")).lower()
+        campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
         
-        renda_doc = extrair_renda_documento(campos, tipo)
-        renda_maxima = max(renda_maxima, renda_doc)
+        if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"]:
+            renda = extrair_renda_do_documento(campos, subtipo)
+            renda_maxima = max(renda_maxima, renda)
 
-        if tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
-            v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
-            if isinstance(v_saldo, dict): v_saldo = v_saldo.get("closing_balance") or v_saldo.get("value")
-            saldo_maximo = max(saldo_maximo, safe_float(v_saldo))
+        elif tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
+            saldo_raw = (campos.get("your_account_balance") or {}).get("closing_balance")
+            if not saldo_raw:
+                saldo_raw = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("closing_balance") or campos.get("balance")
+            if isinstance(saldo_raw, dict): 
+                saldo_raw = saldo_raw.get("closing_balance") or saldo_raw.get("value")
+            saldo_maximo = max(saldo_maximo, safe_float(saldo_raw))
 
     if renda_maxima >= 5000.0:
         score_calculado += 450
@@ -92,10 +107,79 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         motivos_detalhados.append(f"+100: Colchão de amortização patrimonial mínimo preenchido.")
 
     return {
-        "valor": min(1000, max(300, score_calculado)),
-        "detalhes_calculo": motivos_detalhados,
-        "renda_apurada": renda_maxima,
-        "liquidez_apurada": saldo_maximo
+        "score_calculado": min(1000, max(300, score_calculado)),
+        "motivos_detalhados": motivos_detalhados,
+        "renda_maxima": renda_maxima,
+        "saldo_maximo": saldo_maximo,
+        "classificacao": "baixo" if score_calculado >= 700 else "medio" if score_calculado >= 500 else "alto"
+    }
+
+def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict, docs_analisados: list) -> dict:
+    """Gera um dossiê executivo unificado suportando chaves legadas e novas em paralelo (Multi-Contrato)."""
+    import datetime
+    
+    # Estrutura base original para o front-end renderizar sem quebras
+    return {
+        "package_id": package_id,
+        "status": "COMPLETED",
+        "versao_algoritmo": "1.0.0",
+        "renda_bruta_estimada": score["renda_maxima"],
+        "saldo_bancario_fechamento": score["saldo_maximo"],
+        
+        # 🚀 RESTAURADO: Mapeamento de 'cliente' original exigido pelo Front-end
+        "cliente": {
+            "nome": consolidado_json.get("cliente", {}).get("nome"),
+            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+            "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
+            "score_credito": {
+                "valor": score["score_calculado"],
+                "motivos": score["motivos_detalhados"],
+                "renda_final": score["renda_maxima"],
+                "liquidez_final": score["saldo_maximo"]
+            }
+        },
+        "validacao": consolidado_json.get("validacao", {}),
+        
+        # 🚀 RESTAURADO: Chave original que o query_handler varre para assinar os links S3
+        "documentos_analisados": docs_analisados,
+        
+        # ──────────────────────────────────────────────────────────────
+        # Chaves Novas do Dossiê do Clau injetadas em paralelo (Compliance)
+        # ──────────────────────────────────────────────────────────────
+        "requerente": {
+            "nome": consolidado_json.get("cliente", {}).get("nome"),
+            "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
+        },
+        "sumario_financeiro": {
+            "renda_bruta_estimada": score["renda_maxima"],
+            "saldo_bancario_fechamento": score["saldo_maximo"],
+            "renda_bruta_estimada_usd": score["renda_maxima"],
+            "saldo_bancario_fechamento_usd": score["saldo_maximo"],
+            "parcela_maxima_estimada_usd": round(score["renda_maxima"] * 0.30, 2),
+        },
+        "score_credito": {
+            "pontuacao": score["score_calculado"],
+            "classificacao": score["classificacao"],
+            "motivos": score["motivos_detalhados"],
+        },
+        "validacao_cruzada": consolidado_json.get("validacao", {}),
+        "parecer": consolidado_json.get("cliente", {}).get("classificacao_risco", {}).get("justificativa", ""),
+        "documentos_processados": [
+            {
+                "arquivo": doc.get("arquivo_original", ""),
+                "tipo": doc.get("tipo_documento", ""),
+                "subtipo": doc.get("subtipo_documento", ""),
+                "confianca_bda": doc.get("confianca_media", 1.0),
+                "s3_json_detalhado": doc.get("s3_key_resultado", "")
+            } for doc in docs_analisados
+        ],
+        "auditoria": {
+            "modelo_extracao": "amazon.bedrock.data-automation",
+            "modelo_estruturacao": "amazon.nova-lite-v1:0",
+            "modelo_consolidacao": "amazon.nova-pro-v1:0",
+            "revisao_humana": any(doc.get("status_extracao") == "parcial" for doc in docs_analisados),
+            "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z"
+        }
     }
 
 def handler(event, context):
@@ -165,6 +249,7 @@ def handler(event, context):
 
         consolidado_json = json.loads(texto_resposta)
         validacao_data = consolidado_json.get("validacao", {})
+        
         scorecard_completo = calcular_scorecard_financeiro(validacao_data, docs_analisados)
         
         input_t = int(json_base_lote.get("sistema", {}).get("processamento", {}).get("quantidade_tokens", {}).get("input_tokens", 0)) + usage_tokens.get("inputTokens", 0)
@@ -175,12 +260,18 @@ def handler(event, context):
         
         for doc in docs_analisados:
             tipo = str(doc.get("tipo_documento", "")).lower()
-            campos_brutos = doc.get("campos_extraidos") or doc.get("dados_extraidos_do_documento") or {}
+            subtipo = str(doc.get("subtipo_documento", "")).lower()
+            campos_brutos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
             
-            renda_calc = extrair_renda_documento(campos_brutos, tipo)
-            saldo_calc = safe_float(campos_brutos.get("closing_account_balance") or campos_brutos.get("saldo_bancario_fechamento") or campos_brutos.get("closing_balance") or campos_brutos.get("balance"))
+            renda_calc = extrair_renda_do_documento(campos_brutos, subtipo)
+            
+            saldo_calc = (campos_brutos.get("your_account_balance") or {}).get("closing_balance")
+            if not saldo_calc:
+                saldo_calc = campos_brutos.get("closing_account_balance") or campos_brutos.get("saldo_bancario_fechamento") or campos_brutos.get("closing_balance") or campos_brutos.get("balance")
+            if isinstance(saldo_calc, dict):
+                saldo_calc = saldo_calc.get("closing_balance") or saldo_calc.get("value")
+            saldo_calc = safe_float(saldo_calc)
 
-            # 🚀 POVOAMENTO BIUNÍVOCO: Chaves financeiras espelhadas na raiz para a função calcularMaiorValorCampo ler
             base_item_summary = {
                 "arquivo_original": doc.get("arquivo_original", ""),
                 "tipo_documento": doc.get("tipo_documento", ""),
@@ -190,7 +281,6 @@ def handler(event, context):
                 "s3_key_origem": doc.get("s3_key_origem") or doc.get("localizacao_documento_s3", {}).get("s3_key_origem", ""),
                 "s3_key_resultado": doc.get("s3_key_resultado") or doc.get("localizacao_documento_s3", {}).get("s3_key_resultado", ""),
                 "observacoes": doc.get("observacoes") or doc.get("confiabilidade_extracao", {}).get("observacoes", []),
-                # Injeções de chaves planas requisitadas pelo front-end INCOME_KEYS e BALANCE_KEYS
                 "amount_numeric": renda_calc,
                 "Gross Pay": renda_calc,
                 "wages_tips_other_compensation": renda_calc,
@@ -206,43 +296,21 @@ def handler(event, context):
             item_completo["dados_extraidos_do_documento"] = campos_brutos
             resumo_docs_completo.append(item_completo)
 
-        # 🚀 JSON 1: DOSSIÊ EXECUTIVO DO CLIENTE (customer_consolidated.json) - Sem nós de TI ou dados brutos
-        report_cliente_dossie = {
-            "package_id": package_id,
-            "status": "COMPLETED",
-            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
-            "sumario_financeiro": {
-                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
-            },
-            "cliente": {
-                "nome": consolidado_json.get("cliente", {}).get("nome"),
-                "documento_identificacao": consolidado_json.get("cliente", {}).get("documento_identificacao"),
-                "classificacao_risco": consolidado_json.get("cliente", {}).get("classificacao_risco"),
-                "score_credito": {
-                    "valor": scorecard_completo["valor"],
-                    "motivos": scorecard_completo["detalhes_calculo"],
-                    "renda_final": scorecard_completo["renda_apurada"],
-                    "liquidez_final": scorecard_completo["liquidez_apurada"]
-                }
-            },
-            "validacao": validacao_data,
-            "documentos_analisados": resumo_docs_enxuto
-        }
+        # Geração do Dossiê Híbrido Retrocompatível
+        report_cliente_dossie = montar_dossie_executivo(package_id, consolidado_json, scorecard_completo, resumo_docs_enxuto)
 
-        # 🚀 JSON 2: JUNÇÃO MESTRE COMPLETA DO PACOTE (output.json) - Dados brutos acoplados + Volume total de tokens
+        # Geração do JSON Mestre Completo (output.json)
         pacote_completo_json = {
             "package_id": package_id,
             "status": "COMPLETED",
             "execute_score": True,
             "bda_output_bucket": bucket,
             "confianca_general": 1,
-            "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-            "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"],
+            "renda_bruta_estimada": scorecard_completo["renda_maxima"],
+            "saldo_bancario_fechamento": scorecard_completo["saldo_maximo"],
             "sumario_financeiro": {
-                "renda_bruta_estimada": scorecard_completo["renda_apurada"],
-                "saldo_bancario_fechamento": scorecard_completo["liquidez_apurada"]
+                "renda_bruta_estimada": scorecard_completo["renda_maxima"],
+                "saldo_bancario_fechamento": scorecard_completo["saldo_maximo"]
             },
             "sistema": {
                 "ultimo_package_vinculado": json_base_lote.get("sistema", {}).get("ultimo_package_vinculado", {}),
@@ -253,7 +321,7 @@ def handler(event, context):
                     "quantidade_tokens": {
                         "input_tokens": input_t,
                         "output_tokens": output_t,
-                        "total_tokens": input_t + output_t # 🚀 Consolidado Geral Exigido pelo Negócio
+                        "total_tokens": input_t + output_t
                     },
                     "data_processamento": json_base_lote.get("sistema", {}).get("processamento", {}).get("data_processamento")
                 },
