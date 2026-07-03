@@ -162,50 +162,23 @@ def extrair_confiancas_explainability(bda_json: dict) -> dict:
                     
     return resultado
 
-def preencher_template_com_bda(template: dict, inference_result: dict) -> tuple[dict, list]:
-    """Preenche chaves de primeiro nível do template usando os dados do BDA."""
-    template_preenchido = json.loads(json.dumps(template))
-    campos_sem_valor = []
-    
-    for campo_template in template_preenchido.keys():
-        if isinstance(template_preenchido[campo_template], (dict, list)):
-            continue
-            
-        if campo_template in inference_result:
-            valor = inference_result[campo_template]
-            if valor is not None and str(valor).strip() and str(valor).lower() != "none":
-                template_preenchido[campo_template] = str(valor)
-                continue
-                
-        campo_norm = campo_template.lower().replace("_", "").replace(".", "")
-        encontrado = False
-        for k_bda, v_bda in inference_result.items():
-            if k_bda.lower().replace("_", "").replace(".", "") == campo_norm:
-                if v_bda is not None and str(v_bda).strip() and str(v_bda).lower() != "none":
-                    template_preenchido[campo_template] = str(v_bda)
-                    encontrado = True
-                    break
-        if not encontrado:
-            campos_sem_valor.append(campo_template)
-            
-    return template_preenchido, campos_sem_valor
-
-def mesclar_ia_recursivo(alvo, fonte):
-    """Mescla subestruturas da LLM de forma segura, sem permitir sobrescrever dados reais com null."""
-    if isinstance(alvo, dict) and isinstance(fonte, dict):
-        for k, v in fonte.items():
-            if k in alvo:
-                if isinstance(alvo[k], (dict, list)):
-                    mesclar_ia_recursivo(alvo[k], v)
-                elif (alvo[k] is None or alvo[k] == "") and v not in (None, ""):
-                    alvo[k] = v
-            else:
-                if not isinstance(v, (dict, list)) and v not in (None, ""):
-                    alvo[k] = v
-    elif isinstance(alvo, list) and isinstance(fonte, list):
-        for i, item_fonte in enumerate(fonte):
-            if i < len(alvo):
-                mesclar_ia_recursivo(alvo[i], item_fonte)
+def sobrepor_valores_recursivo(alvo, chave_alvo, valor_novo):
+    """Varre a estrutura final do template e substitui o valor onde a chave normalizada bater."""
+    chave_alvo_norm = chave_alvo.lower().replace("_", "").replace(".", "").replace(" ", "")
+    if isinstance(alvo, dict):
+        for k, v in alvo.items():
+            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "")
+            if k_norm == chave_alvo_norm and not isinstance(v, (dict, list)):
+                alvo[k] = str(valor_novo)
+                return True
+            if isinstance(v, (dict, list)):
+                if sobrepor_valores_recursivo(v, chave_alvo, valor_novo):
+                    return True
+    elif isinstance(alvo, list):
+        for item in alvo:
+            if sobrepor_valores_recursivo(item, chave_alvo, valor_novo):
+                return True
+    return False
 
 def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
     MAPA_TEMPLATES = {
@@ -217,60 +190,46 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
         "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
     }
     
-    template_base = MAPA_TEMPLATES.get(subtipo.lower(), {})
-    inference_result = (bda_json or {}).get("inference_result", {})
-    
-    # ─────────────────────────────────────────────
-    # CAMADA 1: Preenchimento Direto BDA (Camada Plana)
-    # ─────────────────────────────────────────────
-    template_final, campos_sem_valor = preencher_template_com_bda(template_base, inference_result)
-    
-    # 🚀 MAPEADOR EXPLÍCITO SEGURO (Mata os Nulls de Subestruturas Aninhadas)
-    if subtipo.lower() == "pay_stub":
-        val_gross_tp = inference_result.get("gross_pay_this_period")
-        val_gross_ytd = inference_result.get("gross_pay_ytd")
-        for e in template_final.get("earnings", []):
-            if "gross_pay" in e:
-                if val_gross_tp: e["gross_pay"]["this_period"] = val_gross_tp
-                if val_gross_ytd: e["gross_pay"]["year_to_date"] = val_gross_ytd
-            elif e.get("description") == "regular":
-                if val_gross_tp: e["this_period"] = val_gross_tp
-                if val_ytd: e["year_to_date"] = val_gross_ytd
-                
-        val_net_tp = inference_result.get("net_pay_this_period")
-        if val_net_tp:
-            template_final["net_pay"]["this_period"] = val_net_tp
-
-        if "deductions" in template_final and isinstance(template_final["deductions"], dict):
-            fed_tax = inference_result.get("federal_income_tax")
-            ss_tax = inference_result.get("social_security_tax")
-            med_tax = inference_result.get("medicare_tax")
-            
-            for item in template_final["deductions"].get("statutory", []):
-                desc = item.get("description", "").lower()
-                if "federal income tax" in desc and fed_tax: item["this_period"] = fed_tax
-                elif "social security tax" in desc and ss_tax: item["this_period"] = ss_tax
-                elif "medicare tax" in desc and med_tax: item["this_period"] = med_tax
-                    
-            ret_401k = inference_result.get("retirement_401k")
-            if ret_401k:
-                for item in template_final["deductions"].get("other", []):
-                    if "401" in item.get("description", ""): item["this_period"] = ret_401k
-
-    # ─────────────────────────────────────────────
-    # CAMADA 2: Complementação via Nova Lite (Fusão Recursiva Protegida)
-    # ─────────────────────────────────────────────
+    # 1. BASELINE: Carrega a estrutura complexa inteira montada pela IA (Sem perder tabelas/arrays)
     CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
     raw_fields_ia = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
     if isinstance(raw_fields_ia, str):
         raw_fields_ia = json.loads(raw_fields_ia)
         
-    # Injeta de forma não-destrutiva o conteúdo complexo ou plano complementar da IA
-    mesclar_ia_recursivo(template_final, raw_fields_ia)
+    template_final = json.loads(json.dumps(MAPA_TEMPLATES.get(subtipo.lower(), {})))
+    
+    # Copia a árvore inteira gerada pela IA para o nosso template
+    for k, v in raw_fields_ia.items():
+        if k in template_final:
+            template_final[k] = v
 
-    # ─────────────────────────────────────────────
-    # CAMADA 3: Mesa de Revisão Humana
-    # ─────────────────────────────────────────────
+    # 2. OVERLAY BDA-FIRST: Força a injeção dos dados de alta precisão do Blueprint em cima do JSON
+    inference_result = (bda_json or {}).get("inference_result", {})
+    for k_bda, v_bda in inference_result.items():
+        if v_bda is not None and str(v_bda).strip() and str(v_bda).lower() != "none":
+            # Aplica recursivamente nas folhas planas do dicionário final
+            sobrepor_valores_recursivo(template_final, k_bda, v_bda)
+
+    # Injeções complementares explícitas para garantir compatibilidade com nós aninhados do PayStub
+    if subtipo.lower() == "pay_stub":
+        val_gross = inference_result.get("gross_pay_this_period")
+        val_ytd = inference_result.get("gross_pay_ytd")
+        val_net = inference_result.get("net_pay_this_period")
+        
+        for e in template_final.get("earnings", []):
+            if "gross_pay" in e:
+                if val_gross: e["gross_pay"]["this_period"] = val_gross
+                if val_ytd: e["gross_pay"]["year_to_date"] = val_ytd
+            elif e.get("description") == "regular":
+                if val_gross: e["this_period"] = val_gross
+                if val_ytd: e["year_to_date"] = val_ytd
+        if val_net:
+            if isinstance(template_final.get("net_pay"), dict):
+                template_final["net_pay"]["this_period"] = val_net
+            else:
+                template_final["net_pay"] = {"this_period": val_net}
+
+    # 3. OVERRIDE OPERADOR: Aplica as correções manuais da mesa de revisão humana
     is_human_override = False
     campos_corrigidos = []
     if correcoes_humanas:
@@ -278,32 +237,22 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
             if "__" in composite_key:
                 file_part, field_part = composite_key.split("__", 1)
                 if file_part == arquivo:
-                    def aplicar_revisao(d_busca):
-                        nonlocal is_human_override
-                        if isinstance(d_busca, dict):
-                            if field_part in d_busca:
-                                d_busca[field_part] = valor_corrigido
-                                is_human_override = True
-                                campos_corrigidos.append(field_part)
-                            for val in d_busca.values(): aplicar_revisao(val)
-                        elif isinstance(d_busca, list):
-                            for item in d_busca: aplicar_revisao(item)
-                    aplicar_revisao(template_final)
+                    if sobrepor_valores_recursivo(template_final, field_part, valor_corrigido):
+                        is_human_override = True
+                        campos_corrigidos.append(field_part)
 
-    # ─────────────────────────────────────────────
-    # CONFIANÇA REAL: Média Aritmética Baseada em Elementos Presentes
-    # ─────────────────────────────────────────────
+    # 4. CONFIANÇA REAL: Lê do explainability_info baseado nos campos de fato mapeados
     confiancas_por_campo = extrair_confiancas_explainability(bda_json or {})
     campos_bda_preenchidos = set(inference_result.keys())
     
-    if confiancas_por_campo and campos_bda_preenchidos:
+    # Calcula a média real apenas se não houver override humano forçando 100%
+    if is_human_override:
+        media_real = 1.0
+    elif confiancas_por_campo and campos_bda_preenchidos:
         confs = [confiancas_por_campo[c] for c in campos_bda_preenchidos if c in confiancas_por_campo]
         media_real = round(sum(confs) / len(confs), 4) if confs else 0.8850
     else:
         media_real = 0.8850
-        
-    if is_human_override:
-        media_real = 1.0
 
     def buscar_valor_campo(d, campo_alvo):
         if isinstance(d, dict):
@@ -317,15 +266,11 @@ def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_i
                 if res is not None: return res
         return None
 
-    campos_criticos_nulos = [c for c in ["payee_name", "pay_date", "amount_numeric", "employee_name", "this_period", "pay_period_ending"] if buscar_valor_campo(template_final, c) in (None, "")]
+    campos_criticos_nulos = [c for c in ["payee_name", "pay_date", "amount_numeric", "employee_name", "pay_period_ending"] if buscar_valor_campo(template_final, c) in (None, "")]
     status_extracao = "parcial" if campos_criticos_nulos and not is_human_override else "sucesso"
     
     alertas = list(payload_ia.get("alertas_inconsistencias", []))
-    if campos_sem_valor:
-        alertas.append(f"Campos estruturais vazios na extração do blueprint: {', '.join(campos_sem_valor[:3])}")
-    if campos_corrigidos:
-        alertas.append(f"Campos retificados manualmente: {', '.join(campos_corrigidos)}")
-        
+    
     return {
         "tipo_documento": tipo.lower(),
         "subtipo_documento": subtipo.lower(),
@@ -369,7 +314,6 @@ def handler(event, context):
         json_higienizado = limpar_ruido_recursivo(json_bruto)
 
         correcoes_humanas = {}
-        string_prompt_humanos = ""
         try:
             rev_response = db_client.get_item(
                 TableName=TABLE_NAME,
@@ -379,10 +323,6 @@ def handler(event, context):
             if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
                 correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
                 correcoes_humanas = json.loads(correcoes_json)
-                
-                correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
-                if correcoes_especificas:
-                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
         except Exception as db_err:
             logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
 
@@ -394,7 +334,6 @@ def handler(event, context):
         conteudo_input_hibrido = (
             f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
             f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
-            f"{string_prompt_humanos}"
         )
 
         response = bedrock_runtime.converse(
