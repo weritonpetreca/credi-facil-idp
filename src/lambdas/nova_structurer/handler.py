@@ -2,7 +2,11 @@ import json
 import os
 import boto3
 from aws_lambda_powertools import Logger
-from src.shared.tools import obter_especificacao_ferramenta_loan
+
+# Importações das camadas especialistas granularizadas
+from .bda_extractor import BdaExtractor
+from .ai_enricher import AiEnricher
+from .schema_transformer import SchemaTransformer
 
 logger = Logger(service="nova-structurer")
 s3_client = boto3.client("s3", region_name="us-east-1")
@@ -11,6 +15,9 @@ db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 MODEL_ID = "amazon.nova-lite-v1:0"
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
+
+GUARDRAIL_ID = os.environ.get("GUARDRAIL_IDENTIFIER")
+GUARDRAIL_VER = os.environ.get("GUARDRAIL_VERSION", "1")
 
 TEMPLATE_PAYROLL_CHECK = {
     "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
@@ -108,29 +115,44 @@ TEMPLATE_HOMEOWNERS_INSURANCE = {
     "co_applicant": {"name": None, "date_of_birth": None, "gender": None, "marital_status": None, "relationship_to_primary_applicant": None, "drivers_license_number": None, "dl_state": None}
 }
 
-PROMPT_SISTEMA = f"""
-Você é um agente IDP analítico sênior especialista em extração de dados e conformidade cadastral.
-Sua tarefa é analisar o documento e preencher a ferramenta fornecida seguindo moldes estruturais rígidos.
-GABARITOS DE COMPLIANCE:
-- Subtipo 'payroll_check': {json.dumps(TEMPLATE_PAYROLL_CHECK)}
-- Subtipo 'driver_license': {json.dumps(TEMPLATE_DRIVER_LICENSE)}
-- Subtipo 'w2_tax_form': {json.dumps(TEMPLATE_W2_FORM)}
-- Subtipo 'pay_stub': {json.dumps(TEMPLATE_PAY_STUB)}
-- Subtipo 'account_statement': {json.dumps(TEMPLATE_ACCOUNT_STATEMENT)}
-- Subtipo 'homeowners_insurance_application': {json.dumps(TEMPLATE_HOMEOWNERS_INSURANCE)}
-Identifique o nome completo do titular principal no campo 'nome_titular' em CAIXA ALTA.
-"""
+MAPA_TEMPLATES = {
+    "payroll_check": TEMPLATE_PAYROLL_CHECK,
+    "driver_license": TEMPLATE_DRIVER_LICENSE,
+    "w2_tax_form": TEMPLATE_W2_FORM,
+    "pay_stub": TEMPLATE_PAY_STUB,
+    "account_statement": TEMPLATE_ACCOUNT_STATEMENT,
+    "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
+}
 
-def extrair_texto_linear(dados: any) -> list:
-    textos = []
-    if isinstance(dados, dict):
-        for k, v in dados.items():
-            if k in ["text", "textString", "value", "content"] and isinstance(v, str):
-                if len(v.strip()) > 0: textos.append(v.strip())
-            else: textos.extend(extrair_texto_linear(v))
-    elif isinstance(dados, list):
-        for item in dados: textos.extend(extrair_texto_linear(item))
-    return textos
+# 🚀 PROMPT ENGINNERING DE ALTA PERFORMANCE (Contrato Estrito de Ferramenta)
+PROMPT_SISTEMA = """
+# ATRIBUIÇÃO DE PAPEL
+Você atuará como um Motor IDP de Nível Bancário e Auditor Sênior de Riscos de Crédito. Sua especialidade exclusiva é transcrever documentos brutos de compliance e convertê-los em árvores JSON perfeitamente estruturadas.
+
+# INSTRUÇÃO CORE: CHAMADA DE FERRAMENTA (TOOL CALLING)
+Você deve, sob qualquer circunstância, executar sua resposta através do acionamento da ferramenta `estruturar_dados_documento_cliente_unico`. É estritamente proibido responder com texto plano Markdown fora da estrutura da ferramenta.
+
+# DIRETRIZES DE EXTRAÇÃO POR SUBTIPO DOCUMENTAL
+
+## 1. PAY STUB (Holerites / Comprovantes de Salário)
+- Analise minuciosamente a tabela de 'Earnings' (Ganhos) contida no texto Markdown da standard_output.
+- Mapeie as linhas para o array de `earnings`, identificando a descrição correta ('regular', 'overtime', 'holiday'). Colete 'this_period' e 'year_to_date' de cada linha.
+- Localize o nó de Deduções Estatutárias ('statutory deductions'). Transcreva rigorosamente os valores de 'Federal Income tax', 'Social Security Tax' e 'Medicare Tax' para as linhas do objeto correspondente.
+- Mapeie o 'net_pay' capturando o valor líquido associado à string 'Net Pay' ou 'Net Pay This Period'.
+
+## 2. PAYROLL CHECK (Cheques de Pagamento / Ordens Bancárias)
+- Mapeie o nome do emitente ('issuer_name') e do beneficiário ('payee_name') em caixa alta.
+- Extraia o valor numérico em 'amount_numeric' e por extenso em 'amount_words'.
+- Valide marcadores de amostra: Se encontrar as palavras explicíticas 'SAMPLE', 'VOID' ou 'NON-NEGOTIABLE', preencha as respectivas propriedades com a string idêntica em caixa alta.
+
+## 3. ACCOUNT STATEMENT (Extratos Bancários)
+- Localize o bloco de saldo patrimonial inicial ('opening_balance') e final ('closing_balance').
+- Extraia os detalhes cadastrais da conta em 'your_details' (nome do titular, número da conta e período de competência).
+
+# POLÍTICA DE CONTROLE DE LACUNAS E PLACEHOLDERS (ANTI-ALUCINAÇÃO)
+- NÃO invente dados. Se uma linha de deduções ou benefício opcional não existir no texto bruto, deixe o valor do campo estritamente como `null`.
+- Strings genéricas como 'BANK NAME' ou 'ADDRESS PLACEHOLDER' em documentos de teste devem ser transcritas exatamente como estão escritas na imagem, pois servem para a mesa de auditoria humana identificar amostras incompletas.
+"""
 
 def limpar_ruido_recursivo(dados: any) -> any:
     CHAVES_INUTEIS = {"boundingBox", "polygon", "geometry", "coordinates", "location", "pageNumber", "blockId", "relationships", "bounding_box", "spatial_insight", "geometryData", "xy", "box"}
@@ -139,159 +161,6 @@ def limpar_ruido_recursivo(dados: any) -> any:
     elif isinstance(dados, list):
         return [limpar_ruido_recursivo(item) for item in dados]
     return dados
-
-def extrair_confiancas_explainability(bda_json: dict) -> dict:
-    """Lê as confianças reais por campo do nó explainability_info do BDA (Lista de Dicts)."""
-    exp = bda_json.get("explainability_info", {})
-    resultado = {}
-    
-    lista_dicts = []
-    if isinstance(exp, list):
-        for item in exp:
-            if isinstance(item, dict):
-                lista_dicts.append(item)
-    elif isinstance(exp, dict):
-        lista_dicts.append(exp)
-        
-    for d in lista_dicts:
-        for campo, dados in d.items():
-            if isinstance(dados, dict):
-                conf = dados.get("confidence") or dados.get("confidence_score") or dados.get("score")
-                if conf is not None:
-                    resultado[campo] = float(conf)
-                    
-    return resultado
-
-def sobrepor_valores_recursivo(alvo, chave_alvo, valor_novo):
-    """Varre a estrutura final do template e substitui o valor onde a chave normalizada bater."""
-    chave_alvo_norm = chave_alvo.lower().replace("_", "").replace(".", "").replace(" ", "")
-    if isinstance(alvo, dict):
-        for k, v in alvo.items():
-            k_norm = k.lower().replace("_", "").replace(".", "").replace(" ", "")
-            if k_norm == chave_alvo_norm and not isinstance(v, (dict, list)):
-                alvo[k] = str(valor_novo)
-                return True
-            if isinstance(v, (dict, list)):
-                if sobrepor_valores_recursivo(v, chave_alvo, valor_novo):
-                    return True
-    elif isinstance(alvo, list):
-        for item in alvo:
-            if sobrepor_valores_recursivo(item, chave_alvo, valor_novo):
-                return True
-    return False
-
-def formatar_conforme_blueprint(tipo: str, subtipo: str, arquivo: str, payload_ia: dict, s3_inputs: dict, correcoes_humanas: dict = None, bda_json: dict = None) -> dict:
-    MAPA_TEMPLATES = {
-        "payroll_check": TEMPLATE_PAYROLL_CHECK,
-        "driver_license": TEMPLATE_DRIVER_LICENSE,
-        "w2_tax_form": TEMPLATE_W2_FORM,
-        "pay_stub": TEMPLATE_PAY_STUB,
-        "account_statement": TEMPLATE_ACCOUNT_STATEMENT,
-        "homeowners_insurance_application": TEMPLATE_HOMEOWNERS_INSURANCE
-    }
-    
-    # 1. BASELINE: Carrega a estrutura complexa inteira montada pela IA (Sem perder tabelas/arrays)
-    CHAVES_CONTROLE_IA = {"tipo_classificado", "nome_titular", "alertas_inconsistencias", "confianca_extracao"}
-    raw_fields_ia = payload_ia.get("campos_extraidos_brutos") or {k: v for k, v in payload_ia.items() if k not in CHAVES_CONTROLE_IA}
-    if isinstance(raw_fields_ia, str):
-        raw_fields_ia = json.loads(raw_fields_ia)
-        
-    template_final = json.loads(json.dumps(MAPA_TEMPLATES.get(subtipo.lower(), {})))
-    
-    # Copia a árvore inteira gerada pela IA para o nosso template
-    for k, v in raw_fields_ia.items():
-        if k in template_final:
-            template_final[k] = v
-
-    # 2. OVERLAY BDA-FIRST: Força a injeção dos dados de alta precisão do Blueprint em cima do JSON
-    inference_result = (bda_json or {}).get("inference_result", {})
-    for k_bda, v_bda in inference_result.items():
-        if v_bda is not None and str(v_bda).strip() and str(v_bda).lower() != "none":
-            # Aplica recursivamente nas folhas planas do dicionário final
-            sobrepor_valores_recursivo(template_final, k_bda, v_bda)
-
-    # Injeções complementares explícitas para garantir compatibilidade com nós aninhados do PayStub
-    if subtipo.lower() == "pay_stub":
-        val_gross = inference_result.get("gross_pay_this_period")
-        val_ytd = inference_result.get("gross_pay_ytd")
-        val_net = inference_result.get("net_pay_this_period")
-        
-        for e in template_final.get("earnings", []):
-            if "gross_pay" in e:
-                if val_gross: e["gross_pay"]["this_period"] = val_gross
-                if val_ytd: e["gross_pay"]["year_to_date"] = val_ytd
-            elif e.get("description") == "regular":
-                if val_gross: e["this_period"] = val_gross
-                if val_ytd: e["year_to_date"] = val_ytd
-        if val_net:
-            if isinstance(template_final.get("net_pay"), dict):
-                template_final["net_pay"]["this_period"] = val_net
-            else:
-                template_final["net_pay"] = {"this_period": val_net}
-
-    # 3. OVERRIDE OPERADOR: Aplica as correções manuais da mesa de revisão humana
-    is_human_override = False
-    campos_corrigidos = []
-    if correcoes_humanas:
-        for composite_key, valor_corrigido in correcoes_humanas.items():
-            if "__" in composite_key:
-                file_part, field_part = composite_key.split("__", 1)
-                if file_part == arquivo:
-                    if sobrepor_valores_recursivo(template_final, field_part, valor_corrigido):
-                        is_human_override = True
-                        campos_corrigidos.append(field_part)
-
-    # 4. CONFIANÇA REAL: Lê do explainability_info baseado nos campos de fato mapeados
-    confiancas_por_campo = extrair_confiancas_explainability(bda_json or {})
-    campos_bda_preenchidos = set(inference_result.keys())
-    
-    # Calcula a média real apenas se não houver override humano forçando 100%
-    if is_human_override:
-        media_real = 1.0
-    elif confiancas_por_campo and campos_bda_preenchidos:
-        confs = [confiancas_por_campo[c] for c in campos_bda_preenchidos if c in confiancas_por_campo]
-        media_real = round(sum(confs) / len(confs), 4) if confs else 0.8850
-    else:
-        media_real = 0.8850
-
-    def buscar_valor_campo(d, campo_alvo):
-        if isinstance(d, dict):
-            if campo_alvo in d: return d[campo_alvo]
-            for v in d.values():
-                res = buscar_valor_campo(v, campo_alvo)
-                if res is not None: return res
-        elif isinstance(d, list):
-            for item in d:
-                res = buscar_valor_campo(item, campo_alvo)
-                if res is not None: return res
-        return None
-
-    campos_criticos_nulos = [c for c in ["payee_name", "pay_date", "amount_numeric", "employee_name", "pay_period_ending"] if buscar_valor_campo(template_final, c) in (None, "")]
-    status_extracao = "parcial" if campos_criticos_nulos and not is_human_override else "sucesso"
-    
-    alertas = list(payload_ia.get("alertas_inconsistencias", []))
-    
-    return {
-        "tipo_documento": tipo.lower(),
-        "subtipo_documento": subtipo.lower(),
-        "arquivo_original": arquivo,
-        "dados_extraidos_do_documento": template_final,
-        "localizacao_documento_s3": {
-            "bucket_origem": s3_inputs["bucket_entrada"],
-            "s3_key_origem": s3_inputs["key_entrada"],
-            "s3_uri_origem": f"s3://{s3_inputs['bucket_entrada']}/{s3_inputs['key_entrada']}",
-            "bucket_resultado_bda": s3_inputs["bucket_saida"],
-            "s3_key_resultado_bda": s3_inputs["key_bda"],
-            "s3_key_resultado": s3_inputs["key_resultado"],
-            "s3_uri_resultado_bda": f"s3://{s3_inputs['bucket_saida']}/{s3_inputs['key_bda']}"
-        },
-        "confiabilidade_extracao": {
-            "status_extracao": status_extracao,
-            "confianca_media": f"{media_real:.4f}",
-            "fonte_confiabilidade": "human_audit_override" if is_human_override else "amazon_bedrock_data_automation",
-            "observacoes": alertas
-        }
-    }
 
 def handler(event, context):
     try:
@@ -305,15 +174,14 @@ def handler(event, context):
             logger.info(f"Filtro Ativo: Ignorando arquivo redundante da standard_output: {s3_key_bda}")
             return {"status": "SKIPPED", "message": "Ignorando standard_output duplicado"}
 
-        logger.info(f"Processando estruturação isolada via Nova Lite para: {nome_pdf_original}")
+        logger.info(f"Orquestrando Solução Desacoplada IDP para: {nome_pdf_original}")
 
-        s3_response = s3_client.get_object(Bucket=bucket_saida, Key=s3_key_bda)
-        json_bruto = json.loads(s3_response["Body"].read().decode("utf-8"))
-
-        texto_corrido_plano = " ".join(extrair_texto_linear(json_bruto))
-        json_higienizado = limpar_ruido_recursivo(json_bruto)
+        # 🚀 1. EXECUÇÃO DO EXTRACTOR: Unifica caminhos standard e custom do S3
+        extractor = BdaExtractor(s3_client, bucket_saida)
+        dados_bda = extractor.executar(s3_key_bda)
 
         correcoes_humanas = {}
+        string_prompt_humanos = ""
         try:
             rev_response = db_client.get_item(
                 TableName=TABLE_NAME,
@@ -323,43 +191,26 @@ def handler(event, context):
             if rev_item and rev_item.get("status_revisao", {}).get("S") == "RESOLVIDO":
                 correcoes_json = rev_item.get("correcoes_humanas", {}).get("S", "{}")
                 correcoes_humanas = json.loads(correcoes_json)
+                
+                correcoes_especificas = {k.split("__")[1]: v for k, v in correcoes_humanas.items() if k.startswith(f"{nome_pdf_original}__")}
+                if correcoes_especificas:
+                    string_prompt_humanos = f"\n\n--- CORREÇÕES MANUAIS DO OPERADOR ---\n{json.dumps(correcoes_especificas, ensure_ascii=False)}"
         except Exception as db_err:
             logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
 
-        tool_config = {
-            "tools": [obter_especificacao_ferramenta_loan()],
-            "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
-        }
-        
-        conteudo_input_hibrido = (
-            f"--- TRANSCRIÇÃO DE TEXTO LINEAR DO DOCUMENTO ---\n{texto_corrido_plano}\n\n"
-            f"--- ESTRUTURA DE METADADOS COMPLETA ---\n{json.dumps(json_higienizado, ensure_ascii=False)}"
+        # 🚀 2. EXECUÇÃO DO ENRICHER: Tool Calling puro com texto completo
+        json_higienizado = limpar_ruido_recursivo(dados_bda["json_custom_bruto"])
+        enricher = AiEnricher(bedrock_runtime, MODEL_ID, PROMPT_SISTEMA)
+        resultado_ia = enricher.executar(
+            dados_bda["texto_integral"], 
+            json_higienizado, 
+            string_prompt_humanos,
+            guardrail_id=GUARDRAIL_ID,
+            guardrail_version=GUARDRAIL_VER
         )
 
-        response = bedrock_runtime.converse(
-            modelId=MODEL_ID,
-            messages=[{"role": "user", "content": [{"text": conteudo_input_hibrido}]}],
-            system=[{"text": PROMPT_SISTEMA}],
-            toolConfig=tool_config,
-            guardrailConfig={
-                "guardrailIdentifier": os.environ.get("GUARDRAIL_IDENTIFIER"),
-                "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "1"),
-                "trace": "disabled"
-            },
-            inferenceConfig={"temperature": 0.0, "maxTokens": 4000}
-        )
-
-        usage = response.get("usage", {})
-        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
-        tool_use_block = next((b["toolUse"] for b in content_blocks if "toolUse" in b), None)
-        
-        if not tool_use_block:
-            raise ValueError(f"O modelo não acionou a ferramenta de estruturação para {nome_pdf_original}")
-
-        achado = tool_use_block.get("input", {})
-        if isinstance(achado, str): achado = json.loads(achado)
-
-        tipo_detectado = str(achado.get("tipo_classificado", "UNKNOWN")).lower()
+        raw_fields_ia = resultado_ia["raw_fields_ia"]
+        tipo_detectado = str(raw_fields_ia.get("tipo_classificado", "UNKNOWN")).lower()
         subtipo_detectado = "pay_stub"
         
         if "w2" in nome_pdf_original.lower() or tipo_detectado == "tax_document":
@@ -385,9 +236,15 @@ def handler(event, context):
             "bucket_saida": bucket_saida, "key_bda": s3_key_bda, "key_resultado": s3_target_key
         }
 
-        blueprint_json = formatar_conforme_blueprint(
-            tipo_detectado, subtipo_detectado, nome_pdf_original, achado, s3_meta_inputs, correcoes_humanas, json_bruto
+        # 🚀 3. EXECUÇÃO DO TRANSFORMER: Lógica determinística e cravação de chaves por cima
+        transformer = SchemaTransformer(MAPA_TEMPLATES)
+        blueprint_json = transformer.executar(
+            subtipo_detectado, nome_pdf_original, raw_fields_ia, 
+            dados_bda["json_custom_bruto"], s3_meta_inputs, correcoes_humanas
         )
+
+        blueprint_json["tipo_documento"] = tipo_detectado
+        blueprint_json["subtipo_documento"] = subtipo_detectado
         
         logger.info(f"Gravando arquivo individual estruturado em: {s3_target_key}")
         s3_client.put_object(
@@ -397,9 +254,9 @@ def handler(event, context):
 
         return {
             "blueprint": blueprint_json,
-            "raw_ia": achado,
-            "input_tokens": usage.get("inputTokens", 0),
-            "output_tokens": usage.get("outputTokens", 0)
+            "raw_ia": raw_fields_ia,
+            "input_tokens": resultado_ia["input_tokens"],
+            "output_tokens": resultado_ia["output_tokens"]
         }
     except Exception as e:
         logger.error(f"Falha na estruturação isolada de {event.get('nome_pdf_original')}: {str(e)}")

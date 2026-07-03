@@ -28,6 +28,52 @@ def safe_float(val) -> float:
     except:
         return 0.0
 
+def extrair_renda_segura(doc: dict) -> float:
+    """Recupera a renda buscando tanto na raiz calculada quanto nos nós aninhados."""
+    # 1. Tenta buscar o valor já pré-calculado na raiz pelo consolidador
+    for k in ["amount_numeric", "Gross Pay", "wages_tips_other_compensation", "gross_pay_year_to_date", "renda_bruta_informada"]:
+        if doc.get(k) is not None and safe_float(doc.get(k)) > 0:
+            return safe_float(doc.get(k))
+            
+    # 2. Fallback: Varre a estrutura profunda do blueprint individual
+    campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
+    subtipo = str(doc.get("subtipo_documento", "")).lower()
+    
+    if subtipo in ("pay_stub", "comprovante_renda"):
+        net_pay = campos.get("net_pay")
+        if isinstance(net_pay, dict):
+            v = net_pay.get("this_period") or net_pay.get("year_to_date")
+            if v: return safe_float(v)
+        for item in campos.get("earnings", []):
+            if isinstance(item, dict):
+                v = item.get("gross_pay", {}).get("this_period") or item.get("this_period")
+                if v: return safe_float(v)
+    elif subtipo in ("payroll_check", "comprovante_complementar"):
+        return safe_float(campos.get("amount_numeric"))
+    elif subtipo == "w2_tax_form":
+        return safe_float(campos.get("wages_tips_other_compensation"))
+        
+    return 0.0
+
+def extrair_saldo_seguro(doc: dict) -> float:
+    """Recupera o saldo patrimonial varrendo caminhos planos e hierárquicos."""
+    # 1. Tenta buscar o valor já pré-calculado na raiz pelo consolidador
+    for k in ["saldo_bancario_fechamento", "closing_balance", "balance", "amount"]:
+        if doc.get(k) is not None and safe_float(doc.get(k)) > 0:
+            return safe_float(doc.get(k))
+            
+    # 2. Fallback: Navega no nó estruturado do extrato bancário
+    campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
+    saldo_raw = campos.get("your_account_balance")
+    if isinstance(saldo_raw, dict):
+        v = saldo_raw.get("closing_balance") or saldo_raw.get("value")
+        if v: return safe_float(v)
+        
+    for k in ["closing_account_balance", "saldo_bancario_fechamento", "amount", "balance", "closing_balance"]:
+        if campos.get(k):
+            return safe_float(campos.get(k))
+    return 0.0
+
 def handler(event, context):
     """Handler AWS Lambda atuando como Camada de Persistência Inteligente (Smart Writer)."""
     try:
@@ -39,7 +85,6 @@ def handler(event, context):
         
         timestamp_atual = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         
-        # 🚀 DIRETÓRIO DINÂMICO: Modula o ponteiro final do S3 baseado na flag de execução do Score
         if execute_score:
             s3_key_final = f"results/clientes/{package_id}/customer_consolidated.json"
         else:
@@ -99,15 +144,15 @@ def handler(event, context):
 
             for doc in documentos_analisados:
                 tipo = str(doc.get("tipo_documento", "UNKNOWN")).upper()
-                # 🚀 RESOLVIDO: Alinhamento de contrato com a saída do Structurer
-                campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos", {}) or {}
+                
+                # 🚀 UTILIZA AS FUNÇÕES DE EXTRAÇÃO SEGURA MULTI-TOPOLOGIA
+                v_renda = extrair_renda_segura(doc)
+                v_saldo = extrair_saldo_seguro(doc)
                 
                 if tipo in ["COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR", "PAY_STUB", "PAYROLL_CHECK", "TAX_DOCUMENT", "W2_TAX_FORM"]:
-                    v_renda = campos.get("amount_numeric") or campos.get("Gross Pay") or campos.get("wages_tips_other_compensation") or campos.get("gross_pay_year_to_date") or campos.get("renda_bruta_informada")
-                    renda_maxima_promovida = max(renda_maxima_promovida, safe_float(v_renda))
+                    renda_maxima_promovida = max(renda_maxima_promovida, v_renda)
                 elif tipo in ["EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"]:
-                    v_saldo = campos.get("closing_account_balance") or campos.get("saldo_bancario_fechamento") or campos.get("amount") or campos.get("balance") or campos.get("closing_balance")
-                    saldo_maximo_promovido = max(saldo_maximo_promovido, safe_float(v_saldo))
+                    saldo_maximo_promovido = max(saldo_maximo_promovido, v_saldo)
 
                 ledger_documentos_enxuto.append({
                     "tipo_documento": tipo,
