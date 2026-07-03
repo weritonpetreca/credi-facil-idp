@@ -31,7 +31,7 @@ class SchemaTransformer:
         return resultado
 
     def mesclar_tabelas_ia_contextual(self, template: dict, raw_fields_ia: dict):
-        """Mapeia arrays e subobjetos da IA para o template associando chaves contextuais."""
+        """Mapeia arrays e subobjetos da IA para o template associando chaves de isolamento de colunas."""
         fields_ia = raw_fields_ia.get("campos_extraidos_brutos") or raw_fields_ia
         if isinstance(fields_ia, str):
             try: fields_ia = json.loads(fields_ia)
@@ -39,7 +39,7 @@ class SchemaTransformer:
 
         if not isinstance(fields_ia, dict): return
 
-        # 1. Popula dados planos de primeiro nível
+        # 1. Popula os campos planos na raiz do template
         for k, v in fields_ia.items():
             if v in (None, "") or isinstance(v, (dict, list)): continue
             k_norm = k.lower().replace("_", "")
@@ -47,8 +47,7 @@ class SchemaTransformer:
                 if tk.lower().replace("_", "") == k_norm and not isinstance(template[tk], (dict, list)):
                     template[tk] = str(v)
 
-        # 2. Roteamento Inteligente de Tabelas de Linhas (Garante isolamento anti-duplicação)
-        # Mapeamento do array de Earnings Contábeis
+        # 2. Mapeamento Estruturado de Earnings (Evita misturar regular com gross_pay)
         if "earnings" in fields_ia and isinstance(fields_ia["earnings"], list):
             for item_ia in fields_ia["earnings"]:
                 if not isinstance(item_ia, dict): continue
@@ -57,10 +56,12 @@ class SchemaTransformer:
                 for row_t in template.get("earnings", []):
                     if str(row_t.get("description", "")).lower().strip() == desc_ia:
                         for m_key in ["rate", "hours", "this_period", "year_to_date"]:
-                            if item_ia.get(m_key) not in (None, ""):
-                                row_t[m_key] = str(item_ia[m_key])
+                            val = item_ia.get(m_key)
+                            # Blindagem: Impede que a descrição textual herde o campo de valor
+                            if val not in (None, "") and str(val).lower().strip() != desc_ia:
+                                row_t[m_key] = str(val)
 
-        # Mapeamento do Bloco de Deduções (Statutory e Outros)
+        # 3. Mapeamento Estruturado de Deduções (Statutory e Outros)
         deductions_ia = fields_ia.get("statutory_deductions") or fields_ia.get("deductions")
         if deductions_ia and isinstance(deductions_ia, dict):
             stat_target = template.get("deductions", {}).get("statutory", [])
@@ -68,34 +69,37 @@ class SchemaTransformer:
             
             for k_ia, v_ia in deductions_ia.items():
                 k_ia_norm = k_ia.lower().strip()
-                valor_str = str(v_ia.get("this_period") or v_ia.get("amount") or v_ia) if isinstance(v_ia, dict) else str(v_ia)
                 
-                # Procura correspondência na lista estatutária
+                if isinstance(v_ia, dict):
+                    this_period_val = v_ia.get("this_period") or v_ia.get("amount")
+                    ytd_val = v_ia.get("year_to_date")
+                else:
+                    this_period_val = v_ia
+                    ytd_val = None
+
+                val_str = str(this_period_val) if this_period_val not in (None, "") and str(this_period_val).lower().strip() != k_ia_norm else None
+                ytd_str = str(ytd_val) if ytd_val not in (None, "") and str(ytd_val).lower().strip() != k_ia_norm else None
+
                 for row in stat_target:
                     if row.get("description", "").lower().strip() in k_ia_norm or k_ia_norm in row.get("description", "").lower().strip():
-                        row["this_period"] = valor_str
-                        if isinstance(v_ia, dict) and v_ia.get("year_to_date"):
-                            row["year_to_date"] = str(v_ia["year_to_date"])
+                        if val_str: row["this_period"] = val_str
+                        if ytd_str: row["year_to_date"] = ytd_str
                             
-                # Procura correspondência na lista de outras deduções (ex: 401k)
                 for row in other_target:
                     if row.get("description", "").lower().strip() in k_ia_norm or k_ia_norm in row.get("description", "").lower().strip():
-                        row["this_period"] = valor_str
-                        if isinstance(v_ia, dict) and v_ia.get("year_to_date"):
-                            row["year_to_date"] = str(v_ia["year_to_date"])
+                        if val_str: row["this_period"] = val_str
+                        if ytd_str: row["year_to_date"] = ytd_str
 
-        # Mapeamento explícito de Net Pay
         if "net_pay" in fields_ia:
             np_val = fields_ia["net_pay"]
             val_str = str(np_val.get("this_period") or np_val) if isinstance(np_val, dict) else str(np_val)
-            if isinstance(template.get("net_pay"), dict):
+            if isinstance(template.get("net_pay"), dict) and val_str.lower().strip() != "net_pay":
                 template["net_pay"]["this_period"] = val_str
 
     def aplicar_overlay_bda_estrito(self, template: dict, ir: dict, subtipo: str):
         """Força a sobreposição dos 13 campos do Blueprint sobre as folhas da árvore."""
         subtipo_lower = subtipo.lower() if subtipo else ""
         
-        # Overlay de primeiro nível
         for k, v in ir.items():
             if v in (None, ""): continue
             k_norm = k.lower().replace("_", "")
@@ -103,7 +107,6 @@ class SchemaTransformer:
                 if tk.lower().replace("_", "") == k_norm and not isinstance(template[tk], (dict, list)):
                     template[tk] = str(v)
 
-        # Overlay profundo para subestruturas do Holerite
         if subtipo_lower == "pay_stub":
             val_gross_tp = ir.get("gross_pay_this_period")
             val_gross_ytd = ir.get("gross_pay_ytd")
@@ -113,9 +116,6 @@ class SchemaTransformer:
                 if "gross_pay" in e:
                     if val_gross_tp: e["gross_pay"]["this_period"] = str(val_gross_tp)
                     if val_gross_ytd: e["gross_pay"]["year_to_date"] = str(val_gross_ytd)
-                elif e.get("description") == "regular":
-                    if val_gross_tp: e["this_period"] = str(val_gross_tp)
-                    if val_gross_ytd: e["year_to_date"] = str(val_gross_ytd)
                     
             if val_net_tp and isinstance(template.get("net_pay"), dict):
                 template["net_pay"]["this_period"] = str(val_net_tp)
@@ -140,14 +140,13 @@ class SchemaTransformer:
         template_base = self.templates.get(subtipo.lower(), {})
         template_final = json.loads(json.dumps(template_base))
         
-        # 1. Alinha os dados estruturados da IA respeitando o escopo das tabelas
+        # 1. Mescla dados contextuais da IA isolando as colunas numéricas
         self.mesclar_tabelas_ia_contextual(template_final, raw_fields_ia)
         
-        # 2. Crava os dados de alta fidelidade do Blueprint por cima
+        # 2. Sobrevisão com dados de alta fidelidade do Blueprint
         inference_result = (bda_json or {}).get("inference_result", {})
         self.aplicar_overlay_bda_estrito(template_final, inference_result, subtipo)
 
-        # 3. Aplica auditoria humana pós-mesa de revisão
         is_human_override = False
         if correcoes_humanas:
             for composite_key, valor_corrigido in correcoes_humanas.items():

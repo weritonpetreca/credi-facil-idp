@@ -751,7 +751,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action: "bedrock:InvokeModel"
-              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0"
+              Resource: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment
