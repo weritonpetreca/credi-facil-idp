@@ -16,6 +16,9 @@ db_client = boto3.client("dynamodb", region_name="us-east-1")
 MODEL_ID = "amazon.nova-lite-v1:0"
 TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 
+GUARDRAIL_ID = os.environ.get("GUARDRAIL_IDENTIFIER")
+GUARDRAIL_VER = os.environ.get("GUARDRAIL_VERSION", "1")
+
 TEMPLATE_PAYROLL_CHECK = {
     "issuer_name": None, "issuer_address": None, "check_stock_control_number": None,
     "payroll_check_number": None, "pay_date": None, "social_security_number": None,
@@ -195,9 +198,6 @@ def handler(event, context):
         except Exception as db_err:
             logger.warning(f"Falha ao integrar mesa de revisão humana na estruturação: {str(db_err)}")
 
-        guardrail_id = os.environ.get("GUARDRAIL_IDENTIFIER")
-        guardrail_ver = os.environ.get("GUARDRAIL_VERSION", "1")
-
         # 🚀 2. EXECUÇÃO DO ENRICHER: Tool Calling puro com texto completo
         json_higienizado = limpar_ruido_recursivo(dados_bda["json_custom_bruto"])
         enricher = AiEnricher(bedrock_runtime, MODEL_ID, PROMPT_SISTEMA)
@@ -205,8 +205,8 @@ def handler(event, context):
             dados_bda["texto_integral"], 
             json_higienizado, 
             string_prompt_humanos,
-            guardrail_id=guardrail_id,
-            guardrail_version=guardrail_ver
+            guardrail_id=GUARDRAIL_ID,
+            guardrail_version=GUARDRAIL_VER
         )
 
         raw_fields_ia = resultado_ia["raw_fields_ia"]
