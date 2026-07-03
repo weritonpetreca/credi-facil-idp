@@ -31,46 +31,102 @@ class SchemaTransformer:
                         
         return resultado
 
-    def aplicar_overlay_bda_recursivo(self, objeto, ir_limpo, prefixo=""):
+    def construir_mapa_valores_unificado(self, bda_json: dict, raw_fields_ia: dict) -> dict:
         """
-        Executa a sobreposição cirúrgica: Varre a estrutura gerada pelo Tool Calling da IA
-        e crava os dados do Blueprint nas folhas corretas usando correspondência normalizada.
+        Gera um mapa plano e normalizado contendo TODAS as extrações do BDA e da LLM.
+        Garante acoplamento flexível eliminando o ponto cego do invólucro campos_extraidos_brutos.
         """
-        if isinstance(objeto, dict):
-            for k, v in objeto.items():
-                chave_composta = f"{prefixo}_{k}" if prefixo else k
-                kc_norm = chave_composta.lower().replace("_", "").replace(" ", "").replace(".", "")
-                k_norm = k.lower().replace("_", "").replace(" ", "").replace(".", "")
+        mapa = {}
+        
+        # 1. Carrega dados de alta precisão do BDA
+        ir = bda_json.get("inference_result", {})
+        for k, v in ir.items():
+            if v not in (None, ""):
+                k_norm = k.lower().replace("_", "").replace(" ", "").replace(".", "").replace("$", "")
+                mapa[k_norm] = v
+                if "thisperiod" not in k_norm and "yeartodate" not in k_norm:
+                    mapa[f"{k_norm}thisperiod"] = v
+
+        # 2. Desembrulha com segurança o nó da IA (campos_extraidos_brutos)
+        fields_ia = raw_fields_ia.get("campos_extraidos_brutos") or raw_fields_ia
+        if isinstance(fields_ia, str):
+            try: fields_ia = json.loads(fields_ia)
+            except: pass
+            
+        def helper_achatar(dados, prefixo=""):
+            if isinstance(dados, dict):
+                desc_sufixo = ""
+                if "description" in dados and isinstance(dados["description"], str):
+                    desc_sufixo = "_" + dados["description"].lower().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
                 
+                for k, v in dados.items():
+                    chave_base = f"{prefixo}{desc_sufixo}_{k}" if prefixo else f"{k}{desc_sufixo}"
+                    k_norm = chave_base.lower().replace("_", "").replace(" ", "").replace(".", "").replace("$", "")
+                    
+                    if isinstance(v, (dict, list)):
+                        helper_achatar(v, chave_base)
+                    else:
+                        if v not in (None, ""):
+                            mapa[k_norm] = v
+                            k_simples = k.lower().replace("_", "").replace(" ", "").replace(".", "").replace("$", "")
+                            mapa[k_simples] = v
+                            if "thisperiod" not in k_simples and "yeartodate" not in k_simples:
+                                mapa[f"{k_simples}thisperiod"] = v
+                                if desc_sufixo:
+                                    ds_clean = desc_sufixo.replace("_", "")
+                                    mapa[f"{ds_clean}thisperiod"] = v
+                                    mapa[f"{ds_clean}_{k_simples}"] = v
+            elif isinstance(dados, list):
+                for item in dados:
+                    helper_achatar(item, prefixo)
+
+        helper_achatar(fields_ia)
+        return mapa
+
+    def aplicar_overlay_bda_recursivo(self, objeto, mapa_valores, prefixo=""):
+        """Varre o gabarito final populando chaves profundas e tabelas através de correspondência contextual."""
+        if isinstance(objeto, dict):
+            desc_norm = ""
+            if "description" in objeto and isinstance(objeto["description"], str):
+                desc_norm = objeto["description"].lower().replace("_", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                
+            for k, v in objeto.items():
+                if k == "description":
+                    continue
+                    
                 if isinstance(v, (dict, list)):
-                    self.aplicar_overlay_bda_recursivo(v, ir_limpo, chave_composta)
+                    novo_prefixo = f"{prefixo}_{k}" if prefixo else k
+                    self.aplicar_overlay_bda_recursivo(v, mapa_valores, novo_prefixo)
                 else:
-                    if kc_norm in ir_limpo:
-                        objeto[k] = str(ir_limpo[kc_norm])
-                    elif k_norm in ir_limpo:
-                        objeto[k] = str(ir_limpo[k_norm])
+                    # Tabela de precedência de chaves de busca contextuais
+                    chaves_candidatas = []
+                    if desc_norm:
+                        chaves_candidatas.append(f"{desc_norm}{k}".replace("_", "").replace(" ", ""))
+                        chaves_candidatas.append(f"{desc_norm}_{k}".replace("_", "").replace(" ", ""))
+                        chaves_candidatas.append(desc_norm)
+                    
+                    chaves_candidatas.append(f"{prefixo}_{k}".lower().replace("_", "").replace(" ", "").replace(".", ""))
+                    chaves_candidatas.append(k.lower().replace("_", "").replace(" ", "").replace(".", ""))
+                    
+                    for ch in chaves_candidatas:
+                        if ch in mapa_valores and mapa_valores[ch] not in (None, ""):
+                            objeto[k] = mapa_valores[ch]
+                            break
         elif isinstance(objeto, list):
             for item in objeto:
-                self.aplicar_overlay_bda_recursivo(item, ir_limpo, prefixo)
+                self.aplicar_overlay_bda_recursivo(item, mapa_valores, prefixo)
 
     def executar(self, subtipo: str, arquivo: str, raw_fields_ia: dict, bda_json: dict, s3_inputs: dict, correcoes_humanas: dict = None) -> dict:
-        """
-        Orquestra a transformação e fusão híbrida do esquema de dados.
-        Retorna o payload final mapeado de acordo com o contrato esperado pelo sistema.
-        """
+        """Orquestra a transformação híbrida consolidando o mapa unificado de dados."""
         # 1. Baseline: Carrega o esqueleto limpo do tipo de documento
         template_base = self.templates.get(subtipo.lower(), {})
         template_final = json.loads(json.dumps(template_base))
         
-        # 2. Popula o esqueleto com os dados ricos gerados pelo Tool Calling da LLM
-        for k, v in raw_fields_ia.items():
-            if k in template_final:
-                template_final[k] = v
-
-        # 3. Executa o Overlay por cima das subestruturas com os dados planos do Blueprint
-        inference_result = (bda_json or {}).get("inference_result", {})
-        ir_limpo = {k.lower().replace("_", "").replace(" ", "").replace(".", ""): v for k, v in inference_result.items()}
-        self.aplicar_overlay_bda_recursivo(template_final, ir_limpo)
+        # 2. Cria o mapa de valores unificado (BDA + LLM) combatendo a perda de contexto
+        mapa_valores = self.construir_mapa_valores_unificado(bda_json, raw_fields_ia)
+        
+        # 3. Executa a população recursiva de alta precisão
+        self.aplicar_overlay_bda_recursivo(template_final, mapa_valores)
 
         # 4. Aplica correções humanas se houver reprocessamento pós-mesa de revisão
         is_human_override = False
@@ -80,10 +136,11 @@ class SchemaTransformer:
                     file_part, field_part = composite_key.split("__", 1)
                     if file_part == arquivo:
                         ir_humano_limpo = {field_part.lower().replace("_", "").replace(" ", "").replace(".", ""): valor_corrigido}
-                        if self.aplicar_overlay_bda_recursivo(template_final, ir_humano_limpo):
-                            is_human_override = True
+                        self.aplicar_overlay_bda_recursivo(template_final, ir_humano_limpo)
+                        is_human_override = True
 
         # 5. Mapeia as confianças reais utilizando o formato de lista verificado em produção
+        inference_result = (bda_json or {}).get("inference_result", {})
         confiancas_por_campo = self.extrair_confiancas_explainability(bda_json or {})
         campos_bda_preenchidos = set(inference_result.keys())
         
@@ -95,7 +152,6 @@ class SchemaTransformer:
         else:
             media_real = 0.8850
 
-        # Identifica se algum dos campos mais cruciais de negócio restou vazio na fusão
         campos_gabarito_plano = json.dumps(template_final)
         status_extracao = "sucesso"
         for critico in ["payee_name", "pay_date", "amount_numeric", "employee_name", "this_period", "closing_balance"]:
@@ -103,7 +159,6 @@ class SchemaTransformer:
                 if critico in ["payee_name", "pay_date", "employee_name"]:
                     status_extracao = "parcial"
 
-        # 🚀 CORRIGIDO: Retorna o mapeamento de chaves traduzido exatamente para o contrato legado exigido pelo Aggregator
         return {
             "arquivo_original": arquivo,
             "dados_extraidos_do_documento": template_final,
