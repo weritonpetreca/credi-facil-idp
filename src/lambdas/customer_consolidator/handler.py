@@ -179,43 +179,45 @@ def montar_dossie_executivo(package_id: str, consolidado_json: dict, score: dict
     }
 
 def obter_especificacao_ferramenta_consolidacao():
-    """Garante o contrato JSON estrito via Tool Calling para a Nova Lite."""
+    """Garante o contrato JSON estrito envelopado em toolSpec exigido pela API converse."""
     return {
-        "name": "consolidar_e_validar_dados_esteira",
-        "description": "Consolida a validação cadastral cruzada e a análise de risco do proponente.",
-        "inputSchema": {
-            "json": {
-                "type": "object",
-                "properties": {
-                    "cliente": {
-                        "type": "object",
-                        "properties": {
-                            "nome": {"type": "string", "description": "Nome completo do proponente em CAIXA ALTA."},
-                            "documento_identificacao": {"type": "string", "description": "Número do documento de identificação civil."},
-                            "classificacao_risco": {
-                                "type": "object",
-                                "properties": {
-                                    "categoria": {"type": "string", "enum": ["baixo", "medio", "alto"]},
-                                    "justificativa": {"type": "string", "description": "Texto sucinto e analítico do parecer técnico de crédito."}
-                                },
-                                "required": ["categoria", "justificativa"]
-                            }
+        "toolSpec": {
+            "name": "consolidar_e_validar_dados_esteira",
+            "description": "Consolida a validação cadastral cruzada e a análise de risco do proponente.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "cliente": {
+                            "type": "object",
+                            "properties": {
+                                "nome": {"type": "string", "description": "Nome completo do proponente em CAIXA ALTA."},
+                                "documento_identificacao": {"type": "string", "description": "Número do documento de identificação civil."},
+                                "classificacao_risco": {
+                                    "type": "object",
+                                    "properties": {
+                                        "categoria": {"type": "string", "enum": ["baixo", "medio", "alto"]},
+                                        "justificativa": {"type": "string", "description": "Texto sucinto e analítico do parecer técnico de crédito."}
+                                    },
+                                    "required": ["categoria", "justificativa"]
+                                }
+                            },
+                            "required": ["nome", "documento_identificacao", "classificacao_risco"]
                         },
-                        "required": ["nome", "documento_identificacao", "classificacao_risco"]
+                        "validacao": {
+                            "type": "object",
+                            "properties": {
+                                "nome_consistente_entre_documentos": {"type": "boolean"},
+                                "data_nascimento_consistente": {"type": "boolean"},
+                                "documento_identificacao_presente": {"type": "boolean"},
+                                "comprovante_renda_presente": {"type": "boolean"},
+                                "extrato_bancario_presente": {"type": "boolean"}
+                            },
+                            "required": ["nome_consistente_entre_documentos", "data_nascimento_consistente", "documento_identificacao_presente"]
+                        }
                     },
-                    "validacao": {
-                        "type": "object",
-                        "properties": {
-                            "nome_consistente_entre_documentos": {"type": "boolean"},
-                            "data_nascimento_consistente": {"type": "boolean"},
-                            "documento_identificacao_presente": {"type": "boolean"},
-                            "comprovante_renda_presente": {"type": "boolean"},
-                            "extrato_bancario_presente": {"type": "boolean"}
-                        },
-                        "required": ["nome_consistente_entre_documentos", "data_nascimento_consistente", "documento_identificacao_presente"]
-                    }
-                },
-                "required": ["cliente", "validacao"]
+                    "required": ["cliente", "validacao"]
+                }
             }
         }
     }
