@@ -88,15 +88,7 @@ def inicializar_estrutura_base_lote(package_id: str) -> dict:
 def processar_resultado_worker(resultado: dict, json_base_lote: dict):
     """
     Processa o resultado de UM worker e o adiciona ao JSON do lote.
-
-    Esta função é chamada em loop — uma vez para cada documento do pacote.
-
-    Parâmetros:
-      resultado: o que o handler.py retornou para aquele documento
-      json_base_lote: o JSON acumulado que está sendo montado
-
-    Analogia Java: é como o método accept() num Consumer<WorkerResult>
-    dentro de um forEach que monta o relatório final.
+    Mantém compatibilidade de chaves raiz com o Step Functions Map state.
     """
     blueprint = resultado.get("blueprint")
     if not blueprint:
@@ -114,17 +106,22 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
         f"confianca={confianca_raw}"
     )
 
+    # Extrai o dicionário de localização para reaproveitar caminhos
+    localizacao = blueprint.get("localizacao_documento_s3", {})
+
     # ── Adiciona o documento à lista do lote ──────────────────────────────────
     json_base_lote["documentos_analisados"].append({
         "arquivo_original": arquivo_original,
         "tipo_documento": tipo.upper(),
         "subtipo_documento": subtipo,
-        # O campo abaixo mantém o blueprint completo para o customer_consolidator
-        # poder ler os dados_extraidos_do_documento com a renda/saldo
+        
+        # 🚀 FIX DE RETROCOMPATIBILIDADE: Injeta chaves na raiz exigidas pelo Step Functions ASL
+        "s3_key_resultado": localizacao.get("s3_key_resultado"),
+        "s3_key_origem": localizacao.get("s3_key_origem"),
+        
         "dados_extraidos_do_documento": blueprint.get("dados_extraidos_do_documento", {}),
-        "localizacao_documento_s3": blueprint.get("localizacao_documento_s3", {}),
+        "localizacao_documento_s3": localizacao,
         "confiabilidade_extracao": blueprint.get("confiabilidade_extracao", {}),
-        # Mantém o blueprint completo como referência
         "blueprint": blueprint,
     })
 
@@ -134,8 +131,6 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
         json_base_lote.setdefault("tipos_documentos_analisados", []).append(tipo_label)
 
     # ── Acumula os tokens do worker ───────────────────────────────────────────
-    # Cada worker registra quantos tokens o Nova Lite consumiu para aquele documento.
-    # Somamos aqui para ter o total do lote.
     input_tokens = int(resultado.get("input_tokens", 0))
     output_tokens = int(resultado.get("output_tokens", 0))
 
