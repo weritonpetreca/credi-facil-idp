@@ -88,7 +88,7 @@ def inicializar_estrutura_base_lote(package_id: str) -> dict:
 def processar_resultado_worker(resultado: dict, json_base_lote: dict):
     """
     Processa o resultado de UM worker e o adiciona ao JSON do lote.
-    Mantém compatibilidade de chaves raiz com o Step Functions Map state.
+    Elimina redundâncias estruturais e garante compatibilidade estrita de contratos.
     """
     blueprint = resultado.get("blueprint")
     if not blueprint:
@@ -106,23 +106,28 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
         f"confianca={confianca_raw}"
     )
 
-    # Extrai o dicionário de localização para reaproveitar caminhos
     localizacao = blueprint.get("localizacao_documento_s3", {})
+    
+    # 🚀 EXTRAÇÃO DA FUSÃO REAL: Resgata a árvore de dados já unificada pelo Transformer
+    campos_unificados = blueprint.get("dados_extraidos_do_documento", {})
 
-    # ── Adiciona o documento à lista do lote ──────────────────────────────────
+    # ── Adiciona o documento à lista do lote limpo de redundâncias ───────────
     json_base_lote["documentos_analisados"].append({
         "arquivo_original": arquivo_original,
         "tipo_documento": tipo.upper(),
         "subtipo_documento": subtipo,
         
-        # 🚀 FIX DE RETROCOMPATIBILIDADE: Injeta chaves na raiz exigidas pelo Step Functions ASL
+        # Ponteiros planos exigidos na raiz pelo Step Functions Map State
         "s3_key_resultado": localizacao.get("s3_key_resultado"),
         "s3_key_origem": localizacao.get("s3_key_origem"),
         
-        "dados_extraidos_do_documento": blueprint.get("dados_extraidos_do_documento", {}),
+        # 🚀 ALINHAMENTO DE CONTRATO MULTI-GERAÇÃO: Satisfaz a Step Function e o Frontend em paralelo
+        "campos_extraidos": campos_unificados,               # Exigido pelo GenerateExcelReports ASL
+        "dados_extraidos_do_documento": campos_unificados,   # Exigido pelo Painel React
+        
         "localizacao_documento_s3": localizacao,
-        "confiabilidade_extracao": blueprint.get("confiabilidade_extracao", {}),
-        "blueprint": blueprint,
+        "confiabilidade_extracao": blueprint.get("confiabilidade_extracao", {})
+        # 🚀 REMOVIDO: "blueprint": blueprint -> Expurga a duplicação massiva de dados do lote
     })
 
     # ── Rastreia os tipos de documentos do pacote ─────────────────────────────
