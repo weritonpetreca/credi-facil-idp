@@ -257,9 +257,7 @@ def handler(event, context):
         json_base_lote = inicializar_estrutura_base_lote(package_id)
 
         # ── Processa cada resultado do Map state ──────────────────────────────
-        # O Step Functions passa os resultados em uma lista chamada "resultados"
-        # ou como o próprio corpo do evento quando o Map usa ItemProcessor.
-        resultados = event.get("resultados", [])
+        resultados = event.get("resultados") or event.get("map_results") or []
 
         # Normaliza: às vezes o Step Functions embute os resultados diretamente
         if not resultados and isinstance(event, list):
@@ -269,7 +267,6 @@ def handler(event, context):
             logger.warning(f"Nenhum resultado de worker recebido para o pacote {package_id}.")
 
         for resultado in resultados:
-            # Resultado pode estar embrulhado num dict com chave "blueprint" ou diretamente
             if isinstance(resultado, dict):
                 processar_resultado_worker(resultado, json_base_lote)
 
@@ -283,7 +280,6 @@ def handler(event, context):
         atualizar_dynamo(package_id, table_name)
 
         # ── Grava o rascunho do output.json no S3 ────────────────────────────
-        # O customer_consolidator vai sobrescrever este arquivo com a versão final.
         key_output = f"results/packages/{package_id}/output.json"
         s3_client.put_object(
             Bucket=bucket,
@@ -300,7 +296,6 @@ def handler(event, context):
             f"custo parcial=${custo_total:.4f} USD"
         )
 
-        # ── Retorna o payload para o próximo estado do Step Functions ─────────
         return {
             "package_id": package_id,
             "bda_output_bucket": bucket,

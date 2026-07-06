@@ -79,17 +79,18 @@ class SchemaTransformer:
     # FUNÇÃO 2: Mesclagem do output do Nova Lite (campos secundários)
     # ──────────────────────────────────────────────────────────────────────────
 
+    def _sanitizar_string_ia(self, valor) -> str:
+        """Higieniza alucinações de placeholders e entidades HTML vazias vindas da IA."""
+        if valor is None:
+            return ""
+        s = str(valor).strip()
+        # Intercepta e limpa resíduos de formatação Markdown/HTML vazios
+        if s in ("&nbsp;", "none", "None", "", "&nbsp", "null", "N/A"):
+            return ""
+        return s
+
     def mesclar_tabelas_ia_contextual(self, template: dict, raw_fields_ia: dict):
-        """
-        Mapeia o output do Nova Lite (gerado a partir do markdown) para o template.
-
-        O Nova Lite agora retorna campos com nomes explícitos (earnings_rows,
-        statutory_deductions, etc.) conforme o novo tool spec de shared/tools.py.
-        Esta função faz o mapeamento dessas chaves para a estrutura do template.
-
-        Analogia Java: é um BeanUtils.copyProperties() com mapeamento customizado
-        entre dois objetos com estruturas diferentes mas dados equivalentes.
-        """
+        """Mapeia o output do Nova Lite higienizando strings nulas e entidades HTML ruidosas."""
         if not isinstance(raw_fields_ia, dict):
             return
 
@@ -100,63 +101,56 @@ class SchemaTransformer:
             "exemptions_state", "exemptions_local", "additional_federal_tax"
         ]
         for campo in CAMPOS_PLANOS:
-            valor = raw_fields_ia.get(campo)
-            if valor and str(valor).strip():
+            valor = self._sanitizar_string_ia(raw_fields_ia.get(campo))
+            if valor:
                 if campo in template:
-                    template[campo] = str(valor).strip()
-                # Tenta mapeamento em subestruturas (ex: exemptions_or_allowances[0])
+                    template[campo] = valor
                 elif campo == "exemptions_federal" and "exemptions_or_allowances" in template:
                     items = template["exemptions_or_allowances"]
                     if items and isinstance(items[0], dict):
-                        items[0]["federal"] = str(valor)
+                        items[0]["federal"] = valor
                 elif campo == "exemptions_state" and "exemptions_or_allowances" in template:
                     items = template["exemptions_or_allowances"]
                     if items and isinstance(items[0], dict):
-                        items[0]["state"] = str(valor)
+                        items[0]["state"] = valor
                 elif campo == "exemptions_local" and "exemptions_or_allowances" in template:
                     items = template["exemptions_or_allowances"]
                     if items and isinstance(items[0], dict):
-                        items[0]["local"] = str(valor)
+                        items[0]["local"] = valor
 
         # ── 2. earnings_rows → template["earnings"] ────────────────────────────
-        # O Nova Lite retorna uma lista de objetos com "description", "rate",
-        # "hours", "this_period", "year_to_date" para cada linha da tabela.
         earnings_rows = raw_fields_ia.get("earnings_rows", [])
         if earnings_rows and isinstance(earnings_rows, list) and "earnings" in template:
             for row_ia in earnings_rows:
                 if not isinstance(row_ia, dict):
                     continue
                 desc_ia = str(row_ia.get("description", "")).lower().strip()
-                if not desc_ia:
+                if not desc_ia or desc_ia in ("&nbsp;", "none"):
                     continue
 
-                # Encontra a linha correspondente no template por descrição
                 matched = False
                 for row_t in template["earnings"]:
                     if not isinstance(row_t, dict):
                         continue
 
-                    # Linha com "description" (Regular, Overtime, Holiday, Tuition)
                     desc_t = str(row_t.get("description", "")).lower().strip()
                     if desc_ia == desc_t:
                         for col in ["rate", "hours", "this_period", "year_to_date"]:
-                            val = row_ia.get(col)
-                            # Blindagem: não sobrescrever com o próprio nome da linha
-                            if val is not None and str(val).strip() and str(val).lower().strip() != desc_ia:
-                                row_t[col] = str(val).strip()
+                            val = self._sanitizar_string_ia(row_ia.get(col))
+                            if val:
+                                row_t[col] = val
                         matched = True
                         break
 
-                    # Linha do Gross Pay (tem dict interno, sem "description")
                     if "gross_pay" in row_t and ("gross" in desc_ia or "gross pay" in desc_ia):
                         gp = row_t["gross_pay"]
                         if isinstance(gp, dict):
-                            tp = row_ia.get("this_period")
-                            ytd = row_ia.get("year_to_date")
-                            if tp and str(tp).strip() and str(tp).lower() not in ("gross pay", desc_ia):
-                                gp["this_period"] = str(tp).strip()
-                            if ytd and str(ytd).strip() and str(ytd).lower() not in ("gross pay", desc_ia):
-                                gp["year_to_date"] = str(ytd).strip()
+                            tp = self._sanitizar_string_ia(row_ia.get("this_period"))
+                            ytd = self._sanitizar_string_ia(row_ia.get("year_to_date"))
+                            if tp:
+                                gp["this_period"] = tp
+                            if ytd:
+                                gp["year_to_date"] = ytd
                         matched = True
                         break
 
@@ -168,17 +162,17 @@ class SchemaTransformer:
                 if not isinstance(row_ia, dict):
                     continue
                 desc_ia = str(row_ia.get("description", "")).lower().strip()
+                if desc_ia in ("&nbsp;", "none"): continue
+                
                 for row_t in stat_target:
                     desc_t = str(row_t.get("description", "")).lower().strip()
-                    # Usa match parcial bidirecional para lidar com nomes ligeiramente diferentes
-                    if desc_ia and desc_t and (desc_ia in desc_t or desc_t in desc_ia or
-                                               any(w in desc_t for w in desc_ia.split() if len(w) > 3)):
-                        tp = row_ia.get("this_period")
-                        ytd = row_ia.get("year_to_date")
-                        if tp and str(tp).strip() and str(tp).lower() != desc_ia:
-                            row_t["this_period"] = str(tp).strip()
-                        if ytd and str(ytd).strip() and str(ytd).lower() != desc_ia:
-                            row_t["year_to_date"] = str(ytd).strip()
+                    if desc_ia and desc_t and (desc_ia in desc_t or desc_t in desc_ia):
+                        tp = self._sanitizar_string_ia(row_ia.get("this_period"))
+                        ytd = self._sanitizar_string_ia(row_ia.get("year_to_date"))
+                        if tp:
+                            row_t["this_period"] = tp
+                        if ytd:
+                            row_t["year_to_date"] = ytd
                         break
 
         # ── 4. other_deductions → template["deductions"]["other"] ─────────────
@@ -189,15 +183,17 @@ class SchemaTransformer:
                 if not isinstance(row_ia, dict):
                     continue
                 desc_ia = str(row_ia.get("description", "")).lower().strip()
+                if desc_ia in ("&nbsp;", "none"): continue
+                
                 for row_t in other_target:
                     desc_t = str(row_t.get("description", "")).lower().strip()
                     if desc_ia and desc_t and (desc_ia in desc_t or desc_t in desc_ia):
-                        tp = row_ia.get("this_period")
-                        ytd = row_ia.get("year_to_date")
-                        if tp and str(tp).strip() and str(tp).lower() != desc_ia:
-                            row_t["this_period"] = str(tp).strip()
-                        if ytd and str(ytd).strip() and str(ytd).lower() != desc_ia:
-                            row_t["year_to_date"] = str(ytd).strip()
+                        tp = self._sanitizar_string_ia(row_ia.get("this_period"))
+                        ytd = self._sanitizar_string_ia(row_ia.get("year_to_date"))
+                        if tp:
+                            row_t["this_period"] = tp
+                        if ytd:
+                            row_t["year_to_date"] = ytd
                         break
 
         # ── 5. deduction_adjustments → template["deductions"]["adjustments"] ───
@@ -208,12 +204,14 @@ class SchemaTransformer:
                 if not isinstance(row_ia, dict):
                     continue
                 desc_ia = str(row_ia.get("description", "")).lower().strip()
+                if desc_ia in ("&nbsp;", "none"): continue
+                
                 for row_t in adj_target:
                     desc_t = str(row_t.get("description", "")).lower().strip()
                     if desc_ia and desc_t and (desc_ia in desc_t or desc_t in desc_ia):
-                        tp = row_ia.get("this_period")
-                        if tp and str(tp).strip() and str(tp).lower() != desc_ia:
-                            row_t["this_period"] = str(tp).strip()
+                        tp = self._sanitizar_string_ia(row_ia.get("this_period"))
+                        if tp:
+                            row_t["this_period"] = tp
                         break
 
         # ── 6. other_benefits → template["other_benefits_and_information"] ─────
@@ -224,15 +222,17 @@ class SchemaTransformer:
                 if not isinstance(row_ia, dict):
                     continue
                 desc_ia = str(row_ia.get("description", "")).lower().strip()
+                if desc_ia in ("&nbsp;", "none"): continue
+                
                 for row_t in benefits_target:
                     desc_t = str(row_t.get("description", "")).lower().strip()
                     if desc_ia and desc_t and (desc_ia in desc_t or desc_t in desc_ia):
-                        tp = row_ia.get("this_period")
-                        td = row_ia.get("total_to_date")
-                        if tp and str(tp).strip() and str(tp).lower() != desc_ia:
-                            row_t["this_period"] = str(tp).strip()
-                        if td and str(td).strip() and str(td).lower() != desc_ia:
-                            row_t["total_to_date"] = str(td).strip()
+                        tp = self._sanitizar_string_ia(row_ia.get("this_period"))
+                        td = self._sanitizar_string_ia(row_ia.get("total_to_date"))
+                        if tp:
+                            row_t["this_period"] = tp
+                        if td:
+                            row_t["total_to_date"] = td
                         break
 
         # ── 7. important_notes → template["important_notes"] ──────────────────
@@ -240,20 +240,20 @@ class SchemaTransformer:
         if notes and isinstance(notes, list) and "important_notes" in template:
             target_notes = template["important_notes"]
             for i, note_text in enumerate(notes):
-                if not note_text:
+                note_clean = self._sanitizar_string_ia(note_text)
+                if not note_clean:
                     continue
                 if i < len(target_notes) and isinstance(target_notes[i], dict):
-                    target_notes[i]["note_text"] = str(note_text)
+                    target_notes[i]["note_text"] = note_clean
                 else:
-                    # Lista de notes no template pode ser menor que o que o doc tem
-                    target_notes.append({"note_text": str(note_text)})
+                    target_notes.append({"note_text": note_clean})
 
         # ── 8. alertas_inconsistencias ─────────────────────────────────────────
         alertas = raw_fields_ia.get("alertas_inconsistencias", [])
         if alertas and isinstance(alertas, list):
             if "__alertas_ia__" not in template:
                 template["__alertas_ia__"] = []
-            template["__alertas_ia__"].extend([str(a) for a in alertas if a])
+            template["__alertas_ia__"].extend([self._sanitizar_string_ia(a) for a in alertas if self._sanitizar_string_ia(a)])
 
     # ──────────────────────────────────────────────────────────────────────────
     # FUNÇÃO 3: Overlay BDA — campos críticos sobrescreve o que a IA disse
