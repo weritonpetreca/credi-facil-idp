@@ -22,12 +22,21 @@ def test_deve_marcar_como_clean_se_todos_os_campos_forem_confiaveis(base_event, 
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
         lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/driver_license.json"}]})
 
+    # Formato real confirmado em produção (result.json do BDA custom_output):
+    # inference_result é FLAT (campo: valor); explainability_info é uma LISTA com 1 dict.
+    campos_dl = {
+        "identification_document_type": "DRIVER LICENSE",
+        "document_number": "1234567",
+        "full_name": "WERITON LUIS PETRECA",
+        "date_of_birth": "1989-10-12",
+        "expiration_date": "2030-10-12",
+        "issuing_state": "MG",
+    }
     bda_output_perfeito = {
-        "extractedFields": {
-            "document_number": {"value": "1234567", "confidence": 0.95},
-            "full_name": {"value": "WERITON LUIS PETRECA", "confidence": 0.99},
-            "expiration_date": {"value": "2030-10-12", "confidence": 0.92}
-        }
+        "inference_result": campos_dl,
+        "explainability_info": [
+            {campo: {"success": True, "confidence": 0.95} for campo in campos_dl}
+        ],
     }
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.get_object",
         lambda Bucket, Key: {"Body": MockS3Body(bda_output_perfeito)})
@@ -45,12 +54,30 @@ def test_deve_exigir_revisao_humana_e_notificar_se_campo_critico_tiver_baixa_con
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.list_objects_v2", 
         lambda Bucket, Prefix: {"Contents": [{"Key": "bda-output/pkg-test-123/pay_stub.json"}]})
 
+    # CAMPOS_CRITICOS_POR_SUBTIPO["pay_stub"] exige 13 campos — o fixture precisa
+    # cobrir todos eles (senão os "ausentes" também contam como falha, e o teste
+    # deixa de isolar exatamente 1 falha). Só employee_name fica com confiança baixa.
+    campos_ps = {
+        "employer_name": "CrediFacil Corp",
+        "employee_name": "W#riton Lui%",
+        "social_security_number": "987-65-4321",
+        "taxable_marital_status": "Married",
+        "pay_period_ending": "2026-06-18",
+        "pay_date": "2026-06-20",
+        "gross_pay_this_period": "452.43",
+        "gross_pay_ytd": "23526.80",
+        "net_pay_this_period": "291.90",
+        "federal_income_tax": "40.60",
+        "social_security_tax": "28.05",
+        "medicare_tax": "6.56",
+        "retirement_401k": "28.85",
+    }
+    confiancas = {campo: {"success": True, "confidence": 0.90} for campo in campos_ps}
+    confiancas["employee_name"] = {"success": True, "confidence": 0.45}  # único campo ruim
+
     bda_output_corrompido = {
-        "extractedFields": {
-            "employee_name": {"value": "W#riton Lui%", "confidence": 0.45},
-            "pay_date": {"value": "2026-06-20", "confidence": 0.91},
-            "employer_name": {"value": "CrediFacil Corp", "confidence": 0.88}
-        }
+        "inference_result": campos_ps,
+        "explainability_info": [confiancas],
     }
     monkeypatch.setattr("src.lambdas.confidence_checker.handler.s3_client.get_object",
         lambda Bucket, Key: {"Body": MockS3Body(bda_output_corrompido)})

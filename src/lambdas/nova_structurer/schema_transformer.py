@@ -256,6 +256,124 @@ class SchemaTransformer:
             template["__alertas_ia__"].extend([self._sanitizar_string_ia(a) for a in alertas if self._sanitizar_string_ia(a)])
 
     # ──────────────────────────────────────────────────────────────────────────
+    # FUNÇÃO 2b: Merge genérico e recursivo — usado por TODOS os subtipos exceto
+    # pay_stub. Cada tool spec em shared/tools.py foi desenhada para espelhar 1:1
+    # a estrutura do template correspondente (MAPA_TEMPLATES em handler.py), então
+    # aqui não precisamos de casamento por 'description' como no pay_stub — só
+    # copiar campo a campo, recursando em sub-objetos com o mesmo nome.
+    #
+    # Analogia Java: pay_stub usa um Mapper escrito à mão porque a lista de
+    # 'earnings' tem linhas com nomes fixos conhecidos de antemão ('regular',
+    # 'overtime'...). Os outros 5 subtipos usam reflection genérica porque a
+    # tool spec e o template já têm exatamente os mesmos nomes de campo — não
+    # há ambiguidade para resolver campo a campo.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _mesclar_dict_recursivo(self, alvo: dict, origem: dict):
+        """
+        Copia valores escalares de `origem` (raw_fields_ia da IA) para `alvo`
+        (o template), campo a campo, recursando em sub-dicionários que têm a
+        MESMA chave nos dois lados. Nunca cria chaves novas em `alvo` — só
+        preenche o que o template já esperava (contrato fechado, igual a um
+        DTO Java que ignora campos desconhecidos no JSON de entrada).
+        """
+        if not isinstance(origem, dict):
+            return
+        for chave, valor in origem.items():
+            if chave not in alvo:
+                continue
+            if isinstance(alvo[chave], dict) and isinstance(valor, dict):
+                self._mesclar_dict_recursivo(alvo[chave], valor)
+            elif not isinstance(alvo[chave], (dict, list)):
+                v = self._sanitizar_string_ia(valor)
+                if v:
+                    alvo[chave] = v
+
+    def _mesclar_box12_w2(self, template: dict, box12_ia):
+        """
+        Caso especial do W2: a tool spec devolve box12_items como LISTA de
+        {code, amount} (uma entrada por linha vista no documento, na ordem em
+        que aparecem). O template representa as 4 posições possíveis (12a-12d)
+        como um único dict achatado (code_a/amount_a, code_b/amount_b...).
+        Aqui fazemos o mapeamento posicional: primeiro item da lista vira 'a',
+        segundo vira 'b', e assim por diante — mesma ordem que o prompt e a
+        tool spec instruem a IA a seguir.
+        """
+        if not box12_ia or not isinstance(box12_ia, list):
+            return
+        alvos = template.get("box12_items")
+        if not alvos or not isinstance(alvos, list) or not isinstance(alvos[0], dict):
+            return
+        destino = alvos[0]
+        for letra, item in zip("abcd", box12_ia):
+            if not isinstance(item, dict):
+                continue
+            code = self._sanitizar_string_ia(item.get("code"))
+            amount = self._sanitizar_string_ia(item.get("amount"))
+            if code:
+                destino[f"code_{letra}"] = code
+            if amount:
+                destino[f"amount_{letra}"] = amount
+
+    def mesclar_generico_por_template(self, template: dict, raw_fields_ia: dict, subtipo: str):
+        """
+        Merge genérico para payroll_check, driver_license, w2_tax_form,
+        account_statement e homeowners_insurance_application. Duas exceções
+        pontuais tratadas à parte (documentadas em shared/tools.py):
+          - box12_items (W2): lista → dict achatado por posição.
+          - your_account_valuation / your_insurance_details (account_statement):
+            tamanho variável, então a lista inteira é SUBSTITUÍDA pelo que a IA
+            extraiu, em vez de casada linha a linha contra um template fixo.
+        """
+        if not isinstance(raw_fields_ia, dict):
+            return
+
+        CHAVES_ESPECIAIS = {
+            "tipo_classificado", "alertas_inconsistencias",
+            "box12_items", "your_account_valuation", "your_insurance_details",
+        }
+
+        # 1. Campos escalares e sub-objetos de primeiro nível
+        for chave, valor in raw_fields_ia.items():
+            if chave in CHAVES_ESPECIAIS or chave not in template:
+                continue
+            if isinstance(template[chave], dict) and isinstance(valor, dict):
+                self._mesclar_dict_recursivo(template[chave], valor)
+            elif not isinstance(template[chave], (dict, list)):
+                v = self._sanitizar_string_ia(valor)
+                if v:
+                    template[chave] = v
+
+        # 2. W2 — box12_items (lista → dict achatado por posição)
+        if subtipo == "w2_tax_form":
+            self._mesclar_box12_w2(template, raw_fields_ia.get("box12_items"))
+
+        # 3. account_statement — listas de tamanho variável substituem a lista inteira
+        if subtipo == "account_statement":
+            for chave_lista in ("your_account_valuation", "your_insurance_details"):
+                linhas_ia = raw_fields_ia.get(chave_lista)
+                if not isinstance(linhas_ia, list) or chave_lista not in template:
+                    continue
+                linhas_limpas = []
+                for linha in linhas_ia:
+                    if not isinstance(linha, dict):
+                        continue
+                    linha_limpa = {k: (self._sanitizar_string_ia(v) or None) for k, v in linha.items()}
+                    if any(v is not None for v in linha_limpa.values()):
+                        linhas_limpas.append(linha_limpa)
+                if linhas_limpas:
+                    template[chave_lista] = linhas_limpas
+
+        # 4. alertas_inconsistencias — mesmo tratamento usado no pay_stub
+        alertas = raw_fields_ia.get("alertas_inconsistencias", [])
+        if alertas and isinstance(alertas, list):
+            if "__alertas_ia__" not in template:
+                template["__alertas_ia__"] = []
+            template["__alertas_ia__"].extend(
+                [self._sanitizar_string_ia(a) for a in alertas if self._sanitizar_string_ia(a)]
+            )
+
+    # ──────────────────────────────────────────────────────────────────────────
     # FUNÇÃO 3: Overlay BDA — campos críticos sobrescreve o que a IA disse
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -356,7 +474,14 @@ class SchemaTransformer:
         template_final = json.loads(json.dumps(template_base))
 
         # ── FONTE 1: Nova Lite (campos secundários e tabelas) ──────────────────
-        self.mesclar_tabelas_ia_contextual(template_final, raw_fields_ia)
+        # pay_stub mantém o merge bespoke (casamento por 'description', já validado
+        # em produção); os outros 5 subtipos usam o merge genérico porque suas tool
+        # specs já espelham 1:1 o template (ver shared/tools.py e a FUNÇÃO 2b acima).
+        subtipo_lower_merge = (subtipo or "").lower()
+        if subtipo_lower_merge == "pay_stub":
+            self.mesclar_tabelas_ia_contextual(template_final, raw_fields_ia)
+        else:
+            self.mesclar_generico_por_template(template_final, raw_fields_ia, subtipo_lower_merge)
 
         # ── FONTE 2: BDA inference_result (campos críticos, alta confiança) ────
         inference_result = (bda_json or {}).get("inference_result", {})
@@ -400,11 +525,19 @@ class SchemaTransformer:
             media_real = round(preenchidos / max(len(todos_campos), 1), 4)
 
         # ── STATUS DA EXTRAÇÃO ─────────────────────────────────────────────────
-        # Verifica se campos críticos para decisão de crédito estão preenchidos
-        CRITICOS_PARA_CREDITO = [
-            "payee_name", "pay_date", "amount_numeric",  # payroll_check
-            "employee_name", "net_pay",                   # pay_stub (net_pay é dict)
-        ]
+        # Verifica se campos críticos para decisão de crédito estão preenchidos.
+        # A checagem é uma busca de substring no JSON inteiro (não só na raiz),
+        # então funciona igual para campos aninhados (ex: "closing_balance" dentro
+        # de your_account_balance) sem precisar navegar a árvore campo a campo.
+        CRITICOS_PARA_CREDITO_POR_SUBTIPO = {
+            "pay_stub": ["employee_name", "net_pay"],
+            "payroll_check": ["payee_name", "pay_date", "amount_numeric"],
+            "w2_tax_form": ["employee_last_name", "wages_tips_other_compensation"],
+            "account_statement": ["opening_balance", "closing_balance"],
+            "homeowners_insurance_application": ["named_insured", "policy_number"],
+            "driver_license": ["full_name", "document_number"],
+        }
+        CRITICOS_PARA_CREDITO = CRITICOS_PARA_CREDITO_POR_SUBTIPO.get((subtipo or "").lower(), [])
         campos_json = json.dumps(template_final)
         status_extracao = "sucesso"
         for critico in CRITICOS_PARA_CREDITO:

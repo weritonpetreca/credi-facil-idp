@@ -156,6 +156,69 @@ def renderizar_campo(ws, chave, valor):
         adicionar_linha_simples(ws, chave, valor)
 
 
+def status_checklist(valor):
+    return "✅ CONSISTENTE / PRESENTE" if valor is True else "❌ DIVERGENTE / AUSENTE" if valor is False else "⚪ NÃO AVALIADO"
+
+
+def renderizar_crm_consolidado(ws, payload_dados):
+    """
+    Renderiza o ARTEFATO 1 (customer_consolidated.json / montar_crm_json).
+
+    Shape real produzido pelo customer_consolidator:
+      requerente{}, sumario_financeiro{}, score_credito{pontuacao,faixa,...},
+      validacao_kyc{}, parecer_analise, documentos_do_pacote[], auditoria{}
+
+    Isso é o dossiê cruzado entre os documentos do pacote — não um documento
+    individual. Por isso o layout é orientado a decisão de crédito, não a
+    campos brutos de um único arquivo.
+    """
+    requerente = payload_dados.get("requerente", {})
+    score = payload_dados.get("score_credito", {})
+    validacao = payload_dados.get("validacao_kyc", {})
+    sumario = payload_dados.get("sumario_financeiro", {})
+
+    adicionar_secao(ws, "Requerente")
+    adicionar_linha_simples(ws, "Nome Completo", requerente.get("nome", "Não Identificado"))
+    adicionar_linha_simples(ws, "Documento de Identificação", requerente.get("documento_identificacao", "Não Informado"))
+
+    adicionar_secao(ws, "Score de Crédito (Dossiê Consolidado)")
+    adicionar_linha_simples(ws, "Pontuação", f"{score.get('pontuacao', 0)} / 1000")
+    adicionar_linha_simples(ws, "Faixa de Risco", str(score.get("faixa", "inconclusivo")).upper())
+    for i, motivo in enumerate(score.get("motivos_positivos", []), start=1):
+        adicionar_linha_simples(ws, f"Motivo Positivo {i}", motivo)
+    for i, motivo in enumerate(score.get("motivos_negativos", []), start=1):
+        adicionar_linha_simples(ws, f"Motivo Negativo {i}", motivo)
+    for i, alerta in enumerate(score.get("alertas_compliance", []), start=1):
+        adicionar_linha_simples(ws, f"Alerta de Compliance {i}", alerta)
+
+    adicionar_secao(ws, "Sumário Financeiro")
+    adicionar_linha_simples(ws, "Renda Líquida Mensal (USD)", sumario.get("renda_liquida_mensal_usd", 0.0))
+    adicionar_linha_simples(ws, "Saldo Bancário de Fechamento (USD)", sumario.get("saldo_bancario_fechamento_usd", 0.0))
+    adicionar_linha_simples(ws, "Parcela Máxima Recomendada (USD)", sumario.get("parcela_maxima_recomendada_usd", 0.0))
+    adicionar_linha_simples(ws, "Comprometimento de Renda (%)", sumario.get("comprometimento_renda_perc", 0.0))
+
+    adicionar_secao(ws, "Validação Cadastral (KYC)")
+    for chave, valor in validacao.items():
+        ws.append([f"Checklist: {nome_amigavel(chave)}", status_checklist(valor)])
+
+    if payload_dados.get("parecer_analise"):
+        adicionar_secao(ws, "Parecer da Análise")
+        ws.append(["Justificativa Técnica", payload_dados["parecer_analise"]])
+
+    documentos = payload_dados.get("documentos_do_pacote", [])
+    if documentos:
+        renderizar_lista_de_dicts(ws, "Documentos do Pacote", documentos)
+
+    auditoria = payload_dados.get("auditoria", {})
+    if auditoria:
+        adicionar_secao(ws, "Auditoria e Rastreabilidade")
+        for chave, valor in auditoria.items():
+            if isinstance(valor, list):
+                adicionar_linha_simples(ws, chave, ", ".join(str(v) for v in valor) or "Nenhum")
+            else:
+                adicionar_linha_simples(ws, chave, valor)
+
+
 def handler(event, context):
     try:
         logger.info(f"Iniciando engine de renderização de planilhas para o evento: {json.dumps(event)}")
@@ -177,22 +240,26 @@ def handler(event, context):
 
         ws.append(["Propriedade Analisada", "Valor Identificado"])
 
-        if "cliente" in payload_dados and "validacao" in payload_dados:
+        if "requerente" in payload_dados and "score_credito" in payload_dados:
+            # ARTEFATO 1: customer_consolidated.json (montar_crm_json) — dossiê cruzado do pacote.
+            renderizar_crm_consolidado(ws, payload_dados)
+
+        elif "cliente" in payload_dados and "validacao" in payload_dados:
+            # ARTEFATO 2 (legado): output.json / pacote_completo, caso apontado diretamente para cá.
             cliente = payload_dados["cliente"]
             validacao = payload_dados["validacao"]
 
             ws.append(["Nome Completo do Proponente", cliente.get("nome", "Não Identificado")])
             ws.append(["Documento de Identificação", cliente.get("documento_identificacao", "Não Informado")])
-            ws.append(["Score de Crédito Atribuído", f"{cliente.get('score_credito', {}).get('valor', 0)} Pontos"])
+            ws.append(["Score de Crédito Atribuído", f"{cliente.get('score_credito', {}).get('pontuacao', 0)} Pontos"])
             ws.append(["Classificação de Risco", str(cliente.get("classificacao_risco", {}).get("categoria", "INCONCLUSIVO")).upper()])
             ws.append(["Parecer / Justificativa Técnica", cliente.get("classificacao_risco", {}).get("justificativa", "")])
 
             for chk_chave, chk_val in validacao.items():
-                nome_chk = nome_amigavel(chk_chave)
-                status_txt = "✅ CONSISTENTE / PRESENTE" if chk_val is True else "❌ DIVERGENTE / AUSENTE" if chk_val is False else "⚪ NÃO AVALIADO"
-                ws.append([f"Checklist: {nome_chk}", status_txt])
+                ws.append([f"Checklist: {nome_amigavel(chk_chave)}", status_checklist(chk_val)])
 
         else:
+            # Documento individual: dados_extraidos_do_documento (SchemaTransformer.executar()).
             campos_extraidos = payload_dados.get("dados_extraidos_do_documento", {})
 
             for chave, valor in campos_extraidos.items():

@@ -22,9 +22,10 @@ import os
 import datetime
 import boto3
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.metrics import MetricUnit
+from aws_lambda_powertools.metrics import Metrics, MetricUnit
 
 logger = Logger(service="nova-structurer-aggregator")
+metrics = Metrics(namespace="CrediFacil/Pipeline")
 s3_client = boto3.client("s3")
 db_client = boto3.client("dynamodb")
 
@@ -192,10 +193,11 @@ def emitir_metrica_custo(custo_total: float, package_id: str):
     Em vez de logs, você faz graphing e alertas diretamente.
     """
     try:
-        from aws_lambda_powertools.metrics import Metrics
-        metrics = Metrics(namespace="CrediFacil/Pipeline")
         metrics.add_dimension(name="PackageId", value=package_id)
         metrics.add_metric(name="EstimatedCostUSD", unit=MetricUnit.Count, value=custo_total)
+        # Sem @metrics.log_metrics decorando um handler, add_metric() só bufferiza.
+        # flush_metrics() força a escrita da linha EMF no CloudWatch Logs agora.
+        metrics.flush_metrics()
     except Exception as e:
         # Falha na métrica não deve derrubar o pipeline
         logger.warning(f"Não foi possível emitir métrica de custo: {e}")

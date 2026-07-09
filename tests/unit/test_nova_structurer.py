@@ -71,10 +71,25 @@ def test_handler_unitario_deve_estruturar_um_unico_documento_via_tool_calling(mo
     mock_s3 = MagicMock()
     mock_bedrock = MagicMock()
 
-    mock_s3.get_object.return_value = {
-        "Body": MockS3Body('{"text": "Transcrição simulada OCR da CNH do cliente Weriton Luis Petreca"}')
-    }
-    
+    # 🚀 Simula os DOIS arquivos reais que o BdaExtractor busca: custom_output
+    # (com matched_blueprint — a fonte de verdade da classificação, ver
+    # shared/classificador.py) e standard_output (markdown completo).
+    custom_output_body = json.dumps({
+        "matched_blueprint": {"name": "CrediFacil-DriverLicense-Blueprint"},
+        "inference_result": {"full_name": "WERITON LUIS PETRECA"},
+        "explainability_info": [{"full_name": {"confidence": 0.97}}],
+    })
+    standard_output_body = json.dumps({
+        "pages": [{"representation": {"markdown": "Transcrição simulada OCR da CNH do cliente Weriton Luis Petreca"}}]
+    })
+
+    def s3_get_object_side_effect(Bucket, Key):
+        if "standard_output" in Key:
+            return {"Body": MockS3Body(standard_output_body)}
+        return {"Body": MockS3Body(custom_output_body)}
+
+    mock_s3.get_object.side_effect = s3_get_object_side_effect
+
     mock_bedrock.converse.return_value = {
         "usage": {"inputTokens": 150, "outputTokens": 90},
         "output": {
@@ -83,12 +98,9 @@ def test_handler_unitario_deve_estruturar_um_unico_documento_via_tool_calling(mo
                     {
                         "toolUse": {
                             "input": {
-                                "tipo_classificado": "identity_document",
-                                "campos_extraidos_brutos": {
-                                    "full_name": "WERITON LUIS PETRECA",
-                                    "document_number": "MG-12.345.678"
-                                },
-                                "confianca_extracao": 0.98,
+                                "tipo_classificado": "DRIVER_LICENSE",
+                                "full_name": "WERITON LUIS PETRECA",
+                                "document_number": "MG-12.345.678",
                                 "alertas_inconsistencias": []
                             }
                         }

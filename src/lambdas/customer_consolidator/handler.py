@@ -1,6 +1,4 @@
 """
-customer_consolidator/handler.py
-
 Responsabilidade: analisar o pacote completo de documentos e produzir dois artefatos:
 
 ARTEFATO 1 — CRM JSON (customer_consolidated.json):
@@ -23,6 +21,8 @@ import datetime
 import boto3
 from aws_lambda_powertools import Logger
 
+from src.shared.financeiro import safe_float, extrair_renda_do_documento, extrair_saldo_do_documento
+
 logger = Logger(service="customer-consolidator")
 s3_client = boto3.client("s3")
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
@@ -36,101 +36,10 @@ PRECO_NOVA_LITE_INPUT_PER_1K = 0.00006    # USD por 1.000 tokens de input
 PRECO_NOVA_LITE_OUTPUT_PER_1K = 0.00024   # USD por 1.000 tokens de output
 PRECO_BDA_POR_PAGINA = 0.040              # USD por página (blueprint com ≤30 campos)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# UTILITÁRIOS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def safe_float(val) -> float:
-    """
-    Converte qualquer valor em float de forma segura.
-    Trata vírgula como separador de milhar (ex: "16,640.00" → 16640.0).
-    """
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    try:
-        limpo = "".join(c for c in str(val) if c.isdigit() or c in [".", ","])
-        if "," in limpo and "." in limpo:
-            # Detecta se a vírgula é decimal (BR) ou separador de milhar (EUA)
-            if limpo.rfind(",") > limpo.rfind("."):
-                limpo = limpo.replace(".", "").replace(",", ".")
-            else:
-                limpo = limpo.replace(",", "")
-        elif "," in limpo:
-            limpo = limpo.replace(",", ".")
-        return float(limpo) if limpo else 0.0
-    except (ValueError, TypeError):
-        return 0.0
-
-
-def extrair_renda_do_documento(campos: dict, subtipo: str) -> float:
-    """
-    Extrai a renda do documento respeitando a estrutura real de cada template.
-
-    Cada tipo de documento tem uma estrutura diferente para a renda:
-    - pay_stub:      net_pay.this_period  (dict aninhado)
-    - payroll_check: amount_numeric       (string na raiz)
-    - w2_tax_form:   wages_tips_other_compensation (string na raiz)
-
-    Analogia Java: é um Strategy Pattern — cada subtipo tem sua própria
-    estratégia de extração de renda.
-    """
-    subtipo_lower = (subtipo or "").lower()
-
-    if subtipo_lower in ("pay_stub", "comprovante_renda"):
-        # net_pay é um dict: {"this_period": "$291.90", ...}
-        net_pay = campos.get("net_pay")
-        if isinstance(net_pay, dict):
-            v = net_pay.get("this_period") or net_pay.get("year_to_date")
-            if v:
-                return safe_float(v)
-
-        # Fallback: percorre a lista de earnings buscando o gross_pay
-        for item in campos.get("earnings", []):
-            if not isinstance(item, dict):
-                continue
-            gp = item.get("gross_pay", {})
-            if isinstance(gp, dict):
-                v = gp.get("this_period")
-                if v:
-                    return safe_float(v)
-
-        # Último fallback: campo plano net_pay_this_period (novos templates)
-        v = campos.get("net_pay_this_period") or campos.get("gross_pay_this_period")
-        if v:
-            return safe_float(v)
-
-    elif subtipo_lower in ("payroll_check", "comprovante_complementar"):
-        v = campos.get("amount_numeric") or campos.get("amount_words")
-        if v:
-            return safe_float(v)
-
-    elif subtipo_lower == "w2_tax_form":
-        v = campos.get("wages_tips_other_compensation")
-        if v:
-            return safe_float(v)
-
-    return 0.0
-
-
-def extrair_saldo_do_documento(campos: dict) -> float:
-    """
-    Extrai o saldo de fechamento de um extrato bancário.
-    Tenta várias chaves que podem estar no template de account_statement.
-    """
-    candidatos = [
-        campos.get("closing_balance"),
-        (campos.get("your_account_balance") or {}).get("closing_balance"),
-        campos.get("closing_account_balance"),
-        campos.get("saldo_bancario_fechamento"),
-        campos.get("balance"),
-    ]
-    for c in candidatos:
-        if c is not None:
-            return safe_float(c)
-    return 0.0
+# safe_float / extrair_renda_do_documento / extrair_saldo_do_documento agora vivem
+# em shared/financeiro.py — usados também por result_writer.py. Antes havia duas
+# implementações divergentes (esta e extrair_renda_segura em result_writer.py),
+# o que causava renda $0.00 em um artefato e correta em outro para o MESMO documento.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,7 +80,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
 
         if tipo in ("COMPROVANTE_RENDA", "COMPROVANTE_COMPLEMENTAR",
                     "PAY_STUB", "PAYROLL_CHECK", "W2_TAX_FORM"):
-            renda = extrair_renda_do_documento(campos, subtipo)
+            renda = extrair_renda_do_documento(campos, tipo=tipo, subtipo=subtipo)
             renda_maxima = max(renda_maxima, renda)
 
         elif tipo in ("EXTRATO_BANCARIO", "BANK_STATEMENT", "ACCOUNT_STATEMENT"):

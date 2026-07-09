@@ -4,75 +4,36 @@ import boto3
 from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 
+from src.shared.financeiro import safe_float, extrair_renda_do_documento, extrair_saldo_do_documento
+
 logger = Logger(service="result-writer")
 db_client = boto3.client("dynamodb", region_name="us-east-1")
 
 TABLE_PACOTES = os.environ.get("DYNAMODB_TABLE", "credifacil-pacotes-dev")
 TABLE_CLIENTES = os.environ.get("CLIENTS_DYNAMODB_TABLE", "credifacil-clientes-dev")
 
-def safe_float(val) -> float:
-    if val is None:
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    try:
-        limpo = "".join(c for c in str(val) if c.isdigit() or c in [".", ","])
-        if "," in limpo and "." in limpo:
-            if limpo.rfind(",") > limpo.rfind("."):
-                limpo = limpo.replace(".", "").replace(",", ".")
-            else:
-                limpo = limpo.replace(",", "")
-        elif "," in limpo:
-            limpo = limpo.replace(",", ".")
-        return float(limpo) if limpo else 0.0
-    except:
-        return 0.0
+# safe_float / extrair_renda_do_documento / extrair_saldo_do_documento agora vivem
+# em shared/financeiro.py (também usado por customer_consolidator.py). As antigas
+# extrair_renda_segura()/extrair_saldo_seguro() daqui foram unificadas lá para
+# eliminar aliases divergentes entre as duas Lambdas.
 
 def extrair_renda_segura(doc: dict) -> float:
-    """Recupera a renda buscando tanto na raiz calculada quanto nos nós aninhados."""
-    # 1. Tenta buscar o valor já pré-calculado na raiz pelo consolidador
-    for k in ["amount_numeric", "Gross Pay", "wages_tips_other_compensation", "gross_pay_year_to_date", "renda_bruta_informada"]:
-        if doc.get(k) is not None and safe_float(doc.get(k)) > 0:
-            return safe_float(doc.get(k))
-            
-    # 2. Fallback: Varre a estrutura profunda do blueprint individual
+    """Wrapper fino: adapta o formato 'doc' (root + campos aninhados) para a assinatura compartilhada."""
     campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
-    subtipo = str(doc.get("subtipo_documento", "")).lower()
-    
-    if subtipo in ("pay_stub", "comprovante_renda"):
-        net_pay = campos.get("net_pay")
-        if isinstance(net_pay, dict):
-            v = net_pay.get("this_period") or net_pay.get("year_to_date")
-            if v: return safe_float(v)
-        for item in campos.get("earnings", []):
-            if isinstance(item, dict):
-                v = item.get("gross_pay", {}).get("this_period") or item.get("this_period")
-                if v: return safe_float(v)
-    elif subtipo in ("payroll_check", "comprovante_complementar"):
-        return safe_float(campos.get("amount_numeric"))
-    elif subtipo == "w2_tax_form":
-        return safe_float(campos.get("wages_tips_other_compensation"))
-        
-    return 0.0
+    # `doc` primeiro, `campos` sobrepondo: alguns pipelines legados gravam o valor
+    # já calculado direto na raiz do doc; a estrutura aninhada (mais específica) vence.
+    campos_com_raiz = {**doc, **campos}
+    return extrair_renda_do_documento(
+        campos_com_raiz,
+        tipo=doc.get("tipo_documento", ""),
+        subtipo=doc.get("subtipo_documento", ""),
+    )
 
 def extrair_saldo_seguro(doc: dict) -> float:
-    """Recupera o saldo patrimonial varrendo caminhos planos e hierárquicos."""
-    # 1. Tenta buscar o valor já pré-calculado na raiz pelo consolidador
-    for k in ["saldo_bancario_fechamento", "closing_balance", "balance", "amount"]:
-        if doc.get(k) is not None and safe_float(doc.get(k)) > 0:
-            return safe_float(doc.get(k))
-            
-    # 2. Fallback: Navega no nó estruturado do extrato bancário
+    """Wrapper fino: adapta o formato 'doc' (root + campos aninhados) para a assinatura compartilhada."""
     campos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
-    saldo_raw = campos.get("your_account_balance")
-    if isinstance(saldo_raw, dict):
-        v = saldo_raw.get("closing_balance") or saldo_raw.get("value")
-        if v: return safe_float(v)
-        
-    for k in ["closing_account_balance", "saldo_bancario_fechamento", "amount", "balance", "closing_balance"]:
-        if campos.get(k):
-            return safe_float(campos.get(k))
-    return 0.0
+    campos_com_raiz = {**doc, **campos}
+    return extrair_saldo_do_documento(campos_com_raiz)
 
 def handler(event, context):
     """Handler AWS Lambda atuando como Camada de Persistência Inteligente (Smart Writer)."""
@@ -180,7 +141,8 @@ def handler(event, context):
             else:
                 num_id = cliente_data.get("documento_identificacao") or "Não Informado"
 
-            score_individuo = cliente_data.get("score_credito", {}).get("valor", 0)
+            # customer_consolidator.montar_pacote_completo_json grava "pontuacao" (não "valor").
+            score_individuo = cliente_data.get("score_credito", {}).get("pontuacao", 0)
             risco_data = cliente_data.get("classificacao_risco", {})
             risco_individuo = risco_data.get("categoria", "inconclusivo")
             justificativa_individuo = risco_data.get("justificativa", "Sem justificativa cadastrada.")
