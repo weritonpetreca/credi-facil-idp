@@ -3,6 +3,8 @@ import os
 import boto3
 from aws_lambda_powertools import Logger
 
+from src.shared.classificador import classificar_subtipo_documento
+
 logger = Logger(service="confidence-checker")
 s3_client = boto3.client("s3", region_name="us-east-1")
 
@@ -68,8 +70,15 @@ def obter_confianca_campo_bda(bda_json: dict, campo_canonico: str) -> tuple:
                     if conf is not None:
                         return float(conf), valor_encontrado
                         
-    logger.warning(f"Campo '{campo_canonico}' extraído, mas sem metadados em explainability_info. Proxy=1.0")
-    return 1.0, valor_encontrado
+    # Campo tem valor no inference_result, mas SEM entrada correspondente em
+    # explainability_info. Isso NÃO é sinal de qualidade — é ausência de dado.
+    # Tratar como confiança máxima (comportamento antigo: proxy=1.0) deixava
+    # passar sem revisão exatamente os campos sobre os quais temos menos
+    # informação. Usamos um proxy abaixo do THRESHOLD para que caia em revisão
+    # humana por padrão — mais conservador, alinhado à exigência de
+    # explicabilidade do Marco Legal da IA para decisão de crédito.
+    logger.warning(f"Campo '{campo_canonico}' extraído, mas sem metadados em explainability_info. Proxy conservador abaixo do threshold.")
+    return max(THRESHOLD - 0.05, 0.0), valor_encontrado
 
 def handler(event, context):
     try:
@@ -95,15 +104,18 @@ def handler(event, context):
             if len(partes) < 3: continue
             nome_pdf_original = partes[2]
 
-            subtipo = "pay_stub"
-            if "w2" in nome_pdf_original.lower(): subtipo = "w2_tax_form"
-            elif "check" in nome_pdf_original.lower(): subtipo = "payroll_check"
-            elif "statement" in nome_pdf_original.lower(): subtipo = "account_statement"
-            elif "insurance" in nome_pdf_original.lower(): subtipo = "homeowners_insurance_application"
-            elif "license" in nome_pdf_original.lower() or "id_card" in nome_pdf_original.lower(): subtipo = "driver_license"
-
             s3_response = s3_client.get_object(Bucket=bucket_saida, Key=key)
             bda_json = json.loads(s3_response["Body"].read().decode("utf-8"))
+
+            # Mesma fonte de verdade usada em nova_structurer/handler.py: prioriza
+            # matched_blueprint do BDA (já disponível aqui, é o mesmo bda_json)
+            # sobre a heurística de nome de arquivo. Antes esta Lambda tinha sua
+            # PRÓPRIA cópia da heurística, que podia divergir silenciosamente da
+            # classificação usada na extração — ver shared/classificador.py.
+            _, subtipo = classificar_subtipo_documento(
+                nome_pdf_original=nome_pdf_original,
+                json_custom_bruto=bda_json,
+            )
 
             campos_criticos = CAMPOS_CRITICOS_POR_SUBTIPO.get(subtipo, [])
 

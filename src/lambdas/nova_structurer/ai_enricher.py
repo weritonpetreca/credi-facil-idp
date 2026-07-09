@@ -1,6 +1,6 @@
 import json
 from aws_lambda_powertools import Logger
-from src.shared.tools import obter_especificacao_ferramenta_loan
+from src.shared.tools import obter_especificacao_ferramenta
 
 logger = Logger(child=True)
 
@@ -8,22 +8,33 @@ class AiEnricher:
     """
     Camada especialista em LLM (Inference Layer).
     Responsável única por empacotar o contexto do documento e se comunicar com o Amazon Bedrock.
+
+    A tool spec NÃO é mais fixa: cada subtipo documental tem sua própria (ver
+    shared/tools.py), escolhida em tempo de execução por quem chama executar().
+    Isso é o que permite ao Nova Lite receber um "contrato" (schema) relevante
+    para W2, CNH, extrato ou apólice, em vez de um único schema genérico
+    enviesado para holerite.
     """
     def __init__(self, bedrock_runtime, model_id: str, prompt_sistema: str):
         self.bedrock_runtime = bedrock_runtime
         self.model_id = model_id
         self.prompt_sistema = prompt_sistema
 
-    def executar(self, texto_integral: str, json_higienizado: dict, string_prompt_humanos: str = "", guardrail_id: str = None, guardrail_version: str = "1") -> dict:
+    def executar(self, subtipo: str, texto_integral: str, json_higienizado: dict, string_prompt_humanos: str = "", guardrail_id: str = None, guardrail_version: str = "1") -> dict:
         """
         Envia o contexto do documento para a Nova Lite, montando os argumentos
         dinamicamente para evitar ParamValidationError com propriedades nulas.
+
+        `subtipo` decide QUAL tool spec (e portanto qual "contrato" de extração)
+        é oferecida ao modelo — ver obter_especificacao_ferramenta() em shared/tools.py.
         """
-        logger.info(f"AiEnricher acionando modelo {self.model_id} com payload de {len(texto_integral)} caracteres.")
-        
+        logger.info(f"AiEnricher acionando modelo {self.model_id} (subtipo={subtipo}) com payload de {len(texto_integral)} caracteres.")
+
+        tool_spec = obter_especificacao_ferramenta(subtipo)
+        nome_ferramenta = tool_spec["toolSpec"]["name"]
         tool_config = {
-            "tools": [obter_especificacao_ferramenta_loan()],
-            "toolChoice": {"tool": {"name": "estruturar_dados_documento_cliente_unico"}}
+            "tools": [tool_spec],
+            "toolChoice": {"tool": {"name": nome_ferramenta}}
         }
         
         conteudo_input_hibrido = (
