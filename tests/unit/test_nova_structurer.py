@@ -171,3 +171,60 @@ def test_aggregator_deve_consolidar_lote_e_emitir_metricas_emf(monkeypatch):
     json_estruturado_final = response["json_estruturado"]
     assert len(json_estruturado_final["documentos_analisados"]) == 1
     mock_s3.put_object.assert_called_once()
+
+
+def test_aggregator_registra_documento_com_falha_em_vez_de_descartar(monkeypatch):
+    """
+    Regressão direta do bug relatado em produção: de 7 documentos enviados,
+    só 5 apareciam no resultado final. Causa raiz: quando um documento falha
+    na estruturação (ex: ModelErrorException do Bedrock), o Catch do ASL
+    redireciona para HandleSingleDocumentFailure — um Pass state que devolve
+    {"status": "FAILED", ...} SEM a chave "blueprint". O aggregator antigo
+    descartava esse resultado silenciosamente (só um log warning). Agora
+    precisa aparecer em documentos_analisados com status_extracao="falha".
+    """
+    mock_s3 = MagicMock()
+    monkeypatch.setattr(aggregator_module, "s3_client", mock_s3)
+    monkeypatch.setattr(aggregator_module.metrics, "add_metric", lambda name, unit, value: None)
+
+    mock_aggregator_event = {
+        "package_id": "pkg-map-fail",
+        "user_id": "analista-weriton",
+        "execute_score": False,
+        "bda_output_bucket": "credifacil-outputs-dev",
+        "map_results": [
+            {
+                "blueprint": {
+                    "tipo_documento": "documento_identificacao",
+                    "subtipo_documento": "driver_license",
+                    "arquivo_original": "cnh_ok.pdf",
+                    "dados_extraidos_do_documento": {"full_name": "WERITON LUIS PETRECA"},
+                    "localizacao_documento_s3": {"s3_key_origem": "packages/pkg-map-fail/cnh_ok.pdf", "s3_key_resultado_bda": "k", "s3_key_resultado": "r"},
+                    "confiabilidade_extracao": {"status_extracao": "sucesso", "confianca_media": "0.98", "observacoes": []}
+                },
+                "raw_ia": {},
+                "input_tokens": 100,
+                "output_tokens": 50
+            },
+            {
+                # Exatamente o shape que HandleSingleDocumentFailure (Pass state) devolve
+                "status": "FAILED",
+                "nome_pdf_original": "lending_package_ID_Card.pdf",
+                "error_cause": "An error occurred (ModelErrorException) when calling the Converse operation: Model produced invalid sequence as part of ToolUse."
+            }
+        ]
+    }
+
+    response = aggregator_module.handler(mock_aggregator_event, None)
+
+    docs = response["json_estruturado"]["documentos_analisados"]
+    assert len(docs) == 2, "O documento com falha não pode sumir — precisa aparecer junto com os que tiveram sucesso"
+
+    doc_falho = next(d for d in docs if d["arquivo_original"] == "lending_package_ID_Card.pdf")
+    assert doc_falho["confiabilidade_extracao"]["status_extracao"] == "falha"
+    assert "ModelErrorException" in doc_falho["confiabilidade_extracao"]["observacoes"][0]
+
+    doc_ok = next(d for d in docs if d["arquivo_original"] == "cnh_ok.pdf")
+    assert doc_ok["confiabilidade_extracao"]["status_extracao"] == "sucesso"
+
+    assert response["json_estruturado"]["sistema"]["processamento"]["documentos_com_falha"] == 1

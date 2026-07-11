@@ -15,13 +15,14 @@ const RISK_META = {
 
 const INCOME_KEYS = [
   "amount_numeric",
-  "Gross Pay",
   "wages_tips_other_compensation",
+  "net_pay.this_period",
 ];
 const BALANCE_KEYS = [
   "saldo_bancario_fechamento",
   "closing_balance",
   "balance",
+  "your_account_balance.closing_balance",
 ];
 
 function formatUSD(value) {
@@ -61,7 +62,7 @@ export default function ResultPanel({ data, executeScore, outputBucket }) {
 
   const showScore = executeScore && !!cliente;
 
-  const scoreVal = cliente.score_credito?.valor ?? cliente.score_atribuido ?? 0;
+  const scoreVal = cliente.score_credito?.pontuacao ?? cliente.score_atribuido ?? 0;
   const riscoCat = (
     cliente.classificacao_risco?.categoria || "inconclusivo"
   ).toLowerCase();

@@ -128,28 +128,14 @@ def handler(event, context):
                 )
             except Exception as mestre_url_err:
                 logger.warning(f"Não foi possível assinar as URLs mestres do lote: {str(mestre_url_err)}")
-            
-            if "customer_consolidated.json" in s3_key:
-                try:
-                    s3_res_c = s3_client.get_object(Bucket=BUCKET_SAIDA, Key=key_consolidada)
-                    json_c = json.loads(s3_res_c["Body"].read().decode("utf-8"))
-                    for k_c in ["cliente", "score_credito", "sumario_financeiro", "validacao", "validacao_cruzada", "parecer", "renda_bruta_estimada", "saldo_bancario_fechamento"]:
-                        if k_c in json_c:
-                            dados_extraidos[k_c] = json_c[k_c]
-                except Exception as merge_err:
-                    logger.warning(f"Falha ao realizar merge dinâmico do score do cliente: {str(merge_err)}")
 
-            renda = dados_extraidos.get("renda_bruta_estimada") or dados_extraidos.get("sumario_financeiro", {}).get("renda_bruta_estimada") or 0.0
-            saldo = dados_extraidos.get("saldo_bancario_fechamento") or dados_extraidos.get("sumario_financeiro", {}).get("saldo_bancario_fechamento") or 0.0
-            
-            dados_extraidos["renda_bruta_estimada"] = renda
-            dados_extraidos["saldo_bancario_fechamento"] = saldo
-            if "sumario_financeiro" not in dados_extraidos:
-                dados_extraidos["sumario_financeiro"] = {}
-            dados_extraidos["sumario_financeiro"]["renda_bruta_estimada"] = renda
-            dados_extraidos["sumario_financeiro"]["saldo_bancario_fechamento"] = saldo
+            # Nota: removido o merge que buscava customer_consolidated.json de novo só pra
+            # copiar score_credito/sumario_financeiro soltos no topo — o front-end lê
+            # cliente.score_credito e calcula renda/saldo ele mesmo a partir dos documentos
+            # individuais (ver ResultPanel.jsx), então esses dois nunca eram consumidos.
+            # Isso também elimina uma leitura de S3 inteira por requisição.
 
-            raw_docs = dados_extraidos.get("documentos_analisados") or dados_extraidos.get("documentos_processados") or []
+            raw_docs = dados_extraidos.get("documentos_analisados") or []
             normalized_docs = []
             
             for doc in raw_docs:
@@ -162,6 +148,9 @@ def handler(event, context):
                 conf_media = doc.get("confianca_media") or doc.get("confianca_bda") or 1.0
                 status_extracao = doc.get("status_extracao") or doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso")
                 observacoes = doc.get("observacoes") or doc.get("confiabilidade_extracao", {}).get("observacoes", [])
+                # dados_extraidos_do_documento é o nome canônico (backend e front-end
+                # concordam nele agora); campos_extraidos como fallback só pra ler
+                # payloads antigos já persistidos no S3 antes desta limpeza.
                 campos_internos = doc.get("dados_extraidos_do_documento") or doc.get("campos_extraidos") or {}
                 
                 if not s3_key_res and orig_file:
@@ -194,12 +183,10 @@ def handler(event, context):
                     "observacoes": observacoes,
                     "s3_url_final": s3_url_final,
                     "s3_url_excel": s3_url_excel,
-                    "dados_extraidos_do_documento": campos_internos,
-                    "campos_extraidos": campos_internos
+                    "dados_extraidos_do_documento": campos_internos
                 })
                 
             dados_extraidos["documentos_analisados"] = normalized_docs
-            dados_extraidos["documentos_processados"] = normalized_docs
             resposta_base["dados_extraidos"] = dados_extraidos
             
         elif status == "FAILED" and "errorMessage" in item:

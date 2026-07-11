@@ -1,9 +1,23 @@
+function resolverCaminho(obj, caminho) {
+  // Suporta chaves aninhadas tipo "your_account_balance.closing_balance" —
+  // necessário desde que os templates de extrato/holerite passaram a
+  // aninhar esses campos em vez de deixá-los soltos no primeiro nível.
+  return caminho
+    .split(".")
+    .reduce(
+      (acc, parte) => (acc && typeof acc === "object" ? acc[parte] : undefined),
+      obj,
+    );
+}
+
 export function calcularMaiorValorCampo(docs, chaves) {
   let max = 0.0;
   (docs || []).forEach((doc) => {
-    const campos = doc.campos_extraidos || {};
+    const campos = doc.dados_extraidos_do_documento || doc.campos_extraidos || {};
     chaves.forEach((chave) => {
-      const val = campos[chave];
+      const val = chave.includes(".")
+        ? resolverCaminho(campos, chave)
+        : campos[chave];
       if (val) {
         const num = parseFloat(String(val).replace(/[^0-9.]/g, "")) || 0.0;
         if (num > max) max = num;
@@ -17,7 +31,7 @@ export function exportarArquivoParaExcel(doc) {
   let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
   csvContent += "Propriedade;Valor Extraido;Confianca Campo\n";
 
-  const campos = doc.campos_extraidos || {};
+  const campos = doc.dados_extraidos_do_documento || doc.campos_extraidos || {};
   Object.keys(campos).forEach((chave) => {
     const campoDados = campos[chave];
     let valor = campoDados;
@@ -60,7 +74,7 @@ export function buildDocumentRows(dados, executeScore, scoreVal, riscoCat) {
       confianca_media: 1.0,
       s3_url_final: dados.s3_url_consolidado,
       s3_url_excel: dados.s3_url_excel_consolidado,
-      campos_extraidos: {
+      dados_extraidos_do_documento: {
         nome_completo_proponente: dados.cliente.nome,
         documento_identificacao: dados.cliente.documento_identificacao,
         score_atribuido: scoreVal,
