@@ -41,3 +41,13 @@ jobs:
         run: |
           sam delete --stack-name credifacil-idp-dev --no-prompts
           echo "✅ Sucesso! Toda a infraestrutura Serverless foi desprovisionada via GitHub Actions."
+      
+      - name: Force Clean and Delete SAM Artifact Bucket
+        run: |
+          BUCKET_NAME="sam-artifacts-credifacil-idp-dev"
+          if aws s3 api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "🧹 Bucket de artefatos estável encontrado. Esvaziando zips acumulados e destruindo bucket..."
+            aws s3 rb s3://$BUCKET_NAME --force
+          else
+            echo "✅ Bucket de artefatos do SAM já limpo ou inexistente."
+          fi
