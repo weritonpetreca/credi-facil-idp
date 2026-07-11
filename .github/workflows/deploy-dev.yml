@@ -63,9 +63,9 @@ jobs:
           BUCKET_NAME="sam-artifacts-credifacil-idp-dev"
 
           echo "🔎 Verificando existência do bucket de artefatos personalizado..."
-          if ! aws s3 api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "🔨 Bucket não encontrado. Criando bucket estável de artefatos..."
-            aws s3 api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
+            aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
           fi
 
           sam deploy \
