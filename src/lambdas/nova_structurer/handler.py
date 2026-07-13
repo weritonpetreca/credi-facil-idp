@@ -184,7 +184,9 @@ Você deve, sob qualquer circunstância, executar sua resposta através do acion
 
 # POLÍTICA DE CONTROLE DE LACUNAS E PLACEHOLDERS (ANTI-ALUCINAÇÃO)
 - NÃO invente dados. Se uma linha de deduções, benefício opcional ou campo de qualquer subtipo não existir no texto bruto, deixe o valor do campo estritamente como `null`.
-- Strings genéricas como 'BANK NAME' ou 'ADDRESS PLACEHOLDER' em documentos de teste devem ser transcritas exatamente como estão escritas na imagem, pois servem para a mesa de auditoria humana identificar amostras incompletas.
+- Isto vale mesmo quando o RÓTULO do campo aparece no documento mas nenhum valor foi escrito depois dele (ex: um formulário com "Policy Number" impresso, seguido de um espaço em branco — sem número, sem data, sem texto algum). Rótulo presente não é sinônimo de dado presente: se não há nada de fato escrito ali, o campo é `null`.
+- PROIBIDO preencher um campo com uma sequência de caracteres sem sentido (símbolos soltos, letras aleatórias, combinações como '%()*' ou 'S#S#S') só para não deixá-lo vazio. Se você não consegue identificar um valor real e legível para o campo, ele é `null` — nunca um "melhor palpite" ilegível. Um campo `null` é auditável e correto; um campo com ruído parece um valor real e pode acabar usado numa decisão de crédito por engano.
+- Strings genéricas como 'BANK NAME' ou 'ADDRESS PLACEHOLDER' em documentos de teste são diferentes disso: são texto real, legível e efetivamente presente no documento, então devem ser transcritas exatamente como estão. O critério é sempre o mesmo: existe algo escrito e legível ali, ou não existe nada?
 """
 
 def limpar_ruido_recursivo(dados: any) -> any:

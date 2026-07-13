@@ -136,6 +136,15 @@
                 "IntervalSeconds": 2,
                 "MaxAttempts": 4,
                 "BackoffRate": 2.0
+              },
+              {
+                "ErrorEquals": [
+                  "ModelErrorException"
+                ],
+                "IntervalSeconds": 1,
+                "MaxAttempts": 2,
+                "BackoffRate": 1.5,
+                "Comment": "Observado em produção em 09/07/2026: 'Model produced invalid sequence as part of ToolUse'. Erro do lado do modelo, não de rate-limit — MaxAttempts baixo porque não há garantia de que uma nova tentativa resolva algo determinístico, mas o custo de tentar 1-2x é baixo comparado a perder o documento inteiro."
               }
             ],
             "Catch": [
@@ -195,8 +204,7 @@
         "package_id.$": "$.package_id",
         "bda_output_bucket.$": "$.bda_output_bucket",
         "arquivo_original.$": "$$.Map.Item.Value.arquivo_original",
-        "s3_key_resultado.$": "$$.Map.Item.Value.s3_key_resultado",
-        "campos_extraidos.$": "$$.Map.Item.Value.campos_extraidos"
+        "s3_key_resultado.$": "$$.Map.Item.Value.s3_key_resultado"
       },
       "Iterator": {
         "StartAt": "InvokeExcelGenerator",

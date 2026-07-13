@@ -124,7 +124,7 @@ export default function App() {
   };
 
   const modalOpen = phase === "done" && !!result && !modalDismissed;
-  const scoreVal = result?.cliente?.score_credito?.valor ?? result?.cliente?.score_atribuido ?? 0;
+  const scoreVal = result?.cliente?.score_credito?.pontuacao ?? result?.cliente?.score_atribuido ?? 0;
 
   return (
     <div className="page">

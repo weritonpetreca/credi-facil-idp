@@ -600,7 +600,7 @@ Resources:
       CodeUri: ../
       Handler: src.lambdas.bda_status_poller.handler.handler
       Policies:
-        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+        - Version: "2012-10-17"
           Statement:
             - Sid: AllowGetAutomationStatus
               Effect: Allow
@@ -623,7 +623,7 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
-        - Version: "2012-10-17" # 🚀 CORREÇÃO CRÍTICA: Enforçado encapsulamento IAM para destravar EventBridge
+        - Version: "2012-10-17"
           Statement:
             - Sid: AllowStepFunctionsCallback
               Effect: "Allow"
@@ -648,7 +648,7 @@ Resources:
             BucketName: !Ref BucketSaida
         - DynamoDBCrudPolicy:
             TableName: !Ref CrediFacilDynamoTable
-        - Version: "2012-10-17" # 🚀 CORREÇÃO: Alinhamento de schema de segurança IAM
+        - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action: "events:PutEvents"
@@ -712,6 +712,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref BucketSaida
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CrediFacilDynamoTable
     Tags:
       Project: CrediFacil-IDP
       Environment: !Ref Environment

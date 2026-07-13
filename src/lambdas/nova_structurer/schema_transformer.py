@@ -19,6 +19,11 @@ from aws_lambda_powertools import Logger
 
 logger = Logger(child=True)
 
+# Mesmo valor de src/lambdas/confidence_checker/handler.py — campos sem sinal
+# real de confiança (só Nova Lite, sem contrapartida no blueprint do BDA) são
+# tratados como "no limiar", nem alto nem baixo, já que não há como saber.
+CONFIANCA_THRESHOLD = 0.80
+
 
 class SchemaTransformer:
     """
@@ -79,13 +84,42 @@ class SchemaTransformer:
     # FUNÇÃO 2: Mesclagem do output do Nova Lite (campos secundários)
     # ──────────────────────────────────────────────────────────────────────────
 
+    # Caracteres que praticamente não aparecem em campos legítimos destes
+    # documentos (nomes, datas, valores, endereços, CPF/SSN, placas...) — um
+    # valor real usa no máximo $ . , - / : ' " ( ) @, nunca isto aqui.
+    _CARACTERES_SUSPEITOS = frozenset("%#*~^`|\\<>{}[]_")
+
+    def _parece_texto_corrompido(self, s: str) -> bool:
+        """
+        Detecta strings com aparência de alucinação/corrupção (ex: '%()*',
+        'S#S#S', '% #88S Uh%a') em vez de um valor de campo real. Visto em
+        produção em campos genuinamente vazios do documento (a IA, em vez de
+        devolver null como instruído, preencheu com ruído — possivelmente
+        interferência do Guardrail mascarando o que ele entendeu como PII,
+        possivelmente alucinação pura; ainda em investigação).
+
+        Heurística: 2+ caracteres do conjunto suspeito, respondendo por pelo
+        menos ~15% do texto sem espaços. Testado contra os casos reais vistos
+        em produção (todos pegos) e contra valores legítimos do pipeline
+        (moeda, SSN, datas, endereços, e-mail — nenhum falso positivo).
+        """
+        sem_espaco = s.replace(" ", "")
+        if len(sem_espaco) < 2:
+            return False
+        suspeitos = sum(1 for c in sem_espaco if c in self._CARACTERES_SUSPEITOS)
+        return suspeitos >= 2 and (suspeitos / len(sem_espaco)) >= 0.15
+
     def _sanitizar_string_ia(self, valor) -> str:
-        """Higieniza alucinações de placeholders e entidades HTML vazias vindas da IA."""
+        """Higieniza alucinações de placeholders, entidades HTML vazias e texto
+        com aparência de corrompido vindas da IA."""
         if valor is None:
             return ""
         s = str(valor).strip()
         # Intercepta e limpa resíduos de formatação Markdown/HTML vazios
         if s in ("&nbsp;", "none", "None", "", "&nbsp", "null", "N/A"):
+            return ""
+        if self._parece_texto_corrompido(s):
+            logger.warning(f"Descartando valor com aparência de corrompido/alucinado: {s!r}")
             return ""
         return s
 
@@ -269,6 +303,22 @@ class SchemaTransformer:
     # há ambiguidade para resolver campo a campo.
     # ──────────────────────────────────────────────────────────────────────────
 
+    def _tem_algum_dado(self, valor) -> bool:
+        """
+        Verifica recursivamente se um valor tem algum conteúdo não-nulo/não-vazio.
+        Usado pelo cálculo de confiança para decidir se um campo populado entra
+        na média — um dict tipo `net_pay: {"this_period": null}` não deve contar
+        como "campo preenchido" só porque a chave existe; precisa ter valor real
+        em algum ponto da estrutura (recursando em dicts e listas).
+        """
+        if valor is None or valor == "" or valor == [] or valor == {}:
+            return False
+        if isinstance(valor, dict):
+            return any(self._tem_algum_dado(v) for v in valor.values())
+        if isinstance(valor, list):
+            return any(self._tem_algum_dado(v) for v in valor)
+        return True
+
     def _mesclar_dict_recursivo(self, alvo: dict, origem: dict):
         """
         Copia valores escalares de `origem` (raw_fields_ia da IA) para `alvo`
@@ -397,53 +447,56 @@ class SchemaTransformer:
         for k, v in ir.items():
             if v is None or (isinstance(v, str) and not v.strip()):
                 continue
+            v_limpo = self._sanitizar_string_ia(v)
+            if not v_limpo:
+                continue
             k_norm = k.lower().replace("_", "")
             for tk in list(template.keys()):
                 if tk.startswith("__"):
                     continue
                 if tk.lower().replace("_", "") == k_norm and not isinstance(template[tk], (dict, list)):
-                    template[tk] = str(v)
+                    template[tk] = v_limpo
 
         # Mapeamento específico do pay_stub (campos aninhados)
         subtipo_lower = subtipo.lower() if subtipo else ""
         if subtipo_lower == "pay_stub":
             # gross_pay nos earnings
-            val_gross_tp = ir.get("gross_pay_this_period")
-            val_gross_ytd = ir.get("gross_pay_ytd")
-            val_net_tp = ir.get("net_pay_this_period")
+            val_gross_tp = self._sanitizar_string_ia(ir.get("gross_pay_this_period"))
+            val_gross_ytd = self._sanitizar_string_ia(ir.get("gross_pay_ytd"))
+            val_net_tp = self._sanitizar_string_ia(ir.get("net_pay_this_period"))
 
             for e in template.get("earnings", []):
                 if isinstance(e, dict) and "gross_pay" in e:
                     gp = e["gross_pay"]
                     if isinstance(gp, dict):
                         if val_gross_tp:
-                            gp["this_period"] = str(val_gross_tp)
+                            gp["this_period"] = val_gross_tp
                         if val_gross_ytd:
-                            gp["year_to_date"] = str(val_gross_ytd)
+                            gp["year_to_date"] = val_gross_ytd
 
             # net_pay
             if val_net_tp and isinstance(template.get("net_pay"), dict):
-                template["net_pay"]["this_period"] = str(val_net_tp)
+                template["net_pay"]["this_period"] = val_net_tp
 
             # Impostos nas deductions.statutory
             if "deductions" in template and isinstance(template["deductions"], dict):
                 mapa_bda_deductions = {
-                    "federal income tax": ir.get("federal_income_tax"),
-                    "social security tax": ir.get("social_security_tax"),
-                    "medicare tax": ir.get("medicare_tax"),
-                    "401(k)": ir.get("retirement_401k"),
+                    "federal income tax": self._sanitizar_string_ia(ir.get("federal_income_tax")),
+                    "social security tax": self._sanitizar_string_ia(ir.get("social_security_tax")),
+                    "medicare tax": self._sanitizar_string_ia(ir.get("medicare_tax")),
+                    "401(k)": self._sanitizar_string_ia(ir.get("retirement_401k")),
                 }
                 for row in template["deductions"].get("statutory", []):
                     desc = str(row.get("description", "")).lower()
                     for chave_bda, valor_bda in mapa_bda_deductions.items():
                         if valor_bda and chave_bda in desc:
-                            row["this_period"] = str(valor_bda)
+                            row["this_period"] = valor_bda
                             break
                 for row in template["deductions"].get("other", []):
                     desc = str(row.get("description", "")).lower()
                     for chave_bda, valor_bda in mapa_bda_deductions.items():
                         if valor_bda and chave_bda in desc:
-                            row["this_period"] = str(valor_bda)
+                            row["this_period"] = valor_bda
                             break
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -503,26 +556,46 @@ class SchemaTransformer:
                             template_final[field_part] = valor_corrigido
 
         # ── CÁLCULO DE CONFIANÇA REAL ──────────────────────────────────────────
+        # Cobre TODOS os campos populados do documento, não só os que vieram do
+        # BDA. O cálculo antigo só entrava na média campos presentes em
+        # campos_bda_preenchidos — qualquer campo que só tivesse vindo da
+        # leitura em texto puro da Nova Lite (a maioria dos campos de w2, CNH,
+        # seguro e extrato, já que o blueprint do BDA só cobre campos planos)
+        # ficava de fora do cálculo por completo. Combinado com correção
+        # humana (que só ADICIONA 1.0 aos poucos campos com confiança real,
+        # sem diluir com os campos sem sinal nenhum), a média ficava inflada
+        # perto de 100% mesmo em documentos majoritariamente extraídos sem
+        # nenhuma verificação de confiança real.
+        #
+        # Cada campo POPULADO (não-null) do template entra na média com uma
+        # confiança que depende da proveniência:
+        #   1. Corrigido por humano ......... 1.0 (é verdade de campo, por definição)
+        #   2. BDA com metadado real em explainability_info ... o valor real do BDA
+        #   3. BDA sem metadado (extraiu mas sem confidence) ... proxy conservador
+        #      abaixo do threshold (mesma lógica do confidence_checker.py)
+        #   4. Só Nova Lite, sem contrapartida no BDA ... CONFIANCA_THRESHOLD exato
+        #      — não temos sinal real pra esses campos, então não faz sentido
+        #      fingir 100%, mas o campo FOI extraído, não é "baixa confiança".
+        # Campos vazios (null) não entram na média — nem penalizam nem inflam.
         confiancas_por_campo = self.extrair_confiancas_explainability(bda_json or {})
         campos_bda_preenchidos = set(inference_result.keys())
 
-        if is_human_override:
-            # Campos corrigidos pelo humano ganham confiança 1.0
-            confiancas_atualizadas = dict(confiancas_por_campo)
-            for campo in campos_corrigidos:
-                confiancas_atualizadas[campo] = 1.0
-            confs_lista = list(confiancas_atualizadas.values())
-            media_real = round(sum(confs_lista) / len(confs_lista), 4) if confs_lista else 1.0
-        elif confiancas_por_campo and campos_bda_preenchidos:
-            # Média real das confianças dos campos extraídos pelo BDA
-            confs = [confiancas_por_campo[c] for c in campos_bda_preenchidos if c in confiancas_por_campo]
-            media_real = round(sum(confs) / len(confs), 4) if confs else 0.0
-        else:
-            # Fallback: proporção de campos preenchidos (melhor que hardcoded 0.8850)
-            todos_campos = [v for k, v in template_final.items() if not k.startswith("__")]
-            preenchidos = sum(1 for v in todos_campos
-                             if v is not None and v != "" and v != [] and v != {})
-            media_real = round(preenchidos / max(len(todos_campos), 1), 4)
+        confs_ponderadas = []
+        for chave, valor in template_final.items():
+            if chave.startswith("__") or not self._tem_algum_dado(valor):
+                continue
+            if chave in campos_corrigidos:
+                confs_ponderadas.append(1.0)
+            elif chave in confiancas_por_campo:
+                confs_ponderadas.append(confiancas_por_campo[chave])
+            elif chave in campos_bda_preenchidos:
+                # BDA extraiu mas não achamos metadado de confidence pra esse
+                # campo especificamente — mesmo proxy conservador do confidence_checker.
+                confs_ponderadas.append(max(CONFIANCA_THRESHOLD - 0.05, 0.0))
+            else:
+                confs_ponderadas.append(CONFIANCA_THRESHOLD)
+
+        media_real = round(sum(confs_ponderadas) / len(confs_ponderadas), 4) if confs_ponderadas else 0.0
 
         # ── STATUS DA EXTRAÇÃO ─────────────────────────────────────────────────
         # Verifica se campos críticos para decisão de crédito estão preenchidos.

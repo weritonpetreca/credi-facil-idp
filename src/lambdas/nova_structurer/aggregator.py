@@ -77,6 +77,7 @@ def inicializar_estrutura_base_lote(package_id: str) -> dict:
                     "total_parcial": 0.0,   # "parcial" porque o consolidador soma depois
                 },
                 "documentos_processados": 0,
+                "documentos_com_falha": 0,
             },
             "ultimo_package_vinculado": {
                 "package_id": package_id,
@@ -90,10 +91,54 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
     """
     Processa o resultado de UM worker e o adiciona ao JSON do lote.
     Elimina redundâncias estruturais e garante compatibilidade estrita de contratos.
+
+    IMPORTANTE: quando um documento falha na estruturação (ex: ModelErrorException
+    do Bedrock), o Catch do ASL redireciona para o state HandleSingleDocumentFailure,
+    que devolve {"status": "FAILED", "nome_pdf_original": ..., "error_cause": ...}
+    — um resultado SEM a chave "blueprint". Isso é proposital: um Pass state nunca
+    falha, então o Map state continua processando os outros documentos normalmente
+    em vez de derrubar o lote inteiro por causa de UM documento problemático.
+
+    Só que esse resultado "sem blueprint" ainda precisa aparecer em algum lugar —
+    caso contrário, o analista vê "enviei 7, veio 5" sem nenhuma explicação. Por
+    isso, documentos com falha entram em documentos_analisados como qualquer outro,
+    só que com status_extracao="falha" e o motivo, em vez de sumir.
     """
     blueprint = resultado.get("blueprint")
+
     if not blueprint:
-        logger.warning(f"Worker retornou resultado sem 'blueprint'. Resultado ignorado: {str(resultado)[:200]}")
+        nome_falha = resultado.get("nome_pdf_original", "arquivo_desconhecido")
+        causa_falha = resultado.get("error_cause", "Motivo não informado pelo Step Functions.")
+        # Loga o resultado bruto INTEIRO (não só os 2 campos extraídos acima) —
+        # se nome_pdf_original/error_cause vierem ausentes (como aconteceu em
+        # produção em 11/07/2026 com um account_statement), isso é o que
+        # permite descobrir o formato real sem precisar cruzar com os logs
+        # separados do NovaStructurerFunction.
+        logger.warning(
+            f"Documento '{nome_falha}' falhou na estruturação isolada. Registrando como falha (não descartando). "
+            f"Causa: {causa_falha[:300]}. Resultado bruto recebido do Step Functions: {json.dumps(resultado, default=str)[:1000]}"
+        )
+
+        json_base_lote["documentos_analisados"].append({
+            "arquivo_original": nome_falha,
+            "tipo_documento": "DESCONHECIDO",
+            "subtipo_documento": "desconhecido",
+            "s3_key_resultado": None,
+            "s3_key_origem": None,
+            "dados_extraidos_do_documento": {},
+            "localizacao_documento_s3": {},
+            "confiabilidade_extracao": {
+                "status_extracao": "falha",
+                "confianca_media": "0.0000",
+                "confiancas_por_campo_bda": {},
+                "fonte_confiabilidade": "erro_pipeline",
+                "observacoes": [f"Estruturação falhou e não foi possível recuperar dados deste documento: {causa_falha[:500]}"],
+            },
+        })
+        sys_proc_falha = json_base_lote["sistema"]["processamento"]
+        sys_proc_falha["documentos_processados"] += 1
+        sys_proc_falha.setdefault("documentos_com_falha", 0)
+        sys_proc_falha["documentos_com_falha"] += 1
         return
 
     arquivo_original = blueprint.get("arquivo_original", "arquivo_desconhecido.pdf")
@@ -123,8 +168,7 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
         "s3_key_origem": localizacao.get("s3_key_origem"),
         
         # 🚀 ALINHAMENTO DE CONTRATO MULTI-GERAÇÃO: Satisfaz a Step Function e o Frontend em paralelo
-        "campos_extraidos": campos_unificados,               # Exigido pelo GenerateExcelReports ASL
-        "dados_extraidos_do_documento": campos_unificados,   # Exigido pelo Painel React
+        "dados_extraidos_do_documento": campos_unificados,
         
         "localizacao_documento_s3": localizacao,
         "confiabilidade_extracao": blueprint.get("confiabilidade_extracao", {})

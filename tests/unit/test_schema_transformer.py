@@ -319,6 +319,13 @@ def test_overlay_bda_sobrescreve_a_ia_em_campo_plano_do_w2():
     """
     BDA (fonte 2, mais confiável) deve prevalecer sobre a IA (fonte 1) quando
     os dois preenchem o mesmo campo plano — ordem de aplicação em executar().
+
+    A confiança final é a média entre os DOIS campos populados: employer_name
+    (veio do BDA, confidence real 0.95) e employee_last_name (só Nova Lite,
+    sem contrapartida no BDA, então entra com CONFIANCA_THRESHOLD=0.80) —
+    (0.95 + 0.80) / 2 = 0.875. Antes da correção, campos só-texto ficavam de
+    fora da média inteiramente e isso mostraria 0.9500 (só o campo do BDA),
+    inflando a confiança do documento como um todo.
     """
     transformer = _novo_transformer()
     raw_fields_ia = {
@@ -336,7 +343,151 @@ def test_overlay_bda_sobrescreve_a_ia_em_campo_plano_do_w2():
     campos = resultado["dados_extraidos_do_documento"]
 
     assert campos["employer_name"] == "John Stiles"
-    assert resultado["confiabilidade_extracao"]["confianca_media"] == "0.9500"
+    assert resultado["confiabilidade_extracao"]["confianca_media"] == "0.8750"
+
+
+def test_confianca_campo_so_texto_fica_no_threshold_nao_em_100_por_cento():
+    """
+    Regressão direta do bug relatado em produção: documentos com muitos campos
+    extraídos só via Nova Lite (sem contrapartida no blueprint do BDA) estavam
+    mostrando confiança 100% porque esses campos simplesmente não entravam na
+    média. Aqui, NENHUM campo veio do BDA — todos devem ficar em exatamente
+    CONFIANCA_THRESHOLD (0.80), nunca em 1.0.
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "DRIVER_LICENSE",
+        "full_name": "MARIA GARCIA",
+        "document_number": "736HDV7874JSB",
+        "date_of_birth": "03/18/2001",
+        "alertas_inconsistencias": [],
+    }
+
+    resultado = transformer.executar("driver_license", "cnh.pdf", raw_fields_ia, {}, _s3_inputs_vazio())
+    conf = resultado["confiabilidade_extracao"]["confianca_media"]
+
+    assert conf == "0.8000"
+    assert conf != "1.0000"
+
+
+def test_confianca_correcao_humana_nao_infla_media_de_campos_nao_corrigidos():
+    """
+    Regressão do segundo efeito do mesmo bug: quando HÁ correção humana, ela
+    deve elevar a confiança só do(s) campo(s) efetivamente corrigido(s) — não
+    arrastar a média geral pra perto de 100% enquanto os OUTROS campos do
+    documento (não corrigidos, só-texto) continuam sem sinal real.
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "DRIVER_LICENSE",
+        "full_name": "MARIA GARCIA",
+        "document_number": "736HDV7874JSB",
+        "date_of_birth": "03/18/2001",
+        "class": "D",
+        "alertas_inconsistencias": [],
+    }
+    correcoes_humanas = {"cnh.pdf__full_name": "MARIA GARCIA"}
+
+    resultado = transformer.executar(
+        "driver_license", "cnh.pdf", raw_fields_ia, {}, _s3_inputs_vazio(),
+        correcoes_humanas=correcoes_humanas,
+    )
+    conf = float(resultado["confiabilidade_extracao"]["confianca_media"])
+
+    # 1 campo corrigido (1.0) + 3 campos só-texto (0.80 cada) = 3.4 / 4 = 0.85
+    assert conf == 0.85
+    assert conf < 1.0
+
+
+def test_texto_corrompido_do_bda_tambem_e_sanitizado_nao_so_da_ia():
+    """
+    Regressão do caso real que sobreviveu ao primeiro fix: a IA (Nova Lite)
+    já vinha sendo sanitizada, mas o overlay do BDA (aplicar_overlay_bda_estrito)
+    aplicava ir.items() direto com `template[tk] = str(v)`, sem passar pelo
+    mesmo filtro — então se o BDA TAMBÉM devolvesse ruído pros mesmos campos
+    em branco, ele sobrescrevia o valor já limpo da IA com o valor sujo.
+    Isso é exatamente o padrão visto em produção na segunda rodada de testes:
+    os mesmos '%()*'/'S#S#S'/'% #8$%' sobreviveram ao fix anterior.
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "HOMEOWNERS_INSURANCE",
+        "named_insured": "Ziggy Starpixel",
+        "policy_number": "%()*",       # IA também "alucinou" ruído aqui
+        "alertas_inconsistencias": [],
+    }
+    bda_json = {
+        # BDA (fonte separada, seu próprio OCR) devolve ruído nos MESMOS campos
+        # em branco — não é null, é a mesma classe de string corrompida.
+        "inference_result": {"policy_number": "%()*", "effective_date": "S#S#S"},
+        "explainability_info": [],
+    }
+
+    resultado = transformer.executar(
+        "homeowners_insurance_application", "seguro.pdf", raw_fields_ia, bda_json, _s3_inputs_vazio()
+    )
+    c = resultado["dados_extraidos_do_documento"]
+
+    assert c["policy_number"] is None
+    assert c["effective_date"] is None
+
+
+def test_texto_corrompido_em_campo_vazio_vira_null_em_vez_de_ruido():
+    """
+    Regressão direta do caso real visto em produção: a apólice de seguro de
+    Ziggy Starpixel tem 'Purchase Date and Time', 'Effective Date' e
+    'Expiration Date' genuinamente EM BRANCO no documento original — mas a IA
+    devolveu '% #88S Uh%a', 'S#S#S' e '% #8$%' em vez de null, violando a
+    política anti-alucinação do prompt. Isso não pode virar dado "extraído".
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "HOMEOWNERS_INSURANCE",
+        "named_insured": "Ziggy Starpixel",
+        "policy_number": "%()*",
+        "purchase_date_time": "% #88S Uh%a",
+        "effective_date": "S#S#S",
+        "expiration_date": "% #8$%",
+        "alertas_inconsistencias": [],
+    }
+
+    resultado = transformer.executar(
+        "homeowners_insurance_application", "seguro.pdf", raw_fields_ia, {}, _s3_inputs_vazio()
+    )
+    c = resultado["dados_extraidos_do_documento"]
+
+    assert c["named_insured"] == "Ziggy Starpixel"  # texto legítimo passa normal
+    assert c["policy_number"] is None
+    assert c["purchase_date_time"] is None
+    assert c["effective_date"] is None
+    assert c["expiration_date"] is None
+
+
+def test_texto_corrompido_nao_gera_falso_positivo_em_valores_legitimos():
+    """Moeda, SSN, altura com aspas e e-mail não podem ser confundidos com
+    texto corrompido só por terem pontuação incomum."""
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "DRIVER_LICENSE",
+        "full_name": "MARIA GARCIA",
+        "height": '4-6"',
+        "alertas_inconsistencias": [],
+    }
+    resultado = transformer.executar("driver_license", "cnh.pdf", raw_fields_ia, {}, _s3_inputs_vazio())
+    assert resultado["dados_extraidos_do_documento"]["height"] == '4-6"'
+
+    raw_fields_ia_check = {
+        "tipo_classificado": "PAYROLL_CHECK",
+        "amount_numeric": "$291.90",
+        "social_security_number": "987-65-4321",
+        "amount_words": "TWO HUNDRED NINETY-ONE AND 90/100 DOLLARS",
+        "alertas_inconsistencias": [],
+    }
+    resultado2 = transformer.executar("payroll_check", "check.pdf", raw_fields_ia_check, {}, _s3_inputs_vazio())
+    c2 = resultado2["dados_extraidos_do_documento"]
+    assert c2["amount_numeric"] == "$291.90"
+    assert c2["social_security_number"] == "987-65-4321"
+    assert c2["amount_words"] == "TWO HUNDRED NINETY-ONE AND 90/100 DOLLARS"
 
 
 # ==========================================================================

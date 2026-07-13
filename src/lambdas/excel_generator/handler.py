@@ -228,8 +228,17 @@ def handler(event, context):
         bucket = event.get("bda_output_bucket") or os.environ.get("BUCKET_SAIDA", "credifacil-docs-saida-dev")
         arquivo_original = event.get("arquivo_original", "documento_analisado.pdf")
 
-        if not s3_key_json or not package_id:
-            raise ValueError("Propriedades 's3_key_resultado' ou 'package_id' ausentes no payload.")
+        if not package_id:
+            raise ValueError("Propriedade 'package_id' ausente no payload.")
+
+        if not s3_key_json:
+            # Documento que falhou na estruturação (ver aggregator.py) não tem
+            # s3_key_resultado — não existe JSON nenhum pra transformar em Excel.
+            # Pular graciosamente em vez de derrubar esta iteração do Map (que
+            # já é justamente o padrão que resolvemos para a estruturação —
+            # um documento com problema não pode travar os outros do lote).
+            logger.warning(f"Pulando geração de Excel para '{arquivo_original}': sem s3_key_resultado (documento provavelmente falhou na estruturação).")
+            return {"status": "SKIPPED", "arquivo_original": arquivo_original, "motivo": "sem_s3_key_resultado"}
 
         s3_response = s3_client.get_object(Bucket=bucket, Key=s3_key_json)
         payload_dados = json.loads(s3_response["Body"].read().decode("utf-8"))
