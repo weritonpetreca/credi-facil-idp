@@ -399,6 +399,39 @@ def test_confianca_correcao_humana_nao_infla_media_de_campos_nao_corrigidos():
     assert conf < 1.0
 
 
+def test_texto_corrompido_do_bda_tambem_e_sanitizado_nao_so_da_ia():
+    """
+    Regressão do caso real que sobreviveu ao primeiro fix: a IA (Nova Lite)
+    já vinha sendo sanitizada, mas o overlay do BDA (aplicar_overlay_bda_estrito)
+    aplicava ir.items() direto com `template[tk] = str(v)`, sem passar pelo
+    mesmo filtro — então se o BDA TAMBÉM devolvesse ruído pros mesmos campos
+    em branco, ele sobrescrevia o valor já limpo da IA com o valor sujo.
+    Isso é exatamente o padrão visto em produção na segunda rodada de testes:
+    os mesmos '%()*'/'S#S#S'/'% #8$%' sobreviveram ao fix anterior.
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "HOMEOWNERS_INSURANCE",
+        "named_insured": "Ziggy Starpixel",
+        "policy_number": "%()*",       # IA também "alucinou" ruído aqui
+        "alertas_inconsistencias": [],
+    }
+    bda_json = {
+        # BDA (fonte separada, seu próprio OCR) devolve ruído nos MESMOS campos
+        # em branco — não é null, é a mesma classe de string corrompida.
+        "inference_result": {"policy_number": "%()*", "effective_date": "S#S#S"},
+        "explainability_info": [],
+    }
+
+    resultado = transformer.executar(
+        "homeowners_insurance_application", "seguro.pdf", raw_fields_ia, bda_json, _s3_inputs_vazio()
+    )
+    c = resultado["dados_extraidos_do_documento"]
+
+    assert c["policy_number"] is None
+    assert c["effective_date"] is None
+
+
 def test_texto_corrompido_em_campo_vazio_vira_null_em_vez_de_ruido():
     """
     Regressão direta do caso real visto em produção: a apólice de seguro de

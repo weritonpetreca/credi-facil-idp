@@ -109,7 +109,15 @@ def processar_resultado_worker(resultado: dict, json_base_lote: dict):
     if not blueprint:
         nome_falha = resultado.get("nome_pdf_original", "arquivo_desconhecido")
         causa_falha = resultado.get("error_cause", "Motivo não informado pelo Step Functions.")
-        logger.warning(f"Documento '{nome_falha}' falhou na estruturação isolada. Registrando como falha (não descartando). Causa: {causa_falha[:300]}")
+        # Loga o resultado bruto INTEIRO (não só os 2 campos extraídos acima) —
+        # se nome_pdf_original/error_cause vierem ausentes (como aconteceu em
+        # produção em 11/07/2026 com um account_statement), isso é o que
+        # permite descobrir o formato real sem precisar cruzar com os logs
+        # separados do NovaStructurerFunction.
+        logger.warning(
+            f"Documento '{nome_falha}' falhou na estruturação isolada. Registrando como falha (não descartando). "
+            f"Causa: {causa_falha[:300]}. Resultado bruto recebido do Step Functions: {json.dumps(resultado, default=str)[:1000]}"
+        )
 
         json_base_lote["documentos_analisados"].append({
             "arquivo_original": nome_falha,

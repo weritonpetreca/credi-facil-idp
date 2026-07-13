@@ -109,7 +109,7 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
         )
     elif parcela_max > 0:
         score += 30
-        motivos_negativos.append(
+        motivos_positivos.append(
             f"+30: Renda presente, mas parcela máx. (USD {parcela_max:.2f}) abaixo do mínimo habitacional."
         )
     else:

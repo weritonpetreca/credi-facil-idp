@@ -86,6 +86,40 @@ def test_calcular_scorecard_financeiro_para_diferentes_perfis(validacao, docs, e
     assert resultado["score_calculado"] == expected_score
     assert resultado["faixa"] == expected_faixa
 
+
+def test_parcela_abaixo_do_minimo_habitacional_soma_pontos_e_fica_em_motivos_positivos():
+    """
+    Regressão direta do bug relatado em produção: quando renda_maxima > 0 mas
+    a parcela recomendada (30% da renda) fica abaixo de USD 500 (o piso da
+    faixa 'mínima'), a função SOMA 30 pontos ao score (score += 30) — mas o
+    texto ia parar em motivos_negativos, deixando a UI mostrar um "+30" dentro
+    de uma lista rotulada como motivo NEGATIVO, o que é contraditório: coisa
+    que soma pertence a motivos_positivos, ponto. Usa os números reais do caso
+    de teste do Weriton: renda 291.90 -> parcela 87.57 (dentro de 0-500).
+    """
+    validacao = {
+        "nome_consistente_entre_documentos": True,
+        "documento_identificacao_presente": True,
+        "comprovante_renda_presente": True,
+        "extrato_bancario_presente": False,
+    }
+    docs = [
+        {"tipo_documento": "PAYROLL_CHECK", "dados_extraidos_do_documento": {"amount_numeric": "$291.90"}},
+    ]
+
+    resultado = calcular_scorecard_financeiro(validacao, docs)
+
+    assert resultado["parcela_maxima_estimada"] == pytest.approx(87.57, abs=0.01)
+    textos_positivos = " | ".join(resultado["motivos_positivos"])
+    textos_negativos = " | ".join(resultado["motivos_negativos"])
+
+    assert "parcela máx." in textos_positivos and "abaixo do mínimo habitacional" in textos_positivos
+    assert "abaixo do mínimo habitacional" not in textos_negativos
+    # score: 300 base + 30 (parcela baixa) + 100 nome + 50 doc + 30 comprovante_renda
+    # + 0 extrato (ausente) = 510 — o mesmo 510 que aparecia na tela do Weriton,
+    # só que agora com o motivo no balde certo.
+    assert resultado["score_calculado"] == 510
+
 # --- Testes para o handler principal ---
 #
 # IMPORTANTE: o teste anterior mockava `bedrock_runtime.invoke_model` com uma

@@ -145,7 +145,12 @@ def handler(event, context):
                 tipo = doc.get("tipo_documento") or doc.get("tipo") or "UNKNOWN"
                 subtipo = doc.get("subtipo_documento") or doc.get("subtipo") or "pay_stub"
                 s3_key_res = doc.get("s3_key_resultado") or doc.get("s3_json_detalhado")
-                conf_media = doc.get("confianca_media") or doc.get("confianca_bda") or 1.0
+                conf_media = (
+                    doc.get("confianca_media")
+                    or doc.get("confianca_bda")
+                    or doc.get("confiabilidade_extracao", {}).get("confianca_media")
+                    or 1.0
+                )
                 status_extracao = doc.get("status_extracao") or doc.get("confiabilidade_extracao", {}).get("status_extracao", "sucesso")
                 observacoes = doc.get("observacoes") or doc.get("confiabilidade_extracao", {}).get("observacoes", [])
                 # dados_extraidos_do_documento é o nome canônico (backend e front-end

@@ -447,53 +447,56 @@ class SchemaTransformer:
         for k, v in ir.items():
             if v is None or (isinstance(v, str) and not v.strip()):
                 continue
+            v_limpo = self._sanitizar_string_ia(v)
+            if not v_limpo:
+                continue
             k_norm = k.lower().replace("_", "")
             for tk in list(template.keys()):
                 if tk.startswith("__"):
                     continue
                 if tk.lower().replace("_", "") == k_norm and not isinstance(template[tk], (dict, list)):
-                    template[tk] = str(v)
+                    template[tk] = v_limpo
 
         # Mapeamento específico do pay_stub (campos aninhados)
         subtipo_lower = subtipo.lower() if subtipo else ""
         if subtipo_lower == "pay_stub":
             # gross_pay nos earnings
-            val_gross_tp = ir.get("gross_pay_this_period")
-            val_gross_ytd = ir.get("gross_pay_ytd")
-            val_net_tp = ir.get("net_pay_this_period")
+            val_gross_tp = self._sanitizar_string_ia(ir.get("gross_pay_this_period"))
+            val_gross_ytd = self._sanitizar_string_ia(ir.get("gross_pay_ytd"))
+            val_net_tp = self._sanitizar_string_ia(ir.get("net_pay_this_period"))
 
             for e in template.get("earnings", []):
                 if isinstance(e, dict) and "gross_pay" in e:
                     gp = e["gross_pay"]
                     if isinstance(gp, dict):
                         if val_gross_tp:
-                            gp["this_period"] = str(val_gross_tp)
+                            gp["this_period"] = val_gross_tp
                         if val_gross_ytd:
-                            gp["year_to_date"] = str(val_gross_ytd)
+                            gp["year_to_date"] = val_gross_ytd
 
             # net_pay
             if val_net_tp and isinstance(template.get("net_pay"), dict):
-                template["net_pay"]["this_period"] = str(val_net_tp)
+                template["net_pay"]["this_period"] = val_net_tp
 
             # Impostos nas deductions.statutory
             if "deductions" in template and isinstance(template["deductions"], dict):
                 mapa_bda_deductions = {
-                    "federal income tax": ir.get("federal_income_tax"),
-                    "social security tax": ir.get("social_security_tax"),
-                    "medicare tax": ir.get("medicare_tax"),
-                    "401(k)": ir.get("retirement_401k"),
+                    "federal income tax": self._sanitizar_string_ia(ir.get("federal_income_tax")),
+                    "social security tax": self._sanitizar_string_ia(ir.get("social_security_tax")),
+                    "medicare tax": self._sanitizar_string_ia(ir.get("medicare_tax")),
+                    "401(k)": self._sanitizar_string_ia(ir.get("retirement_401k")),
                 }
                 for row in template["deductions"].get("statutory", []):
                     desc = str(row.get("description", "")).lower()
                     for chave_bda, valor_bda in mapa_bda_deductions.items():
                         if valor_bda and chave_bda in desc:
-                            row["this_period"] = str(valor_bda)
+                            row["this_period"] = valor_bda
                             break
                 for row in template["deductions"].get("other", []):
                     desc = str(row.get("description", "")).lower()
                     for chave_bda, valor_bda in mapa_bda_deductions.items():
                         if valor_bda and chave_bda in desc:
-                            row["this_period"] = str(valor_bda)
+                            row["this_period"] = valor_bda
                             break
 
     # ──────────────────────────────────────────────────────────────────────────
