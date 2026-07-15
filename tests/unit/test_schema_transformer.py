@@ -152,18 +152,18 @@ def test_merge_account_statement_substitui_lista_de_valuation_pelo_tamanho_real(
     """
     transformer = _novo_transformer()
     linhas_reais = [
-        {"investment_option_name": "BT Active Balanced", "option_code": "210", "units": "1,3297.9090", "unit_price_$": "1,300", "value_$": "17,287.28", "percentage": "40"},
-        {"investment_option_name": "First choice moderate", "option_code": "080", "units": "2,3000.5678", "unit_price_$": "100", "value_$": "23,005.68", "percentage": "30"},
-        {"investment_option_name": "First choice Lifestaged 2001-09", "option_code": "010", "units": "7,100.9876", "unit_price_$": "900", "value_$": "63,908.89", "percentage": "20"},
-        {"investment_option_name": "Perpetual Balanced growth", "option_code": "021", "units": "8,210.0021", "unit_price_$": "230", "value_$": "18,883.00", "percentage": "10"},
+        {"investment_option_name": "BT Active Balanced", "option_code": "210", "units": "1,3297.9090", "unit_price_usd": "1,300", "value_usd": "17,287.28", "percentage": "40"},
+        {"investment_option_name": "First choice moderate", "option_code": "080", "units": "2,3000.5678", "unit_price_usd": "100", "value_usd": "23,005.68", "percentage": "30"},
+        {"investment_option_name": "First choice Lifestaged 2001-09", "option_code": "010", "units": "7,100.9876", "unit_price_usd": "900", "value_usd": "63,908.89", "percentage": "20"},
+        {"investment_option_name": "Perpetual Balanced growth", "option_code": "021", "units": "8,210.0021", "unit_price_usd": "230", "value_usd": "18,883.00", "percentage": "10"},
     ]
     raw_fields_ia = {
         "tipo_classificado": "BANK_STATEMENT",
         "your_account_valuation": linhas_reais,
         "account_value": {"value": "123,084.85", "percentage": "100.00"},
         "your_insurance_details": [
-            {"benefit_type": "Amount paid on Death of Terminal illness", "insurance_cover_amount_$": "10,000.00", "benefit_amount_$": "17,000.00"},
-            {"benefit_type": "Amount paid upon Total and Permanent Disablement", "insurance_cover_amount_$": "10,000.00", "benefit_amount_$": "17,000.00"},
+            {"benefit_type": "Amount paid on Death of Terminal illness", "insurance_cover_amount_usd": "10,000.00", "benefit_amount_usd": "17,000.00"},
+            {"benefit_type": "Amount paid upon Total and Permanent Disablement", "insurance_cover_amount_usd": "10,000.00", "benefit_amount_usd": "17,000.00"},
         ],
         "alertas_inconsistencias": [],
     }
@@ -184,7 +184,7 @@ def test_merge_account_statement_com_uma_unica_linha_de_valuation():
     raw_fields_ia = {
         "tipo_classificado": "BANK_STATEMENT",
         "your_account_valuation": [
-            {"investment_option_name": "Single Fund", "option_code": "999", "units": "10", "unit_price_$": "1", "value_$": "10.00", "percentage": "100"},
+            {"investment_option_name": "Single Fund", "option_code": "999", "units": "10", "unit_price_usd": "1", "value_usd": "10.00", "percentage": "100"},
         ],
         "alertas_inconsistencias": [],
     }
@@ -430,6 +430,39 @@ def test_texto_corrompido_do_bda_tambem_e_sanitizado_nao_so_da_ia():
 
     assert c["policy_number"] is None
     assert c["effective_date"] is None
+
+
+def test_texto_corrompido_via_correcao_humana_tambem_e_sanitizado():
+    """
+    Regressão do TERCEIRO lugar onde o mesmo bug sobreviveu: correcoes_humanas
+    é a fonte de MAIOR prioridade (roda por último, sobrescreve tudo) e
+    aplicava valor_corrigido direto no template, sem sanitizar. A tela de
+    revisão mostra o valor bruto pro humano decidir o que fazer (isso está
+    certo) — mas se o que reenvia a 'correção' devolver o MESMO valor bruto
+    sem edição de fato, essa era a única das 3 fontes que ainda deixava
+    ruído passar como se fosse verdade confirmada por humano.
+    """
+    transformer = _novo_transformer()
+    raw_fields_ia = {
+        "tipo_classificado": "HOMEOWNERS_INSURANCE",
+        "named_insured": "Ziggy Starpixel",
+        "alertas_inconsistencias": [],
+    }
+    correcoes_humanas = {
+        "seguro.pdf__policy_number": "%()*",
+        "seguro.pdf__effective_date": "S#S#S",
+        "seguro.pdf__named_insured": "Ziggy Starpixel Corrigido",  # correção real, deve passar
+    }
+
+    resultado = transformer.executar(
+        "homeowners_insurance_application", "seguro.pdf", raw_fields_ia, {}, _s3_inputs_vazio(),
+        correcoes_humanas=correcoes_humanas,
+    )
+    c = resultado["dados_extraidos_do_documento"]
+
+    assert c["policy_number"] is None
+    assert c["effective_date"] is None
+    assert c["named_insured"] == "Ziggy Starpixel Corrigido"  # correção legítima não é afetada
 
 
 def test_texto_corrompido_em_campo_vazio_vira_null_em_vez_de_ruido():

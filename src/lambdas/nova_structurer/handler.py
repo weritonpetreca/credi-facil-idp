@@ -104,11 +104,11 @@ TEMPLATE_ACCOUNT_STATEMENT = {
     "your_details": {"account_holder_name": None, "account_holder_address": None, "account_holder_phone_number": None, "statement_period": None, "account_number": None, "account_name": None, "email_address": None},
     "your_account_balance": {"opening_balance": None, "closing_balance": None},
     "your_account_valuation": [
-        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None},
-        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_$": None, "value_$": None, "percentage": None}
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_usd": None, "value_usd": None, "percentage": None},
+        {"investment_option_name": None, "option_code": None, "units": None, "unit_price_usd": None, "value_usd": None, "percentage": None}
     ],
     "account_value": {"value": None, "percentage": None},
-    "your_insurance_details": [{"benefit_type": None, "insurance_cover_amount_$": None, "benefit_amount_$": None}]
+    "your_insurance_details": [{"benefit_type": None, "insurance_cover_amount_usd": None, "benefit_amount_usd": None}]
 }
 
 TEMPLATE_HOMEOWNERS_INSURANCE = {

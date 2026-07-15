@@ -351,6 +351,16 @@ def obter_especificacao_ferramenta_account_statement() -> dict:
     Ao contrário do pay_stub, aqui não há um conjunto fixo de 'descriptions' esperadas —
     o extrato pode ter de 1 a N linhas de investimento — por isso o merge genérico
     SUBSTITUI a lista inteira pelo que a IA extraiu (ver mesclar_generico_por_template).
+
+    NOTA: campos de valor usam sufixo '_usd', não '_$'. Isso era originalmente
+    unit_price_$/value_$/insurance_cover_amount_$/benefit_amount_$ — únicos 4 nomes de
+    propriedade em toda esta tool spec com caractere especial na chave JSON. Suspeita
+    forte (correlação: só account_statement falhava com "ModelErrorException: Model
+    produced invalid sequence as part of ToolUse", em produção, de forma consistente e
+    repetida — nenhum outro subtipo, todos sem "$" no nome de campo) de que isso
+    confundia a geração estruturada da Nova Lite. Sem acesso a testar contra o Bedrock
+    real neste momento para confirmar 100%, mas a correlação e o baixo custo/risco da
+    troca tornam essa correção segura de aplicar preventivamente.
     """
     return {
         "toolSpec": {
@@ -399,8 +409,8 @@ def obter_especificacao_ferramenta_account_statement() -> dict:
                                     "investment_option_name": {"type": "string", "description": "Nome da opção de investimento."},
                                     "option_code": {"type": "string", "description": "Código da opção."},
                                     "units": {"type": "string", "description": "Quantidade de unidades (units)."},
-                                    "unit_price_$": {"type": "string", "description": "Preço unitário em USD."},
-                                    "value_$": {"type": "string", "description": "Valor total da linha em USD."},
+                                    "unit_price_usd": {"type": "string", "description": "Preço unitário em USD."},
+                                    "value_usd": {"type": "string", "description": "Valor total da linha em USD."},
                                     "percentage": {"type": "string", "description": "Percentual do total da carteira, ex: '40'."},
                                 },
                             },
@@ -420,8 +430,8 @@ def obter_especificacao_ferramenta_account_statement() -> dict:
                                 "type": "object",
                                 "properties": {
                                     "benefit_type": {"type": "string", "description": "Tipo de benefício, ex: 'Amount paid on Death of Terminal illness'."},
-                                    "insurance_cover_amount_$": {"type": "string", "description": "Valor de cobertura em USD."},
-                                    "benefit_amount_$": {"type": "string", "description": "Valor do benefício em USD."},
+                                    "insurance_cover_amount_usd": {"type": "string", "description": "Valor de cobertura em USD."},
+                                    "benefit_amount_usd": {"type": "string", "description": "Valor do benefício em USD."},
                                 },
                             },
                         },

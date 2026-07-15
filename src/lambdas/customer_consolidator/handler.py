@@ -108,9 +108,9 @@ def calcular_scorecard_financeiro(validacao: dict, docs_analisados: list) -> dic
             f"+100: Capacidade de amortização mínima — parcela máx. estimada USD {parcela_max:.2f}/mês."
         )
     elif parcela_max > 0:
-        score += 30
-        motivos_positivos.append(
-            f"+30: Renda presente, mas parcela máx. (USD {parcela_max:.2f}) abaixo do mínimo habitacional."
+        score -= 30
+        motivos_negativos.append(
+            f"-30: Renda presente, mas parcela máx. (USD {parcela_max:.2f}) abaixo do mínimo habitacional."
         )
     else:
         motivos_negativos.append("+0: Nenhuma renda líquida comprovada nos documentos.")

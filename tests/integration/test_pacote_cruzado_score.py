@@ -65,10 +65,10 @@ def _construir_pacote_dois_documentos():
         "your_details": {"account_holder_name": "Jane Doe", "account_number": "333 008755555"},
         "your_account_balance": {"opening_balance": "50,000.00", "closing_balance": "123,084.85"},
         "your_account_valuation": [
-            {"investment_option_name": "BT Active Balanced", "value_$": "17,287.28", "percentage": "40"},
-            {"investment_option_name": "First choice moderate", "value_$": "23,005.68", "percentage": "30"},
-            {"investment_option_name": "First choice Lifestaged 2001-09", "value_$": "63,908.89", "percentage": "20"},
-            {"investment_option_name": "Perpetual Balanced growth", "value_$": "18,883.00", "percentage": "10"},
+            {"investment_option_name": "BT Active Balanced", "value_usd": "17,287.28", "percentage": "40"},
+            {"investment_option_name": "First choice moderate", "value_usd": "23,005.68", "percentage": "30"},
+            {"investment_option_name": "First choice Lifestaged 2001-09", "value_usd": "63,908.89", "percentage": "20"},
+            {"investment_option_name": "Perpetual Balanced growth", "value_usd": "18,883.00", "percentage": "10"},
         ],
         "alertas_inconsistencias": [],
     }

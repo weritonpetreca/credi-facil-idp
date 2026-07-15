@@ -548,12 +548,22 @@ class SchemaTransformer:
                 if "__" in composite_key:
                     file_part, field_part = composite_key.split("__", 1)
                     if file_part == arquivo:
+                        # Sanitiza também aqui — é a ÚLTIMA das 3 fontes (IA,
+                        # BDA, humano) e roda por último, então sobrescreve
+                        # qualquer coisa. Se o valor "corrigido" vier com
+                        # aparência de ruído (ex: o mecanismo de revisão
+                        # reenviando o mesmo valor bruto sem edição humana de
+                        # fato), não pode virar a verdade final do campo só
+                        # por ter passado por aqui.
+                        valor_corrigido_limpo = self._sanitizar_string_ia(valor_corrigido)
+                        if not valor_corrigido_limpo:
+                            continue
                         is_human_override = True
                         campos_corrigidos.append(field_part)
                         # Tenta encontrar e sobrescrever o campo no template
                         # (suporta tanto campos raiz quanto aninhados simples)
                         if field_part in template_final:
-                            template_final[field_part] = valor_corrigido
+                            template_final[field_part] = valor_corrigido_limpo
 
         # ── CÁLCULO DE CONFIANÇA REAL ──────────────────────────────────────────
         # Cobre TODOS os campos populados do documento, não só os que vieram do
